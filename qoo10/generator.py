@@ -79,12 +79,28 @@ OUTBOUND_HEADERS = [
 ]
 
 
-def load_kse_sku_catalog() -> List[Dict]:
-    """KSE SKU 카탈로그.
-    1순위: stock_snapshots + shipments UNION (자매 프로젝트 DB 공유 시 — 가장 풍부)
-    2순위: qoo10_outbound 이력에서 추출 (DB 분리 후 두 테이블이 없을 때)
+def load_kse_sku_catalog(location: str = 'JP') -> List[Dict]:
+    """KSE SKU 카탈로그 (location='JP' 또는 'KR').
+
+    우선순위:
+      1. kse_sku_catalog 테이블 (location 필터, enabled=True)
+      2. (location='JP'만) stock_snapshots + shipments UNION  ← 자매 프로젝트 fallback
+      3. (location='JP'만) qoo10_outbound 이력 fallback
     어느 쪽도 실패하면 빈 리스트.
     """
+    # 1. 신규 테이블
+    try:
+        from db import sku_catalog as _sc
+        rows = _sc.list_skus(location=location, enabled_only=True)
+        if rows:
+            return [{'sku_code': r['sku_code'], 'sku_name': r['sku_name'] or ''} for r in rows]
+    except Exception:
+        pass
+
+    # 2~3. JP 대상 fallback (KR은 fallback 없음 — 사용자가 직접 등록)
+    if location != 'JP':
+        return []
+
     try:
         conn = pg.connect(autocommit=True)
         with conn.cursor() as cur:

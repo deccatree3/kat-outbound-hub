@@ -174,3 +174,181 @@ def convert_eza_to_daone(eza_bytes: bytes) -> tuple[bytes, int]:
     eza_rows = parse_eza_xls(eza_bytes)
     daone_rows = transform_to_daone(eza_rows)
     return build_daone_xlsx(daone_rows), len(daone_rows)
+
+
+# ─── KSE OMS 주문내역 (큐텐 국내출고, 한국 KSE 경유) ───────────────────────
+# KSE OMS 다운로드 양식 (26컬럼):
+#   번호 / 등록일 / 접수번호 / 배송상태 / 배송타입 / 도착지송장번호 / 판매마켓 /
+#   주문일 / 주문번호 / 장바구니번호 / 상품코드 / 판매자코드 /
+#   상품명(판매마켓대표상품명) / 옵션명 / 옵션코드 / 금액 / 수량 /
+#   받는사람 / 받는사람전화 / 우편번호 / 주소 / 사이즈 / 실무게 / 부피무게 / 적용무게 / RegionName
+
+def parse_kse_oms_xlsx(data: bytes) -> List[Dict]:
+    """KSE OMS 주문내역.xlsx bytes → 헤더 기반 dict 리스트.
+    첫 시트의 row 1=헤더, row 2+=데이터.
+    """
+    import io as _io
+    import openpyxl as _opx
+    wb = _opx.load_workbook(_io.BytesIO(data), data_only=True)
+    ws = wb.active
+    if ws.max_row < 2:
+        return []
+    headers = [str(ws.cell(1, c).value).strip() if ws.cell(1, c).value is not None else ''
+               for c in range(1, ws.max_column + 1)]
+    rows = []
+    for r in range(2, ws.max_row + 1):
+        d = {}
+        for c, h in enumerate(headers, 1):
+            v = ws.cell(r, c).value
+            if v is None:
+                d[h] = ''
+            elif isinstance(v, float) and v.is_integer():
+                d[h] = str(int(v))
+            else:
+                d[h] = str(v)
+        # 빈 행 건너뜀 (번호 컬럼이 비어있으면)
+        if not d.get('번호') and not d.get('주문번호'):
+            continue
+        rows.append(d)
+    return rows
+
+
+def kse_oms_to_daone(kse_rows: List[Dict]) -> List[Dict]:
+    """KSE OMS dict 리스트 → 다원 19컬럼 dict 리스트.
+    SKU 매핑(제품코드)은 추후 단계에서 추가 — 현재는 빈값.
+    """
+    out = []
+    for k in kse_rows:
+        receiver = k.get('받는사람', '')
+        phone = k.get('받는사람전화', '')
+        addr = k.get('주소', '')
+        zip_code = k.get('우편번호', '')
+        name = k.get('상품명(판매마켓대표상품명)', '')
+        option = k.get('옵션명', '')
+        full_name = name + (' / ' + option if option else '')
+
+        # 수량 정수
+        try:
+            qty = int(float(k.get('수량', 0))) if k.get('수량') else 0
+        except (ValueError, TypeError):
+            qty = 0
+
+        d = {h: '' for h in DAONE_HEADERS}
+        d['몰명(또는 몰코드)'] = DEFAULT_몰코드
+        d['출하의뢰번호']     = k.get('판매마켓', '')
+        d['출하의뢰항번']     = k.get('접수번호', '')
+        d['고객주문번호']     = k.get('주문번호', '')
+        d['상품명']           = full_name.strip()
+        d['제품코드']         = ''  # SKU 매핑은 다음 단계
+        d['주문수량']         = qty
+        d['주문자명']         = receiver
+        d['주문자연락처1']    = phone
+        d['주문자연락처2']    = ''
+        d['수취인명']         = receiver
+        d['수취인연락처1']    = phone
+        d['수취인연락처2']    = ''
+        d['수취인우편번호']   = zip_code
+        d['수취인주소1']      = addr
+        d['주소2']            = addr  # 빈값 fallback 규칙 (수취인주소1 복사)
+        d['배송메시지']       = ''
+        d['송장번호']         = k.get('도착지송장번호', '')
+        d['택배사명']         = k.get('배송타입', '')
+        out.append(d)
+    return out
+
+
+def convert_kse_oms_to_daone(xlsx_bytes: bytes) -> tuple[bytes, int]:
+    """원샷 변환 (매핑 미사용, 제품코드 빈값): KSE OMS xlsx → 다원 19컬럼 발주서.
+    호환성용. 실제 운영에선 kse_oms_to_daone_with_mapping 사용 권장.
+    """
+    kse_rows = parse_kse_oms_xlsx(xlsx_bytes)
+    daone_rows = kse_oms_to_daone(kse_rows)
+    return build_daone_xlsx(daone_rows), len(daone_rows)
+
+
+def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
+    """KSE OMS dict + Qoo10 매핑 → 다원 19컬럼 dict (SKU 환산 후).
+
+    분기 (Qoo10 일본 빌더와 enabled 분기 반대):
+      매핑 없음            → unknown_rows (등록 강제)
+      매핑 + enabled=True  → not_for_daone_rows (KSE 일본 출고 대상, 다원 제외)
+      매핑 + enabled=False, sku_codes 정상 → daone_rows 에 1→N 펼침
+      매핑 + enabled=False, sku_codes='-'/빈 → incomplete_rows (다원 SKU 미입력)
+
+    반환: dict {
+        'daone_rows': [...], 'unknown_rows': [...],
+        'not_for_daone_rows': [...], 'incomplete_rows': [...],
+    }
+    """
+    daone_rows: List[Dict] = []
+    unknown_rows: List[Dict] = []
+    not_for_daone_rows: List[Dict] = []
+    incomplete_rows: List[Dict] = []
+
+    for k in kse_rows:
+        name = (k.get('상품명(판매마켓대표상품명)') or '').strip()
+        option = (k.get('옵션명') or '').strip()
+        m = mappings.get((name, option))
+
+        info = {
+            '주문번호': k.get('주문번호', ''),
+            '접수번호': k.get('접수번호', ''),
+            '상품명': name,
+            '옵션명': option,
+            '수량': k.get('수량', ''),
+        }
+
+        if m is None:
+            unknown_rows.append(info)
+            continue
+        if m.get('enabled'):
+            not_for_daone_rows.append(info)
+            continue
+        # enabled=False = 다원 출고 대상
+        valid = [(s.strip(), q) for s, q in zip(m.get('sku_codes', []), m.get('quantities', []))
+                 if s and s.strip() and s.strip() != '-']
+        if not valid:
+            incomplete_rows.append(info)
+            continue
+
+        try:
+            base_qty = int(float(k.get('수량', 1) or 1))
+        except (ValueError, TypeError):
+            base_qty = 1
+
+        receiver = k.get('받는사람', '')
+        phone = k.get('받는사람전화', '')
+        addr = k.get('주소', '')
+        zip_code = k.get('우편번호', '')
+        full_name = name + (' / ' + option if option else '')
+
+        for sku_code, sku_unit in valid:
+            try:
+                unit = int(sku_unit)
+            except (ValueError, TypeError):
+                unit = 1
+            d = {h: '' for h in DAONE_HEADERS}
+            d['몰명(또는 몰코드)'] = DEFAULT_몰코드
+            d['출하의뢰번호']     = k.get('판매마켓', '')
+            d['출하의뢰항번']     = k.get('접수번호', '')
+            d['고객주문번호']     = k.get('주문번호', '')
+            d['상품명']           = full_name.strip()
+            d['제품코드']         = sku_code
+            d['주문수량']         = unit * base_qty
+            d['주문자명']         = receiver
+            d['주문자연락처1']    = phone
+            d['수취인명']         = receiver
+            d['수취인연락처1']    = phone
+            d['수취인우편번호']   = zip_code
+            d['수취인주소1']      = addr
+            d['주소2']            = addr
+            d['송장번호']         = k.get('도착지송장번호', '')
+            d['택배사명']         = k.get('배송타입', '')
+            daone_rows.append(d)
+
+    return {
+        'daone_rows': daone_rows,
+        'unknown_rows': unknown_rows,
+        'not_for_daone_rows': not_for_daone_rows,
+        'incomplete_rows': incomplete_rows,
+    }
