@@ -49,6 +49,34 @@ def _kse_mapping_table():
     ])
 
 
+def _render_kr_sku_quick_add(expanded: bool = False):
+    """KR 카탈로그에 즉석 SKU 추가 — 매핑 등록 흐름과 같이 사용."""
+    with st.expander("➕ 새 KR SKU 즉석 등록 (등록 후 아래 매핑 드롭다운에 바로 표시)",
+                     expanded=expanded):
+        c1, c2, c3 = st.columns([2, 3, 1])
+        with c1:
+            new_code = st.text_input(
+                "SKU 코드 *", key="kr_quick_code",
+                placeholder="예) KC_8809885876166",
+            )
+        with c2:
+            new_name = st.text_input(
+                "상품명 (선택)", key="kr_quick_name",
+                placeholder="예) NUKIT VOLCANO PEELING AMPOULE",
+            )
+        with c3:
+            st.write(" ")  # spacer
+            if st.button("➕ 추가", type="primary", width="stretch", key="kr_quick_add_btn"):
+                code = (new_code or '').strip()
+                if not code:
+                    st.error("SKU 코드 필수")
+                elif sc.upsert_sku(code, 'KR', new_name, True, ''):
+                    st.success(f"카탈로그 등록: {code}")
+                    st.rerun()
+                else:
+                    st.error("등록 실패 (DB 연결 확인)")
+
+
 def _render_pending_mappings(unknown_rows, incomplete_rows, mappings):
     """미매핑(신규) + 미완전(sku_codes='-') 행 모두 페이지 내에서 등록/갱신.
 
@@ -82,10 +110,13 @@ def _render_pending_mappings(unknown_rows, incomplete_rows, mappings):
         "모두 해결되어야 다원 발주서를 다운로드할 수 있습니다."
     )
 
+    # KR SKU 즉석 등록 폼 (카탈로그 비어있으면 펼친 상태)
+    _render_kr_sku_quick_add(expanded=not sku_catalog_kr)
+
     if not sku_catalog_kr:
-        st.warning(
-            "⚠️ **KR 카탈로그가 비어있습니다**. 좌측 사이드바 → "
-            "**🗂 KSE SKU 마스터** → **🇰🇷 KR 탭**에서 다원 SKU를 먼저 등록하세요."
+        st.info(
+            "위 폼으로 KR SKU를 먼저 등록하면 매핑 모달의 드롭다운에 즉시 반영됩니다. "
+            "(다수 SKU 일괄 등록은 사이드바 → 🗂 KSE SKU 마스터 → 🇰🇷 KR 탭)"
         )
         return
 
