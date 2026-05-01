@@ -1,0 +1,31 @@
+# Sensitive config - NEVER commit
+config.json
+.streamlit/secrets.toml
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+
+# 사용자 작업 자료 (개인정보 포함 가능)
+출고/
+샘플자료/
+*.xlsx
+*.xls
+*.pptx
+*.pdf
+~$*
+
+# OS
+.DS_Store
+Thumbs.db
+
+# IDE
+.vscode/
+.idea/
+*.swp
+
+# Claude Code local settings
+.claude/
