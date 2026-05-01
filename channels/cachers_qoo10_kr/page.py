@@ -165,75 +165,109 @@ def _render_pending_mappings(unknown_rows, incomplete_rows, mappings):
             st.markdown(f"**{icon} [{idx+1}/{len(items)}] {qname}**")
             st.caption(f"옵션: `{qoption or '(없음)'}` · 상태: {verb}")
 
-            # 기존 매핑 정보를 명확한 표로 (item_codes × quantities)
-            if existing:
+            ed_key = f"qkr_mapeditor_{idx}_{hash((qname, qoption))}"
+
+            if status == 'update' and existing:
+                # 갱신: 기존 item_codes 별로 행 — KR SKU 만 채움 (item_codes/수량은 disabled)
                 ex_items = existing.get('item_codes') or []
                 ex_qty = existing.get('quantities') or []
                 if len(ex_qty) < len(ex_items):
                     ex_qty = list(ex_qty) + [1] * (len(ex_items) - len(ex_qty))
-                ex_sku = existing.get('sku_codes') or []
-                if len(ex_sku) < len(ex_items):
-                    ex_sku = list(ex_sku) + [''] * (len(ex_items) - len(ex_sku))
-                existing_df = pd.DataFrame([
+
+                base = pd.DataFrame([
                     {
-                        '기존 item_codes (참고)': it,
-                        '기존 quantities': q,
-                        '기존 sku_codes': s if (s and s != '-') else '— 미입력 —',
+                        '기존 item_codes': it,
+                        '기존 수량': int(q) if str(q).isdigit() else 1,
+                        'KR SKU (sku_codes 채울 값)': sku_options[0],
                     }
-                    for it, q, s in zip(ex_items, ex_qty, ex_sku)
+                    for it, q in zip(ex_items, ex_qty)
                 ])
-                st.dataframe(existing_df, hide_index=True, width="stretch")
+                edited = st.data_editor(
+                    base,
+                    column_config={
+                        '기존 item_codes': st.column_config.TextColumn(
+                            disabled=True, width="large",
+                            help="자매 프로젝트가 만든 매핑의 item_codes (보존)"),
+                        '기존 수량': st.column_config.NumberColumn(
+                            disabled=True, width="small"),
+                        'KR SKU (sku_codes 채울 값)': st.column_config.SelectboxColumn(
+                            options=sku_options, required=True, width="large",
+                            help="🗂 KSE SKU 마스터 KR 탭에서 등록한 SKU 선택"),
+                    },
+                    num_rows="fixed",
+                    hide_index=True,
+                    key=ed_key,
+                )
 
-            st.markdown("**KR(다원) SKU 구성** (세트면 행 추가)")
-
-            # incomplete 면 기존 quantities/행수 보존
-            if status == 'update' and existing:
-                qtys = existing.get('quantities') or [1]
-                init_skus = [(sku_options[0], q) for q in qtys]
+                if st.button(
+                    "💾 매핑 갱신 (sku_codes 채움, item_codes/수량 보존)",
+                    key=f"qkr_save_{ed_key}", type="primary",
+                ):
+                    valid = edited.dropna(subset=['KR SKU (sku_codes 채울 값)'])
+                    if len(valid) < len(edited):
+                        st.error(f"모든 행에 KR SKU 입력 필요 ({len(valid)}/{len(edited)})")
+                    else:
+                        payload = []
+                        for _, row in valid.iterrows():
+                            info = sku_by_label[row['KR SKU (sku_codes 채울 값)']]
+                            # (sku_code, item_code 보존, quantity 보존)
+                            payload.append((info['sku_code'],
+                                            row['기존 item_codes'],
+                                            int(row['기존 수량'])))
+                        try:
+                            qgen.add_mapping(qname, qoption, payload, enabled=False)
+                            st.success(
+                                "갱신 완료: sku_codes = "
+                                + ','.join(s[0] for s in payload)
+                            )
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"실패: {ex}")
             else:
-                init_skus = [(sku_options[0], 1)]
+                # 신규: item_codes 도 사용자가 KR 카탈로그에서 선택, 행 추가/삭제 가능
+                st.markdown("**KR(다원) SKU 구성** (세트면 행 추가)")
+                base = pd.DataFrame({
+                    'KR SKU': [sku_options[0]],
+                    '수량': [1],
+                })
+                edited = st.data_editor(
+                    base,
+                    column_config={
+                        'KR SKU': st.column_config.SelectboxColumn(
+                            options=sku_options, required=True, width="large",
+                            help="🗂 KSE SKU 마스터 KR 탭에서 등록한 SKU"),
+                        '수량': st.column_config.NumberColumn(
+                            min_value=1, step=1, default=1, required=True, width="small"),
+                    },
+                    num_rows="dynamic",
+                    key=ed_key,
+                    hide_index=True,
+                )
 
-            default_df = pd.DataFrame({
-                'KR SKU': [s for s, _ in init_skus],
-                '수량': [q for _, q in init_skus],
-            })
-            ed_key = f"qkr_mapeditor_{idx}_{hash((qname, qoption))}"
-            edited = st.data_editor(
-                default_df,
-                column_config={
-                    'KR SKU': st.column_config.SelectboxColumn(
-                        options=sku_options, required=True, width="large",
-                        help="🗂 KSE SKU 마스터 KR 탭에서 등록한 SKU"),
-                    '수량': st.column_config.NumberColumn(
-                        min_value=1, step=1, default=1, required=True, width="small"),
-                },
-                num_rows="dynamic",
-                key=ed_key,
-                hide_index=True,
-            )
-
-            if st.button(
-                f"💾 매핑 {verb} (enabled=False, 다원 출고)",
-                key=f"qkr_save_{ed_key}", type="primary",
-            ):
-                valid = edited.dropna(subset=['KR SKU'])
-                if valid.empty:
-                    st.error("최소 1개 SKU 필요.")
-                else:
-                    payload = []
-                    for _, row in valid.iterrows():
-                        info = sku_by_label[row['KR SKU']]
-                        qty = int(row['수량'] or 1)
-                        payload.append((info['sku_code'], info['sku_name'] or info['sku_code'], qty))
-                    try:
-                        qgen.add_mapping(qname, qoption, payload, enabled=False)
-                        st.success(
-                            f"매핑 {verb} 완료 (KSE 국내 출고 대상): "
-                            + " + ".join(f"{n}×{q}" for _, n, q in payload)
-                        )
-                        st.rerun()
-                    except Exception as ex:
-                        st.error(f"실패: {ex}")
+                if st.button(
+                    "💾 매핑 등록 (enabled=False, 다원 출고)",
+                    key=f"qkr_save_{ed_key}", type="primary",
+                ):
+                    valid = edited.dropna(subset=['KR SKU'])
+                    if valid.empty:
+                        st.error("최소 1개 SKU 필요.")
+                    else:
+                        payload = []
+                        for _, row in valid.iterrows():
+                            info = sku_by_label[row['KR SKU']]
+                            qty = int(row['수량'] or 1)
+                            payload.append((info['sku_code'],
+                                            info['sku_name'] or info['sku_code'],
+                                            qty))
+                        try:
+                            qgen.add_mapping(qname, qoption, payload, enabled=False)
+                            st.success(
+                                "등록 완료: "
+                                + " + ".join(f"{n}×{q}" for _, n, q in payload)
+                            )
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"실패: {ex}")
 
 
 def render_page():
