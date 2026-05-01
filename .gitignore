@@ -18,6 +18,10 @@ venv/
 *.pdf
 ~$*
 
+# 단, 채널/출력 빌더 마스터 양식은 git에 포함
+!outputs/**/template.xlsx
+!qoo10/templates/*.xlsx
+
 # OS
 .DS_Store
 Thumbs.db
