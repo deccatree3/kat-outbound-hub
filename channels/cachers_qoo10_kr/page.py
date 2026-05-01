@@ -49,49 +49,91 @@ def _kse_mapping_table():
     ])
 
 
-def _render_unknown_register(unknown_rows):
-    """미매핑 행 → KR 카탈로그 기반 신규 매핑 등록 모달."""
+def _render_pending_mappings(unknown_rows, incomplete_rows, mappings):
+    """미매핑(신규) + 미완전(sku_codes='-') 행 모두 페이지 내에서 등록/갱신.
+
+    UI는 (qoo10_name, qoo10_option) 키 단위로 expander 1개씩.
+    add_mapping 은 ON CONFLICT UPSERT 라 신규/갱신 동일 호출.
+    """
+    sku_catalog_kr = sc.list_skus(location='KR', enabled_only=True)
+
+    # 키 단위로 합치기 — 상태 = 'new' | 'update'
+    pending = {}  # (name, option) -> {'status': 'new'/'update', 'sample': row}
+    for r in unknown_rows:
+        key = (r['상품명'], r['옵션명'])
+        pending.setdefault(key, {'status': 'new', 'sample': r})
+    for r in incomplete_rows:
+        key = (r['상품명'], r['옵션명'])
+        # incomplete 는 update 우선
+        pending[key] = {'status': 'update', 'sample': r}
+
+    if not pending:
+        return
+
+    n_new = sum(1 for v in pending.values() if v['status'] == 'new')
+    n_upd = sum(1 for v in pending.values() if v['status'] == 'update')
+    msg = []
+    if n_new:
+        msg.append(f"🆕 신규 매핑 **{n_new}건**")
+    if n_upd:
+        msg.append(f"♻️ 매핑 갱신 (sku_codes 미입력) **{n_upd}건**")
     st.error(
-        f"🆕 **신규 매핑 등록 필요** — 매핑되지 않은 (상품명, 옵션) 조합 "
-        f"{len({(e['상품명'], e['옵션명']) for e in unknown_rows})}개. "
-        "각 매핑에 KR(다원) SKU + 단위수량을 입력해 등록하세요."
+        " · ".join(msg) + " — 각 항목에 KR(다원) SKU + 단위수량을 입력해 등록/갱신하세요. "
+        "모두 해결되어야 다원 발주서를 다운로드할 수 있습니다."
     )
 
-    sku_catalog_kr = sc.list_skus(location='KR', enabled_only=True)
     if not sku_catalog_kr:
         st.warning(
             "⚠️ **KR 카탈로그가 비어있습니다**. 좌측 사이드바 → "
             "**🗂 KSE SKU 마스터** → **🇰🇷 KR 탭**에서 다원 SKU를 먼저 등록하세요."
         )
-        return False
+        return
 
     sku_options = [f"{s['sku_name']} ({s['sku_code']})" if s['sku_name'] else s['sku_code']
                    for s in sku_catalog_kr]
     sku_by_label = {lbl: s for lbl, s in zip(sku_options, sku_catalog_kr)}
+    sku_by_code = {s['sku_code']: s for s in sku_catalog_kr}
 
-    seen = set()
-    uniq = []
-    for e in unknown_rows:
-        k = (e['상품명'], e['옵션명'])
-        if k not in seen:
-            seen.add(k)
-            uniq.append(e)
+    items = list(pending.items())
+    for idx, ((qname, qoption), meta) in enumerate(items):
+        status = meta['status']
+        e = meta['sample']
+        existing = mappings.get((qname, qoption)) if status == 'update' else None
 
-    for idx, e in enumerate(uniq):
+        icon = '🆕' if status == 'new' else '♻️'
+        verb = '등록' if status == 'new' else '갱신'
+
         with st.expander(
-            f"➕ 매핑 등록 [{idx+1}/{len(uniq)}] : {e['상품명'][:50]}..."
-            + (f" / {e['옵션명'][:40]}" if e['옵션명'] else ""),
+            f"{icon} 매핑 {verb} [{idx+1}/{len(items)}] : {qname[:50]}..."
+            + (f" / {qoption[:40]}" if qoption else ""),
             expanded=(idx == 0),
         ):
-            st.caption(f"**Qoo10 상품명**: `{e['상품명']}`")
-            st.caption(f"**Qoo10 옵션**: `{e['옵션명'] or '(없음)'}`")
+            st.caption(f"**Qoo10 상품명**: `{qname}`")
+            st.caption(f"**Qoo10 옵션**: `{qoption or '(없음)'}`")
+
+            if existing:
+                st.caption(
+                    f"기존 매핑: enabled=`{existing['enabled']}`, "
+                    f"item_codes=`{','.join(existing.get('item_codes', []))}`, "
+                    f"sku_codes=`{','.join(existing.get('sku_codes', []))}`, "
+                    f"quantities=`{','.join(str(q) for q in existing.get('quantities', []))}` "
+                    "→ KR SKU 로 sku_codes 갱신"
+                )
+
             st.markdown("**KR(다원) SKU 구성** (세트면 행 추가)")
 
+            # incomplete 면 기존 quantities 보존, sku만 빈/첫 옵션으로
+            if status == 'update' and existing:
+                qtys = existing.get('quantities') or [1]
+                init_skus = [(sku_options[0], q) for q in qtys]
+            else:
+                init_skus = [(sku_options[0], 1)]
+
             default_df = pd.DataFrame({
-                'KR SKU': [sku_options[0]],
-                '수량': [1],
+                'KR SKU': [s for s, _ in init_skus],
+                '수량': [q for _, q in init_skus],
             })
-            ed_key = f"qkr_mapeditor_{idx}_{hash((e['상품명'], e['옵션명']))}"
+            ed_key = f"qkr_mapeditor_{idx}_{hash((qname, qoption))}"
             edited = st.data_editor(
                 default_df,
                 column_config={
@@ -106,8 +148,10 @@ def _render_unknown_register(unknown_rows):
                 hide_index=True,
             )
 
-            if st.button("💾 매핑 등록 (enabled=False, 다원 출고)",
-                         key=f"qkr_save_{ed_key}", type="primary"):
+            if st.button(
+                f"💾 매핑 {verb} (enabled=False, 다원 출고)",
+                key=f"qkr_save_{ed_key}", type="primary",
+            ):
                 valid = edited.dropna(subset=['KR SKU'])
                 if valid.empty:
                     st.error("최소 1개 SKU 필요.")
@@ -118,16 +162,14 @@ def _render_unknown_register(unknown_rows):
                         qty = int(row['수량'] or 1)
                         payload.append((info['sku_code'], info['sku_name'] or info['sku_code'], qty))
                     try:
-                        # add_mapping(qoo10_name, qoo10_option, skus, enabled=False)
-                        qgen.add_mapping(e['상품명'], e['옵션명'], payload, enabled=False)
+                        qgen.add_mapping(qname, qoption, payload, enabled=False)
                         st.success(
-                            "등록됨 (KSE 국내 출고 대상): "
+                            f"매핑 {verb} 완료 (KSE 국내 출고 대상): "
                             + " + ".join(f"{n}×{q}" for _, n, q in payload)
                         )
                         st.rerun()
                     except Exception as ex:
                         st.error(f"실패: {ex}")
-    return True
 
 
 def render_page():
@@ -214,22 +256,11 @@ def render_page():
             st.dataframe(pd.DataFrame(not_for_daone), hide_index=True, width="stretch")
             st.caption("이 행들은 다원 발주서에서 자동 제외됩니다. KSE OMS 다운에 들어온 게 잘못된 흐름이면 데이터 확인 필요.")
 
-    if incomplete:
-        st.error(
-            f"⚠️ **매핑 갱신 필요** — `enabled=False` 인데 `sku_codes='-'` 인 매핑 "
-            f"{len({(e['상품명'], e['옵션명']) for e in incomplete})}개. "
-            "**Qoo10 일본** 채널의 **🔧 상품 매핑** 탭에서 해당 매핑의 SKU를 KR 코드로 채워주세요."
-        )
-        with st.expander("미완전 매핑 목록", expanded=True):
-            st.dataframe(pd.DataFrame(incomplete), hide_index=True, width="stretch")
-
-    if unknown:
-        _render_unknown_register(unknown)
+    # 신규 + 갱신 매핑을 페이지 내에서 한 번에 처리
+    _render_pending_mappings(unknown, incomplete, mappings)
 
     # 미매핑 / 미완전 있으면 다운로드 차단
-    blocking = unknown or incomplete
-    if blocking:
-        st.warning("위 항목 모두 해결한 뒤 다원 발주서를 다운로드할 수 있습니다.")
+    if unknown or incomplete:
         return
 
     if not daone_rows:
