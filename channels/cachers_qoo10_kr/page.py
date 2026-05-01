@@ -165,18 +165,28 @@ def _render_pending_mappings(unknown_rows, incomplete_rows, mappings):
             st.markdown(f"**{icon} [{idx+1}/{len(items)}] {qname}**")
             st.caption(f"옵션: `{qoption or '(없음)'}` · 상태: {verb}")
 
+            # 기존 매핑 정보를 명확한 표로 (item_codes × quantities)
             if existing:
-                st.caption(
-                    f"기존 매핑: enabled=`{existing['enabled']}`, "
-                    f"item_codes=`{','.join(existing.get('item_codes', []))}`, "
-                    f"sku_codes=`{','.join(existing.get('sku_codes', []))}`, "
-                    f"quantities=`{','.join(str(q) for q in existing.get('quantities', []))}` "
-                    "→ KR SKU 로 sku_codes 갱신"
-                )
+                ex_items = existing.get('item_codes') or []
+                ex_qty = existing.get('quantities') or []
+                if len(ex_qty) < len(ex_items):
+                    ex_qty = list(ex_qty) + [1] * (len(ex_items) - len(ex_qty))
+                ex_sku = existing.get('sku_codes') or []
+                if len(ex_sku) < len(ex_items):
+                    ex_sku = list(ex_sku) + [''] * (len(ex_items) - len(ex_sku))
+                existing_df = pd.DataFrame([
+                    {
+                        '기존 item_codes (참고)': it,
+                        '기존 quantities': q,
+                        '기존 sku_codes': s if (s and s != '-') else '— 미입력 —',
+                    }
+                    for it, q, s in zip(ex_items, ex_qty, ex_sku)
+                ])
+                st.dataframe(existing_df, hide_index=True, width="stretch")
 
             st.markdown("**KR(다원) SKU 구성** (세트면 행 추가)")
 
-            # incomplete 면 기존 quantities 보존, sku만 빈/첫 옵션으로
+            # incomplete 면 기존 quantities/행수 보존
             if status == 'update' and existing:
                 qtys = existing.get('quantities') or [1]
                 init_skus = [(sku_options[0], q) for q in qtys]
@@ -262,6 +272,12 @@ def render_page():
         return
 
     try:
+        mappings = qgen.load_mappings()
+    except Exception as ex:
+        st.error(f"qoo10_product_mapping 로드 실패: {ex}")
+        return
+
+    try:
         kse_rows = parse_kse_oms_xlsx(uploaded_xlsx.getvalue())
     except Exception as ex:
         st.error(f"KSE OMS 파일 파싱 실패: {ex}")
@@ -269,13 +285,6 @@ def render_page():
 
     if not kse_rows:
         st.warning("📭 KSE OMS 파일에 주문 데이터가 없습니다.")
-        return
-
-    # 매핑 로드 + 분기
-    try:
-        mappings = qgen.load_mappings()
-    except Exception as ex:
-        st.error(f"qoo10_product_mapping 로드 실패: {ex}")
         return
 
     result = kse_oms_to_daone_with_mapping(kse_rows, mappings)
