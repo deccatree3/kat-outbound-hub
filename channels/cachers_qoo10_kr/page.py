@@ -106,8 +106,31 @@ def _render_pending_mappings(unknown_rows, incomplete_rows, mappings):
     if n_upd:
         msg.append(f"♻️ 매핑 갱신 (sku_codes 미입력) **{n_upd}건**")
     st.error(
-        " · ".join(msg) + " — 각 항목에 KR(다원) SKU + 단위수량을 입력해 등록/갱신하세요. "
-        "모두 해결되어야 다원 발주서를 다운로드할 수 있습니다."
+        " · ".join(msg) + " — 아래 표의 각 행마다 KR(다원) SKU + 단위수량을 입력해 등록/갱신. "
+        "모두 해결되어야 다원 발주서 다운로드 가능."
+    )
+
+    # 미매핑/미완전 요약 — 어느 상품인지 한 눈에
+    summary = pd.DataFrame([
+        {
+            '상태': '🆕 신규' if v['status'] == 'new' else '♻️ 갱신',
+            'Qoo10 상품명': k[0],
+            'Qoo10 옵션': k[1] or '(없음)',
+            '대표 주문번호': v['sample'].get('주문번호', ''),
+            '대표 접수번호': v['sample'].get('접수번호', ''),
+        }
+        for k, v in pending.items()
+    ])
+    st.markdown("**미매핑/미완전 매핑 요약**")
+    st.dataframe(
+        summary, hide_index=True, width="stretch",
+        column_config={
+            '상태': st.column_config.TextColumn(width="small"),
+            'Qoo10 상품명': st.column_config.TextColumn(width="large"),
+            'Qoo10 옵션': st.column_config.TextColumn(width="medium"),
+            '대표 주문번호': st.column_config.TextColumn(width="small"),
+            '대표 접수번호': st.column_config.TextColumn(width="small"),
+        },
     )
 
     # KR SKU 즉석 등록 폼 (카탈로그 비어있으면 펼친 상태)
@@ -126,6 +149,9 @@ def _render_pending_mappings(unknown_rows, incomplete_rows, mappings):
     sku_by_code = {s['sku_code']: s for s in sku_catalog_kr}
 
     items = list(pending.items())
+    st.markdown("---")
+    st.markdown(f"**📝 매핑 입력** — 총 {len(items)}건 (각 항목 별 KR SKU 선택 후 등록 버튼)")
+
     for idx, ((qname, qoption), meta) in enumerate(items):
         status = meta['status']
         e = meta['sample']
@@ -134,13 +160,10 @@ def _render_pending_mappings(unknown_rows, incomplete_rows, mappings):
         icon = '🆕' if status == 'new' else '♻️'
         verb = '등록' if status == 'new' else '갱신'
 
-        with st.expander(
-            f"{icon} 매핑 {verb} [{idx+1}/{len(items)}] : {qname[:50]}..."
-            + (f" / {qoption[:40]}" if qoption else ""),
-            expanded=(idx == 0),
-        ):
-            st.caption(f"**Qoo10 상품명**: `{qname}`")
-            st.caption(f"**Qoo10 옵션**: `{qoption or '(없음)'}`")
+        # expander 대신 bordered container — 모두 펼친 상태로 한눈에
+        with st.container(border=True):
+            st.markdown(f"**{icon} [{idx+1}/{len(items)}] {qname}**")
+            st.caption(f"옵션: `{qoption or '(없음)'}` · 상태: {verb}")
 
             if existing:
                 st.caption(
