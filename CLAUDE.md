@@ -114,8 +114,8 @@
 
 | Phase | 내용 | 상태 |
 |:-:|------|:-:|
-| **0** | 프로젝트 골격 (Streamlit 스켈레톤, 인터페이스 stub) | 진행 중 |
-| **1** | **Qoo10 일본 이전** (kat-kse-3pl-japan에서 가져옴 — 이미 완성) | TODO |
+| **0** | 프로젝트 골격 (Streamlit 스켈레톤, 인터페이스 stub) | ✅ |
+| **1** | **Qoo10 일본 이전** (kat-kse-3pl-japan에서 가져옴 — 이미 완성) | ✅ (코드 이전, DB 셋업 대기) |
 | **2** | **MVP — 캐처스 국내몰 다원 발주서** (케이스 #3) | TODO |
 | 3 | 캐처스 케이스 #4 채널들 | TODO |
 | 4 | 네뉴 EZA 발주서 빌더 (케이스 #1, #2) | TODO |
@@ -145,20 +145,24 @@
   - ShippingCorp = "Sagawa" (사가와의 경우)
   - 자격증명 우선순위: env > Streamlit secrets > DB > config.json
 
-## 시작 시점에 결정 필요한 것
+## 결정 사항 (2026-05-01)
 
-1. **DB 정책**:
-   - (a) 같은 Supabase 공유 — `kat-kse-3pl-japan`의 `qoo10_*` 테이블 그대로 사용 + 신규 테이블 추가 (`channel_*`, `daone_*` 등) → 빠름, 약간 충돌 위험
-   - (b) 새 Supabase 프로젝트 — 데이터 마이그레이션 필요 → 깔끔, 작업 1일
-   - (c) 같은 DB + 새 prefix (`hub_*`) — 절충 → 충돌 없음, 마이그레이션 추후
+1. **DB 정책 = (a) 자매 프로젝트 DB 공유** (당초 (b) 결정했으나 Supabase Free 한도 2 프로젝트 제약으로 변경):
+   - 자매 프로젝트(`kat-kse-3pl-japan`)의 Supabase를 그대로 사용.
+   - `qoo10_*` 4 테이블은 양쪽 프로젝트가 공유. `shipments`/`stock_snapshots` 는 자매 프로젝트가 적재하고 이 프로젝트가 read-only로 활용 (`load_kse_sku_catalog`).
+   - 새 출고 채널의 데이터는 새 prefix(`hub_*` 또는 `<channel>_*`)로 추가하면 충돌 없음.
+   - 데이터량이 커지면 그때 분리 (Pro 업그레이드 또는 자매 프로젝트 pause 후 신규 free 슬롯 확보).
+   - `db/migrations/001_init_qoo10.sql`, `scripts/migrate_qoo10_seed.py` 는 **현재 미사용** — 향후 분리 시점에 사용.
 
 2. **Streamlit Cloud 배포**:
-   - 새 GitHub 레포 (예: `kat-outbound-hub`) 생성 후 배포
-   - 환경 secrets 별도 등록
+   - 새 GitHub 레포 `deccatree3/kat-outbound-hub` 생성됨.
+   - secrets는 `.streamlit/secrets.toml.example` 참고하여 별도 등록.
 
-3. **Qoo10 일본 코드 이전 방식**:
-   - 파일 그대로 복사 후 어댑터 패턴으로 정리
-   - DB는 같은 `qoo10_*` 테이블 공유 (새 프로젝트가 운영용으로 자리 잡으면 현재 프로젝트 메뉴 제거)
+3. **Qoo10 일본 코드 이전 방식 (실행됨)**:
+   - `qoo10/api_client.py`, `qoo10/generator.py`, `qoo10/templates/outbound_template.xlsx`, `db/pg.py` 그대로 복사.
+   - `channels/qoo10_japan/{adapter.py, page.py}` 추가 (어댑터 + Streamlit 페이지).
+   - `dashboard.py`가 채널 셀렉터로 페이지 디스패치.
+   - `load_kse_sku_catalog`는 stock_snapshots/shipments 대신 `qoo10_outbound`에서 SKU를 추출하도록 수정 (테이블 미존재 시 빈 리스트로 폴백).
 
 ## 사용자 선호 (대화 누적)
 
@@ -179,9 +183,8 @@
 ## 새 세션 시작 시 첫 작업
 
 1. 이 CLAUDE.md를 읽고 컨텍스트 파악
-2. 사용자에게 DB 정책(a/b/c) 확인
-3. **Phase 1: Qoo10 일본 이전** 진행
-   - `C:\claude\kat-kse-3pl-japan/qoo10/{api_client.py, generator.py}` 참고
-   - `channels/qoo10_japan/` + `outputs/kse_japan/` 구조로 정리
-   - DB는 결정된 정책에 따라 처리
-4. 동작 확인 후 Phase 2 (MVP — 캐처스 국내몰 다원 발주서)
+2. **Phase 1 검증 미완** 시: 신규 Supabase + seed 이전 완료 여부 확인 (사용자에게 물어봄)
+3. **Phase 2 (MVP — 캐처스 국내몰 다원 발주서)** 진행
+   - 입력: EZA 확장주문검색.xls (CLAUDE.md 매핑 표 참조)
+   - 출력: 다원 발주서.xls (`발주서` 시트 단일)
+   - 구조: `channels/cachers_domestic/` + `outputs/daone/` 권장

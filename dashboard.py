@@ -1,8 +1,11 @@
 """
-KAT Outbound Hub — 캐처스/네뉴 출고 통합 대시보드 (Phase 0 스켈레톤).
+KAT Outbound Hub — 캐처스/네뉴 출고 통합 대시보드.
 
-다음 단계: channels/qoo10_japan, outputs/kse_japan 구현 (Phase 1).
+채널별 페이지를 좌측 셀렉터로 디스패치. 각 채널은 channels/<id>/page.py 에서
+render_page()를 export.
 """
+import os
+
 import streamlit as st
 
 
@@ -12,18 +15,27 @@ st.set_page_config(
     layout="wide",
 )
 
-st.title("📤 KAT Outbound Hub")
-st.caption("캐처스/네뉴 출고 통합 — Phase 0 스켈레톤")
+# Streamlit Cloud secrets → env 변수 승격 (db/pg.py 가 DATABASE_URL 환경변수 우선)
+try:
+    if hasattr(st, "secrets"):
+        for key in ("DATABASE_URL", "QOO10_API_KEY", "QOO10_USER_ID", "QOO10_PASSWORD"):
+            if key in st.secrets and not os.environ.get(key):
+                os.environ[key] = str(st.secrets[key])
+except Exception:
+    pass
 
-# 채널 레지스트리 (Phase 1+에서 실제 어댑터로 채워짐)
+
+st.title("📤 KAT Outbound Hub")
+st.caption("캐처스/네뉴 출고 통합")
+
+# 채널 레지스트리. status는 사용자에게 표시되는 진행도. 'render'가 있으면 dispatch 가능.
 CHANNELS = {
-    "qoo10_japan": {"label": "Qoo10 일본", "brand": "캐처스", "status": "Phase 1 이전 예정"},
-    "cachers_domestic": {"label": "캐처스 국내몰", "brand": "캐처스", "status": "MVP (Phase 2)"},
-    "cachers_qoo10_kr": {"label": "캐처스 큐텐 국내", "brand": "캐처스", "status": "Phase 3"},
-    "cachers_makers": {"label": "캐처스 메이커스", "brand": "캐처스", "status": "Phase 3"},
+    "qoo10_japan":          {"label": "Qoo10 일본",       "brand": "캐처스", "status": "✅ 운영"},
+    "cachers_domestic":     {"label": "캐처스 국내몰",    "brand": "캐처스", "status": "MVP (Phase 2)"},
+    "cachers_qoo10_kr":     {"label": "캐처스 큐텐 국내", "brand": "캐처스", "status": "Phase 3"},
+    "cachers_makers":       {"label": "캐처스 메이커스",  "brand": "캐처스", "status": "Phase 3"},
     "cachers_rocketgrowth": {"label": "캐처스 로켓그로스", "brand": "캐처스", "status": "Phase 3 (부착문서 多)"},
-    "nenu_telepay": {"label": "네뉴 텔레페이", "brand": "네뉴", "status": "Phase 4"},
-    # ... CLAUDE.md 24개 채널 참고
+    "nenu_telepay":         {"label": "네뉴 텔레페이",    "brand": "네뉴",   "status": "Phase 4"},
 }
 
 # ─── Sidebar ───
@@ -37,15 +49,16 @@ selected = st.sidebar.selectbox(
 st.sidebar.markdown("---")
 st.sidebar.caption("이 프로젝트는 출고 일 전담. 일본 KSE 물류비/재고 분석은 별도 프로젝트(`kat-kse-3pl-japan`).")
 
-# ─── Main ───
+# ─── Main: 채널별 페이지 디스패치 ───
 ch = CHANNELS[selected]
 st.subheader(f"{ch['label']}")
 st.caption(f"화주: {ch['brand']} · 상태: {ch['status']}")
 
-st.info(
-    "📋 **Phase 0 — 골격만 구축됨**. \n\n"
-    "다음 작업 (새 Claude Code 세션에서):\n"
-    "1. Phase 1: Qoo10 일본 이전 (`kat-kse-3pl-japan`에서 가져옴)\n"
-    "2. Phase 2: MVP — 캐처스 국내몰 다원 발주서 빌더\n\n"
-    "자세한 계획은 `CLAUDE.md` 참고."
-)
+if selected == "qoo10_japan":
+    from channels.qoo10_japan.page import render_page
+    render_page()
+else:
+    st.info(
+        "📋 이 채널은 아직 구현되지 않았습니다. \n\n"
+        "단계별 로드맵은 `CLAUDE.md` 참고."
+    )
