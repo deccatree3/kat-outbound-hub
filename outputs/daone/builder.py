@@ -176,7 +176,7 @@ def build_daone_xlsx(daone_rows: List[Dict],
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = '발주서'
-    extra = ['인박스NO', '인박스', '아웃박스', '아웃박스NO'] if add_packing_columns else []
+    extra = ['인박스', '인박스NO', '아웃박스', '아웃박스NO'] if add_packing_columns else []
     headers = list(DAONE_HEADERS) + extra
     ws.append(headers)
     # 표준 헤더 색상
@@ -250,13 +250,13 @@ def build_daone_xlsx(daone_rows: List[Dict],
         row_values = [r.get(h, '') for h in DAONE_HEADERS]
         if add_packing_columns:
             p = packing_per_row[i]
-            row_values += [p.get('inbox_no'), p.get('inbox'),
+            row_values += [p.get('inbox'), p.get('inbox_no'),
                            p.get('outbox'), p.get('outbox_no')]
         ws.append(row_values)
 
     widths = [14, 18, 14, 14, 40, 14, 8, 12, 16, 16, 12, 16, 16, 12, 50, 50, 30, 16, 12]
     if add_packing_columns:
-        widths = widths + [8, 22, 12, 10]
+        widths = widths + [22, 8, 12, 10]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     buf = io.BytesIO()
