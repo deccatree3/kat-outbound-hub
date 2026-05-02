@@ -78,3 +78,45 @@ def select_inbox_for_에이지샷(qty: int) -> Optional[str]:
         if rule['qty_min'] <= qty <= rule['qty_max']:
             return rule['inbox']
     return None
+
+
+# ─── 큐텐 국내 (KSE) 패킹 알고리즘 ──────────────────────────────────────
+
+def split_to_inboxes(qty: int) -> List[Tuple[str, int]]:
+    """qty 개의 에이지샷을 인박스로 분할. [(인박스종류, 담은 수량), ...] 반환.
+    규칙: 1~3개 → 에이지샷 1호 / 4~10개 → 위오 1호. 11+ 면 위 규칙을 반복(분할).
+    """
+    out: List[Tuple[str, int]] = []
+    remaining = int(qty or 0)
+    while remaining > 0:
+        if remaining >= 4:
+            n = min(10, remaining)
+            out.append(('위오 1호', n))
+        else:
+            n = min(3, remaining)
+            out.append(('에이지샷 1호', n))
+        remaining -= n
+    return out
+
+
+# 아웃박스 후보 (에이지샷 1호는 인박스 전용이라 제외, 배송비 오름차순)
+def _outbox_candidates(inbox_type: str) -> List[Dict]:
+    fit_key = 'fit_에이지샷1호' if inbox_type == '에이지샷 1호' else 'fit_위오1호'
+    return sorted(
+        [b for b in BOXES if b['name'] != '에이지샷 1호' and b.get(fit_key)],
+        key=lambda x: x['shipping_fee'],
+    )
+
+
+def select_outbox_for(inbox_type: str, count: int) -> Tuple[str, int]:
+    """주어진 인박스 N개를 담을 가장 저렴한 아웃박스 (Best-Fit).
+    반환: (아웃박스명, 그 박스의 fit 한도). count > 모든 박스 fit 이면 가장 큰 fit 박스 반환.
+    """
+    fit_key = 'fit_에이지샷1호' if inbox_type == '에이지샷 1호' else 'fit_위오1호'
+    candidates = _outbox_candidates(inbox_type)
+    if not candidates:
+        return ('', 0)
+    box = next((b for b in candidates if b[fit_key] >= count), None)
+    if box is None:
+        box = max(candidates, key=lambda x: x[fit_key])
+    return (box['name'], box[fit_key])

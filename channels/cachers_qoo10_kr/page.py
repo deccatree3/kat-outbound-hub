@@ -308,7 +308,7 @@ def render_page():
 
     # 다운로드
     try:
-        xlsx_bytes = build_daone_xlsx(daone_rows, add_no_column=True)
+        xlsx_bytes = build_daone_xlsx(daone_rows, add_packing_columns=True)
     except Exception as ex:
         st.error(f"다원 xlsx 생성 실패: {ex}")
         return

@@ -159,32 +159,104 @@ def transform_to_daone(eza_rows: List[Dict]) -> List[Dict]:
     return out
 
 
-def build_daone_xlsx(daone_rows: List[Dict], add_no_column: bool = False) -> bytes:
+def build_daone_xlsx(daone_rows: List[Dict],
+                     add_packing_columns: bool = False) -> bytes:
     """다원 발주서.xlsx bytes 생성. 단일 `발주서` 시트, 19 컬럼.
-    add_no_column=True 면 마지막에 'NO' 컬럼 추가 (1부터 일련번호, 헤더 색상 #FFFF00).
-    KSE 큐텐 국내 출고용.
+
+    add_packing_columns=True 면 마지막에 4 컬럼 추가 (모두 헤더 #FFFF00):
+      인박스NO / 인박스 / 아웃박스 / 아웃박스NO
+
+    각 행이 '_group_key' 메타 키(예: (도착지송장번호, 장바구니번호))를 가지고 있어야
+    인박스NO가 그룹별로 부여됨. 인박스/아웃박스는 outputs.packing.boxes 의
+    split_to_inboxes / select_outbox_for 알고리즘 사용.
     """
+    from collections import OrderedDict, defaultdict
+    from outputs.packing.boxes import split_to_inboxes, select_outbox_for
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = '발주서'
-    headers = list(DAONE_HEADERS) + (['NO'] if add_no_column else [])
+    extra = ['인박스NO', '인박스', '아웃박스', '아웃박스NO'] if add_packing_columns else []
+    headers = list(DAONE_HEADERS) + extra
     ws.append(headers)
     # 표준 헤더 색상
     for c in range(1, len(DAONE_HEADERS) + 1):
         ws.cell(1, c).fill = _HEADER_FILL
-    # NO 컬럼 헤더 색상 (#FFFF00)
-    if add_no_column:
-        ws.cell(1, len(headers)).fill = _NO_COL_HEADER_FILL
+    # 패킹 컬럼 헤더 색상 (#FFFF00)
+    if add_packing_columns:
+        for c in range(len(DAONE_HEADERS) + 1, len(headers) + 1):
+            ws.cell(1, c).fill = _NO_COL_HEADER_FILL
 
-    for idx, r in enumerate(daone_rows, 1):
+    # ─── 패킹 컬럼 계산 ───
+    packing_per_row: List[Dict] = [{} for _ in daone_rows]
+    if add_packing_columns:
+        # 1) (_group_key) 그룹화 + 인박스NO 부여
+        groups = OrderedDict()
+        for i, r in enumerate(daone_rows):
+            key = r.get('_group_key') or (i,)
+            groups.setdefault(key, []).append(i)
+
+        # 같은 _group_key = 같은 인박스NO. 그룹 내 행은 인박스 종류·수량 동일.
+        # 단순화: 그룹 총 수량 기반으로 단일 인박스 결정 (분할 시는 첫 박스 종류 + 표기에 알림)
+        inbox_no_to_type = {}
+        for inbox_no, (gk, idxs) in enumerate(groups.items(), 1):
+            total_qty = sum(int(daone_rows[i].get('주문수량', 0) or 0) for i in idxs)
+            split = split_to_inboxes(total_qty)  # [(type, n), ...]
+            if len(split) == 1:
+                inbox_label = split[0][0]
+            else:
+                # 11+ 분할 케이스 — 한 인박스NO에 여러 박스. 표기에 명시.
+                inbox_label = ' + '.join(f"{t}×{n}" for t, n in split) + ' (분할)'
+            inbox_no_to_type[inbox_no] = inbox_label
+            for i in idxs:
+                packing_per_row[i]['inbox_no'] = inbox_no
+                packing_per_row[i]['inbox'] = inbox_label
+
+        # 2) 같은 인박스 종류 별로 모아 아웃박스 결정 (Best-Fit, fit 한도 내 같은 아웃박스NO)
+        inbox_nos_by_type = defaultdict(list)
+        for ibox_no, label in inbox_no_to_type.items():
+            inbox_nos_by_type[label].append(ibox_no)
+
+        outbox_by_inbox = {}  # inbox_no → (outbox_name, outbox_no)
+        outbox_no_counter = 0
+        for inbox_label, ibox_no_list in inbox_nos_by_type.items():
+            # 11+ 분할 라벨은 자체적으로 outbox 분할 처리 — 우선 인박스 종류는 라벨 첫 단어
+            primary_inbox = inbox_label.split('×')[0].split(' + ')[0].strip()
+            outbox_name, fit_limit = select_outbox_for(primary_inbox, len(ibox_no_list))
+            if not outbox_name:
+                outbox_name, fit_limit = ('미정', max(1, len(ibox_no_list)))
+            for chunk_start in range(0, len(ibox_no_list), fit_limit):
+                outbox_no_counter += 1
+                chunk = ibox_no_list[chunk_start: chunk_start + fit_limit]
+                for ibox_no in chunk:
+                    outbox_by_inbox[ibox_no] = (outbox_name, outbox_no_counter)
+
+        for i, r in enumerate(daone_rows):
+            ibox_no = packing_per_row[i].get('inbox_no')
+            if ibox_no is not None:
+                obox_name, obox_no = outbox_by_inbox.get(ibox_no, ('', None))
+                packing_per_row[i]['outbox'] = obox_name
+                packing_per_row[i]['outbox_no'] = obox_no
+
+    # 행 출력 (인박스NO 순서로 정렬해 그룹이 모이게)
+    if add_packing_columns:
+        order = sorted(range(len(daone_rows)),
+                       key=lambda i: (packing_per_row[i].get('inbox_no') or 9999, i))
+    else:
+        order = list(range(len(daone_rows)))
+
+    for i in order:
+        r = daone_rows[i]
         row_values = [r.get(h, '') for h in DAONE_HEADERS]
-        if add_no_column:
-            row_values.append(idx)
+        if add_packing_columns:
+            p = packing_per_row[i]
+            row_values += [p.get('inbox_no'), p.get('inbox'),
+                           p.get('outbox'), p.get('outbox_no')]
         ws.append(row_values)
 
     widths = [14, 18, 14, 14, 40, 14, 8, 12, 16, 16, 12, 16, 16, 12, 50, 50, 30, 16, 12]
-    if add_no_column:
-        widths = widths + [6]
+    if add_packing_columns:
+        widths = widths + [8, 22, 12, 10]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     buf = io.BytesIO()
@@ -365,6 +437,9 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
             d['상품명']           = full_name.strip()
             d['제품코드']         = sku_code
             d['주문수량']         = unit * base_qty
+            # 패킹 그룹 키 보존 (도착지송장번호 + 장바구니번호 → 같은 인박스NO)
+            d['_group_key']      = (str(k.get('도착지송장번호', '')),
+                                    str(k.get('장바구니번호', '')))
             # 다원 → KSE 한국 집하지 고정 정보 (일본 고객 정보 아님)
             # 도착지송장번호 + KSE 송장 PDF 는 인박스에 부착되어 KSE 가 일본으로 이동.
             d['주문자명']         = KSE_KR_DEPOT['name']
