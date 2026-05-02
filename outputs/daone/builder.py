@@ -266,6 +266,17 @@ def convert_kse_oms_to_daone(xlsx_bytes: bytes) -> tuple[bytes, int]:
     return build_daone_xlsx(daone_rows), len(daone_rows)
 
 
+# KSE 한국 집하지 (다원이 큐텐 국내 출고 시 보내는 곳)
+# 인박스에 KSE 송장(PDF) 부착 → 아웃박스로 합포장 → 이 집하지로 발송 → KSE 가 한국→일본 이동
+KSE_KR_DEPOT = {
+    'name':       'KSE',
+    'phone':      '02 3143 5555',
+    'zip':        '03917',
+    'address':    '서울특별시 마포구 구룡길 36, (주)국제로지스틱 수색 EC 물류센터 내 G1 (GATE 22)',
+    'msg':        'KSE',
+}
+
+
 def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
     """KSE OMS dict + Qoo10 매핑 → 다원 19컬럼 dict (SKU 환산 후).
 
@@ -316,10 +327,6 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
         except (ValueError, TypeError):
             base_qty = 1
 
-        receiver = k.get('받는사람', '')
-        phone = k.get('받는사람전화', '')
-        addr = k.get('주소', '')
-        zip_code = k.get('우편번호', '')
         full_name = name + (' / ' + option if option else '')
 
         for sku_code, sku_unit in valid:
@@ -330,20 +337,26 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
             d = {h: '' for h in DAONE_HEADERS}
             d['몰명(또는 몰코드)'] = DEFAULT_몰코드
             d['출하의뢰번호']     = k.get('판매마켓', '')
-            d['출하의뢰항번']     = k.get('접수번호', '')
+            d['출하의뢰항번']     = k.get('장바구니번호', '')
             d['고객주문번호']     = k.get('주문번호', '')
             d['상품명']           = full_name.strip()
             d['제품코드']         = sku_code
             d['주문수량']         = unit * base_qty
-            d['주문자명']         = receiver
-            d['주문자연락처1']    = phone
-            d['수취인명']         = receiver
-            d['수취인연락처1']    = phone
-            d['수취인우편번호']   = zip_code
-            d['수취인주소1']      = addr
-            d['주소2']            = addr
-            d['송장번호']         = k.get('도착지송장번호', '')
-            d['택배사명']         = k.get('배송타입', '')
+            # 다원 → KSE 한국 집하지 고정 정보 (일본 고객 정보 아님)
+            # 도착지송장번호 + KSE 송장 PDF 는 인박스에 부착되어 KSE 가 일본으로 이동.
+            d['주문자명']         = KSE_KR_DEPOT['name']
+            d['주문자연락처1']    = KSE_KR_DEPOT['phone']
+            d['주문자연락처2']    = KSE_KR_DEPOT['phone']
+            d['수취인명']         = KSE_KR_DEPOT['name']
+            d['수취인연락처1']    = KSE_KR_DEPOT['phone']
+            d['수취인연락처2']    = KSE_KR_DEPOT['phone']
+            d['수취인우편번호']   = KSE_KR_DEPOT['zip']
+            d['수취인주소1']      = KSE_KR_DEPOT['address']
+            d['주소2']            = KSE_KR_DEPOT['address']
+            d['배송메시지']       = KSE_KR_DEPOT['msg']
+            # 송장번호/택배사명 은 다원이 채움 (한국 내 다원→KSE 집하지 운송 송장)
+            d['송장번호']         = ''
+            d['택배사명']         = ''
             daone_rows.append(d)
 
     return {
