@@ -19,10 +19,11 @@ from typing import List, Dict
 
 from reportlab.lib.pagesizes import A4, landscape
 from reportlab.lib import colors
+from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import mm
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
-from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, PageBreak
+from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, PageBreak, Paragraph
 
 
 _FONT_REGISTERED = None
@@ -106,25 +107,34 @@ def build_kse_attached_pdf(packed_rows: List[Dict],
 
     date_str = work_date.strftime('%Y-%m-%d')
 
+    qty_style = ParagraphStyle(
+        name='qty', fontName=font, fontSize=44, leading=52, alignment=1,  # 1=CENTER
+    )
+
     for i, g in enumerate(outboxes):
-        outbox_label = f"(OUTBOX : {g['outbox_name']} / 아웃박스NO.{g['outbox_no']})"
-        qty_text = f"{g['qty']}EA\n{outbox_label}"
+        outbox_name_compact = (g['outbox_name'] or '').replace(' ', '')
+        # 3줄: 큰 NEA + 작은 OUTBOX 라인 + 작은 아웃박스NO 라인
+        qty_html = (
+            f"{g['qty']}EA<br/>"
+            f'<font size="22">OUTBOX: {outbox_name_compact}</font><br/>'
+            f'<font size="22">아웃박스NO: {g["outbox_no"]}</font>'
+        )
+        qty_para = Paragraph(qty_html, qty_style)
+
         data = [
             ['업체명', company],
             ['발송일\n(택배출하일)', date_str],
-            ['입수량', qty_text],
+            ['입수량', qty_para],
         ]
         # 컬럼 너비: 좌측 라벨 80mm / 우측 값 160mm
-        tbl = Table(data, colWidths=[80*mm, 160*mm], rowHeights=[40*mm, 40*mm, 60*mm])
+        tbl = Table(data, colWidths=[80*mm, 160*mm], rowHeights=[40*mm, 40*mm, 80*mm])
         tbl.setStyle(TableStyle([
             ('FONT', (0, 0), (-1, -1), font, 24),
-            ('FONT', (0, 0), (0, -1), bold, 28),  # 좌측 라벨 굵게(같은 폰트면 동일 크기)
-            ('FONTSIZE', (1, 0), (1, 1), 36),     # 회사명/날짜 크게
-            ('FONTSIZE', (1, 2), (1, 2), 36),
+            ('FONT', (0, 0), (0, -1), bold, 28),
+            ('FONTSIZE', (1, 0), (1, 1), 36),
             ('ALIGN', (0, 0), (-1, -1), 'CENTER'),
             ('VALIGN', (0, 0), (-1, -1), 'MIDDLE'),
             ('GRID', (0, 0), (-1, -1), 1.2, colors.black),
-            ('LEADING', (1, 2), (1, 2), 32),
         ]))
         elements.append(tbl)
         if i < len(outboxes) - 1:
