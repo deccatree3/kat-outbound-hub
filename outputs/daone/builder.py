@@ -40,6 +40,8 @@ import xlrd
 
 # 다원 발주서 헤더 행 배경색 (#E8E8E8)
 _HEADER_FILL = PatternFill(start_color='E8E8E8', end_color='E8E8E8', fill_type='solid')
+# KSE 큐텐 국내 빌드 시 'NO' 추가 컬럼 헤더 색상 (#FFFF00)
+_NO_COL_HEADER_FILL = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
 
 
 DAONE_HEADERS = [
@@ -157,18 +159,32 @@ def transform_to_daone(eza_rows: List[Dict]) -> List[Dict]:
     return out
 
 
-def build_daone_xlsx(daone_rows: List[Dict]) -> bytes:
-    """다원 발주서.xlsx bytes 생성. 단일 `발주서` 시트, 19 컬럼."""
+def build_daone_xlsx(daone_rows: List[Dict], add_no_column: bool = False) -> bytes:
+    """다원 발주서.xlsx bytes 생성. 단일 `발주서` 시트, 19 컬럼.
+    add_no_column=True 면 마지막에 'NO' 컬럼 추가 (1부터 일련번호, 헤더 색상 #FFFF00).
+    KSE 큐텐 국내 출고용.
+    """
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = '발주서'
-    ws.append(DAONE_HEADERS)
-    # 헤더 행 배경색 (#E8E8E8)
+    headers = list(DAONE_HEADERS) + (['NO'] if add_no_column else [])
+    ws.append(headers)
+    # 표준 헤더 색상
     for c in range(1, len(DAONE_HEADERS) + 1):
         ws.cell(1, c).fill = _HEADER_FILL
-    for r in daone_rows:
-        ws.append([r.get(h, '') for h in DAONE_HEADERS])
+    # NO 컬럼 헤더 색상 (#FFFF00)
+    if add_no_column:
+        ws.cell(1, len(headers)).fill = _NO_COL_HEADER_FILL
+
+    for idx, r in enumerate(daone_rows, 1):
+        row_values = [r.get(h, '') for h in DAONE_HEADERS]
+        if add_no_column:
+            row_values.append(idx)
+        ws.append(row_values)
+
     widths = [14, 18, 14, 14, 40, 14, 8, 12, 16, 16, 12, 16, 16, 12, 50, 50, 30, 16, 12]
+    if add_no_column:
+        widths = widths + [6]
     for i, w in enumerate(widths, 1):
         ws.column_dimensions[get_column_letter(i)].width = w
     buf = io.BytesIO()
