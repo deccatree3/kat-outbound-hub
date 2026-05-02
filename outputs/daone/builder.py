@@ -34,8 +34,12 @@ import io
 from typing import Dict, List
 
 import openpyxl
+from openpyxl.styles import PatternFill
 from openpyxl.utils import get_column_letter
 import xlrd
+
+# 다원 발주서 헤더 행 배경색 (#E8E8E8)
+_HEADER_FILL = PatternFill(start_color='E8E8E8', end_color='E8E8E8', fill_type='solid')
 
 
 DAONE_HEADERS = [
@@ -159,6 +163,9 @@ def build_daone_xlsx(daone_rows: List[Dict]) -> bytes:
     ws = wb.active
     ws.title = '발주서'
     ws.append(DAONE_HEADERS)
+    # 헤더 행 배경색 (#E8E8E8)
+    for c in range(1, len(DAONE_HEADERS) + 1):
+        ws.cell(1, c).fill = _HEADER_FILL
     for r in daone_rows:
         ws.append([r.get(h, '') for h in DAONE_HEADERS])
     widths = [14, 18, 14, 14, 40, 14, 8, 12, 16, 16, 12, 16, 16, 12, 50, 50, 30, 16, 12]
