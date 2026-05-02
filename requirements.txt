@@ -5,3 +5,4 @@ xlrd>=2.0
 requests>=2.31
 psycopg[binary]>=3.1
 plotly>=5.20
+reportlab>=4.0

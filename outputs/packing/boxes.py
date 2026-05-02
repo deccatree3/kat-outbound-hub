@@ -120,3 +120,65 @@ def select_outbox_for(inbox_type: str, count: int) -> Tuple[str, int]:
     if box is None:
         box = max(candidates, key=lambda x: x[fit_key])
     return (box['name'], box[fit_key])
+
+
+def compute_packing(daone_rows: List[Dict],
+                    group_key_field: str = '_group_key') -> List[Dict]:
+    """daone_rows 에 패킹 컬럼 4개를 mutating 추가 + 인박스NO 순으로 정렬해서 반환.
+
+    각 행에 추가되는 키:
+      _packing_inbox      (예: '에이지샷 1호')
+      _packing_inbox_no   (1, 2, 3...)
+      _packing_outbox     (예: '위오 1호')
+      _packing_outbox_no  (1, 2, 3...)
+    """
+    from collections import OrderedDict, defaultdict
+
+    # 1) group_key 별로 그룹화
+    groups = OrderedDict()
+    for i, r in enumerate(daone_rows):
+        key = r.get(group_key_field) or (i,)
+        groups.setdefault(key, []).append(i)
+
+    # 2) 그룹별 인박스 결정 + 인박스NO 부여
+    inbox_no_to_label = {}
+    for inbox_no, (gk, idxs) in enumerate(groups.items(), 1):
+        total_qty = sum(int(daone_rows[i].get('주문수량', 0) or 0) for i in idxs)
+        split = split_to_inboxes(total_qty)
+        if len(split) == 1:
+            label = split[0][0]
+        else:
+            label = ' + '.join(f"{t}×{n}" for t, n in split) + ' (분할)'
+        inbox_no_to_label[inbox_no] = label
+        for i in idxs:
+            daone_rows[i]['_packing_inbox'] = label
+            daone_rows[i]['_packing_inbox_no'] = inbox_no
+
+    # 3) 인박스 종류별로 모아 아웃박스 결정 (Best-Fit)
+    inbox_nos_by_label = defaultdict(list)
+    for ibox_no, label in inbox_no_to_label.items():
+        inbox_nos_by_label[label].append(ibox_no)
+
+    outbox_by_inbox = {}
+    outbox_no_counter = 0
+    for label, ibox_no_list in inbox_nos_by_label.items():
+        primary = label.split('×')[0].split(' + ')[0].strip()
+        outbox_name, fit_limit = select_outbox_for(primary, len(ibox_no_list))
+        if not outbox_name:
+            outbox_name, fit_limit = ('미정', max(1, len(ibox_no_list)))
+        for chunk_start in range(0, len(ibox_no_list), fit_limit):
+            outbox_no_counter += 1
+            chunk = ibox_no_list[chunk_start: chunk_start + fit_limit]
+            for ibox_no in chunk:
+                outbox_by_inbox[ibox_no] = (outbox_name, outbox_no_counter)
+
+    for i, r in enumerate(daone_rows):
+        ibox_no = r.get('_packing_inbox_no')
+        if ibox_no is not None:
+            obox_name, obox_no = outbox_by_inbox.get(ibox_no, ('', None))
+            r['_packing_outbox'] = obox_name
+            r['_packing_outbox_no'] = obox_no
+
+    # 4) 인박스NO 순 정렬
+    return sorted(daone_rows,
+                  key=lambda r: (r.get('_packing_inbox_no') or 9999,))

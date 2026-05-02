@@ -28,6 +28,8 @@ from outputs.daone.builder import (
     kse_oms_to_daone_with_mapping,
     build_daone_xlsx,
 )
+from outputs.kse_label.attached import build_kse_attached_pdf
+from outputs.packing.boxes import compute_packing
 from qoo10 import generator as qgen
 
 
@@ -313,6 +315,14 @@ def render_page():
         st.error(f"다원 xlsx 생성 실패: {ex}")
         return
 
+    # 부착문서 PDF — 아웃박스별 라벨
+    try:
+        packed_rows = compute_packing(list(daone_rows))
+        attached_pdf_bytes = build_kse_attached_pdf(packed_rows, work_date)
+    except Exception as ex:
+        st.error(f"부착문서 PDF 생성 실패: {ex}")
+        attached_pdf_bytes = None
+
     unique_orders = len({r.get('고객주문번호', '') for r in daone_rows if r.get('고객주문번호')})
     total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
 
@@ -326,6 +336,17 @@ def render_page():
         type="primary", width="stretch",
         key="kse_daone_download",
     )
+
+    if attached_pdf_bytes:
+        attached_name = f"{yymmdd}_{int(sequence)}차_KSE_부착문서.pdf"
+        st.download_button(
+            f"📥 {attached_name}",
+            data=attached_pdf_bytes,
+            file_name=attached_name,
+            mime="application/pdf",
+            type="primary", width="stretch",
+            key="kse_attached_pdf_download",
+        )
 
     if uploaded_pdf is not None:
         pdf_out_name = f"{yymmdd}_{int(sequence)}차_KSE쉽먼트라벨.pdf"
