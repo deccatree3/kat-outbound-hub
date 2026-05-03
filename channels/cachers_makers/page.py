@@ -6,7 +6,8 @@
 
 매핑:
   - channel_product_mapping (channel='cachers_makers')
-  - 매핑 없는 (상품, 옵션) 발견 시 어드민 → 🔧 상품 매핑 에서 등록 안내
+  - 미매핑 (상품, 옵션) 발견 시 페이지 안에서 즉석 등록 (KSE 국내와 동일 패턴)
+  - 잘못 등록된 매핑 수정/삭제는 어드민 → 🔧 상품 매핑
 
 출력:
   - 다원 발주서.xlsx (다원 표준 19컬럼)
@@ -47,8 +48,12 @@ def _mapping_table():
     ])
 
 
-def _render_pending_warning(unknown_rows):
-    """미매핑 (상품, 옵션) 발견 시 안내 — 등록은 어드민에서."""
+def _render_pending_mappings(unknown_rows):
+    """미매핑 (상품, 옵션) 즉석 등록 모달.
+    각 항목별로 SKU 코드 + 상품명 + 수량 직접 입력. 등록 후 rerun.
+    """
+    known_skus = _map.list_known_skus()
+
     pending = {}
     for r in unknown_rows:
         key = (r['상품'], r['옵션'])
@@ -59,8 +64,7 @@ def _render_pending_warning(unknown_rows):
 
     st.error(
         f"🆕 **신규 매핑 등록 필요 {len(pending)}건** — "
-        "사이드바 → ⚙️ 관리 → **🔧 상품 매핑** 에서 채널 = `cachers_makers` 선택 후 등록하세요. "
-        "모두 해결되어야 다원 발주서 다운로드 가능."
+        "각 항목별 SKU 구성 입력 후 등록하세요. 모두 해결되어야 다원 발주서 다운로드 가능."
     )
 
     summary = pd.DataFrame([
@@ -72,6 +76,7 @@ def _render_pending_warning(unknown_rows):
         }
         for k, sample in pending.items()
     ])
+    st.markdown("**신규 등록 대상**")
     st.dataframe(
         summary, hide_index=True, width="stretch",
         column_config={
@@ -81,6 +86,73 @@ def _render_pending_warning(unknown_rows):
             '대표 배송번호': st.column_config.TextColumn(width="small"),
         },
     )
+
+    # 기존 등록된 SKU 참고
+    if known_skus:
+        with st.expander(f"📋 기존 등록 SKU 참고 ({len(known_skus)}개) — 코드 복사용", expanded=False):
+            st.dataframe(
+                pd.DataFrame(known_skus), hide_index=True, width="stretch",
+                column_config={
+                    'sku_code': st.column_config.TextColumn('SKU 코드', width="medium"),
+                    'sku_name': st.column_config.TextColumn('상품명', width="large"),
+                },
+            )
+
+    items = list(pending.items())
+    st.markdown("---")
+    st.markdown(f"**📝 매핑 입력** — 총 {len(items)}건")
+
+    for idx, ((pname, poption), sample) in enumerate(items):
+        with st.container(border=True):
+            st.markdown(f"**🆕 [{idx+1}/{len(items)}] {pname}**")
+            st.caption(f"옵션: `{poption or '(없음)'}`")
+
+            ed_key = f"makers_mapeditor_{idx}_{hash((pname, poption))}"
+            st.markdown("**다원 SKU 구성** (세트면 행 추가)")
+            base = pd.DataFrame({
+                'SKU 코드': [''],
+                '상품명': [''],
+                '수량': [1],
+            })
+            edited = st.data_editor(
+                base,
+                column_config={
+                    'SKU 코드': st.column_config.TextColumn(
+                        required=True, width="medium",
+                        help="예) NKVOLP250"),
+                    '상품명': st.column_config.TextColumn(
+                        required=False, width="large",
+                        help="비고용 — 빈값이면 SKU 코드로 채워짐"),
+                    '수량': st.column_config.NumberColumn(
+                        min_value=1, step=1, default=1, required=True, width="small"),
+                },
+                num_rows="dynamic",
+                key=ed_key,
+                hide_index=True,
+            )
+
+            if st.button(
+                "💾 매핑 등록",
+                key=f"makers_save_{ed_key}", type="primary",
+            ):
+                valid = edited[edited['SKU 코드'].astype(str).str.strip() != '']
+                if valid.empty:
+                    st.error("최소 1개 SKU 코드 필요.")
+                else:
+                    payload = []
+                    for _, row in valid.iterrows():
+                        code = str(row['SKU 코드']).strip()
+                        name = str(row['상품명'] or '').strip() or code
+                        qty = int(row['수량'] or 1)
+                        payload.append((code, name, qty))
+                    if _map.upsert(CHANNEL_KEY, pname, poption, payload):
+                        st.success(
+                            "등록 완료: "
+                            + " + ".join(f"{n}×{q}" for _, n, q in payload)
+                        )
+                        st.rerun()
+                    else:
+                        st.error("매핑 등록 실패 (DB 연결 확인)")
 
 
 def render_page():
@@ -144,7 +216,7 @@ def render_page():
         ):
             st.dataframe(pd.DataFrame(incomplete), hide_index=True, width="stretch")
 
-    _render_pending_warning(unknown)
+    _render_pending_mappings(unknown)
 
     if unknown:
         return
