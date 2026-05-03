@@ -24,6 +24,7 @@ from outputs.daone.builder import (
     build_daone_xlsx,
 )
 from outputs.eza.builder import build_makers_eza_xls
+from outputs.makers.waybill import fill_makers_waybills
 
 
 CHANNEL_KEY = 'cachers_makers'
@@ -273,8 +274,7 @@ def _render_eza_output(makers_rows, work_date, sequence):
     )
 
 
-def render_page():
-    _map.ensure_schema()
+def _tab_create_order():
     st.markdown(
         "카카오메이커스 주문내역.xlsx 업로드 후 출력 형식 선택. "
         "다원 발주서 (직접) — SKU 매핑 필요 / 이지어드민 발주서 (통합) — 매핑 불필요."
@@ -335,3 +335,103 @@ def render_page():
         _render_daone_output(makers_rows, work_date, int(sequence))
     else:
         _render_eza_output(makers_rows, work_date, int(sequence))
+
+
+def _tab_fill_waybill():
+    st.markdown(
+        "다원 채번.xls + 메이커스 원본 주문서.xlsx 업로드 → "
+        "송장번호 채워진 메이커스 주문서.xlsx 다운로드 → 메이커스 어드민에 업로드."
+    )
+    st.caption(
+        "매칭 키: (수령인명, 수령인 연락처1) — 같은 사람이 같은 날 여러 주문이면 "
+        "다원 채번 순서대로 1:1 매칭. 매칭 실패는 미매칭 목록에 표시됩니다."
+    )
+
+    uploaded = st.file_uploader(
+        "메이커스 원본.xlsx + 다원 채번.xls 한 번에 업로드",
+        type=['xlsx', 'xls'],
+        accept_multiple_files=True,
+        key="makers_waybill_files",
+        help="확장자로 자동 분류 (.xlsx → 메이커스 원본, .xls → 다원 채번)",
+    )
+
+    makers_xlsx = next((f for f in (uploaded or []) if f.name.lower().endswith('.xlsx')), None)
+    daone_xls = next((f for f in (uploaded or []) if f.name.lower().endswith('.xls')), None)
+
+    chk_x = '✅' if makers_xlsx else ''
+    chk_d = '✅' if daone_xls else ''
+    st.markdown(
+        "<div style='font-size:0.8em'>\n\n"
+        "| 파일 | 용도 | 업로드 |\n"
+        "|------|------|:----:|\n"
+        f"| `*.xlsx` | 메이커스 원본 주문서 (송장 채워질 양식) | {chk_x} |\n"
+        f"| `*.xls` | 다원 채번 (운송장번호 source) | {chk_d} |\n\n"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not (makers_xlsx and daone_xls):
+        return
+
+    try:
+        result_bytes, info = fill_makers_waybills(
+            makers_xlsx.getvalue(), daone_xls.getvalue()
+        )
+    except Exception as ex:
+        st.error(f"송장 기입 실패: {ex}")
+        return
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("✅ 송장 기입", info['filled'])
+    c2.metric("🆕 미매칭 (메이커스)", len(info['unmatched']))
+    c3.metric("⚠️ 동일 키 중복", len(info['duplicates']))
+    c4.metric("📦 잔여 채번", len(info['leftover_waybills']),
+              help="다원 채번에 있으나 메이커스에 매칭 안 된 행 — 보통 0")
+
+    if info['unmatched']:
+        with st.expander(
+            f"🆕 미매칭 메이커스 행 {len(info['unmatched'])}건 — 다원 채번에 없음",
+            expanded=True,
+        ):
+            st.dataframe(pd.DataFrame(info['unmatched']),
+                         hide_index=True, width="stretch")
+
+    if info['duplicates']:
+        with st.expander(
+            f"⚠️ 동일 (수령인, 전화) 키 중복 매칭 {len(info['duplicates'])}건",
+            expanded=False,
+        ):
+            st.dataframe(pd.DataFrame(info['duplicates']),
+                         hide_index=True, width="stretch")
+            st.caption("같은 사람이 같은 날 여러 주문 → 다원 채번 순서대로 1:1 매칭. 검수 권장.")
+
+    if info['leftover_waybills']:
+        with st.expander(
+            f"📦 잔여 채번 {len(info['leftover_waybills'])}건 — 메이커스에 매칭 안 됨",
+            expanded=False,
+        ):
+            st.dataframe(pd.DataFrame(info['leftover_waybills']),
+                         hide_index=True, width="stretch")
+            st.caption("두 파일의 사람/전화 표기 차이 또는 데이터 누락 가능. 검수 필요.")
+
+    out_name = makers_xlsx.name.replace('.xlsx', '_송장기입.xlsx')
+    st.download_button(
+        f"📥 {out_name}",
+        data=result_bytes,
+        file_name=out_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary", width="stretch",
+        key="makers_waybill_download",
+    )
+    st.caption("📤 메이커스 어드민에 업로드.")
+
+
+def render_page():
+    _map.ensure_schema()
+    tab_order, tab_waybill = st.tabs([
+        "📤 발주서 생성", "📥 송장 기입"
+    ])
+    with tab_order:
+        _tab_create_order()
+    with tab_waybill:
+        _tab_fill_waybill()
