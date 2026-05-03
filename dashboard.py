@@ -1,5 +1,5 @@
 """
-KAT Outbound Hub — 캐처스/네뉴 출고 통합 대시보드.
+KAT/NN Outbound Hub — 캐처스/네뉴 출고 통합 대시보드.
 
 채널별 페이지를 좌측 셀렉터로 디스패치. 각 채널은 channels/<id>/page.py 에서
 render_page()를 export.
@@ -10,7 +10,7 @@ import streamlit as st
 
 
 st.set_page_config(
-    page_title="KAT Outbound Hub",
+    page_title="KAT/NN Outbound Hub",
     page_icon="📤",
     layout="wide",
 )
@@ -25,7 +25,7 @@ except Exception:
     pass
 
 
-st.title("📤 KAT Outbound Hub")
+st.title("📤 KAT/NN Outbound Hub")
 st.caption("캐처스/네뉴 출고 통합")
 
 # 채널 레지스트리. status는 사용자에게 표시되는 진행도. 'render'가 있으면 dispatch 가능.
