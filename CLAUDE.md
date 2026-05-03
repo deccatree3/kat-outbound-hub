@@ -1,4 +1,4 @@
-# KAT Outbound Hub — 캐처스/네뉴 출고 통합 시스템
+# KAT/NN Outbound Hub — 캐처스/네뉴 출고 통합 시스템
 
 ## 프로젝트 개요
 

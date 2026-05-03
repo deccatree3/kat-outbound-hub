@@ -1,4 +1,4 @@
-# KAT Outbound Hub
+# KAT/NN Outbound Hub
 
 캐처스/네뉴 출고 통합 자동화 시스템.
 
