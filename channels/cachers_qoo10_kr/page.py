@@ -30,6 +30,9 @@ from outputs.daone.builder import (
 )
 from outputs.kse_label.attached import build_kse_attached_pdf
 from outputs.packing.boxes import compute_packing
+from channels._session_selector import (
+    render_work_session_selector, render_save_button,
+)
 
 
 CHANNEL_KEY = 'cachers_qoo10_kr'
@@ -227,14 +230,10 @@ def render_page():
     unknown = result['unknown_rows']
     incomplete = result['incomplete_rows']
 
-    # 작업일/차수
-    today = datetime.date.today()
-    c_d, c_s = st.columns([1, 1])
-    work_date = c_d.date_input("작업일", value=today, key="kse_work_date")
-    sequence = c_s.number_input(
-        "차수", min_value=1, value=1, step=1, key="kse_sequence",
-        help="같은 날 재실행 시 직접 +1 변경.",
-    )
+    session_info = render_work_session_selector(CHANNEL_KEY, key_prefix='kse_kr')
+    work_date = session_info['work_date']
+    sequence = session_info['sequence']
+    source_filename = ', '.join(f.name for f in uploaded_xlsxs)
 
     # 분기별 메트릭
     c1, c2, c3, c4 = st.columns(4)
@@ -298,14 +297,19 @@ def render_page():
 
     yymmdd = work_date.strftime('%y%m%d')
     out_name = f"{yymmdd}_{int(sequence)}차발주서_큐텐국내(주문건수 {unique_orders}, 주문량수 {total_qty}).xlsx"
-    st.download_button(
-        f"📥 {out_name}",
-        data=xlsx_bytes,
-        file_name=out_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary", width="stretch",
-        key="kse_daone_download",
-    )
+    c_dl, c_save = st.columns([2, 1])
+    with c_dl:
+        st.download_button(
+            f"📥 {out_name}",
+            data=xlsx_bytes,
+            file_name=out_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", width="stretch",
+            key="kse_daone_download",
+        )
+    with c_save:
+        render_save_button(CHANNEL_KEY, session_info, daone_rows,
+                           source_filename, key_prefix='kse_kr')
 
     if attached_pdf_bytes:
         attached_name = f"{yymmdd}_{int(sequence)}차_KSE_부착문서.pdf"

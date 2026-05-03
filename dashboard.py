@@ -39,6 +39,7 @@ CHANNELS = {
 }
 
 ADMIN_PAGES = {
+    "daone_combined": {"label": "🗂 통합 발주서", "desc": "채널별 저장 batch 모아 1개 다원 xlsx 다운로드"},
     "mapping": {"label": "🔧 상품 매핑", "desc": "전 채널 매핑 통합 관리 (조회/편집/삭제)"},
 }
 
@@ -67,7 +68,10 @@ if admin_selected != '(없음)':
     page = ADMIN_PAGES[admin_selected]
     st.subheader(page['label'])
     st.caption(page['desc'])
-    if admin_selected == 'mapping':
+    if admin_selected == 'daone_combined':
+        from admin.daone_combined.page import render_page
+        render_page()
+    elif admin_selected == 'mapping':
         from admin.mapping.page import render_page
         render_page()
 else:

@@ -25,6 +25,9 @@ from outputs.daone.builder import (
 )
 from outputs.eza.builder import build_makers_eza_xls
 from outputs.makers.waybill import fill_makers_waybills
+from channels._session_selector import (
+    render_work_session_selector, render_save_button,
+)
 
 
 CHANNEL_KEY = 'cachers_makers'
@@ -160,7 +163,7 @@ def _render_pending_mappings(unknown_rows):
                         st.error("매핑 등록 실패 (DB 연결 확인)")
 
 
-def _render_daone_output(makers_rows, work_date, sequence):
+def _render_daone_output(makers_rows, work_date, sequence, source_filename, session_info):
     """옵션 1 — 다원 발주서 직접 생성. SKU 매핑 필요."""
     try:
         mappings = _map.load_for_channel(CHANNEL_KEY)
@@ -217,15 +220,20 @@ def _render_daone_output(makers_rows, work_date, sequence):
 
     yymmdd = work_date.strftime('%y%m%d')
     out_name = f"{yymmdd}_{int(sequence)}차발주서_메이커스(주문건수 {unique_orders}, 주문량수 {total_qty}).xlsx"
-    st.download_button(
-        f"📥 {out_name}",
-        data=xlsx_bytes,
-        file_name=out_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary", width="stretch",
-        key="makers_daone_download",
-    )
-    st.caption("📤 다원에 메이커스 발주서 별도 전달.")
+    c_dl, c_save = st.columns([2, 1])
+    with c_dl:
+        st.download_button(
+            f"📥 {out_name}",
+            data=xlsx_bytes,
+            file_name=out_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", width="stretch",
+            key="makers_daone_download",
+        )
+    with c_save:
+        render_save_button(CHANNEL_KEY, session_info, daone_rows,
+                           source_filename, key_prefix='makers')
+    st.caption("📤 다원에 단독 전달 또는 통합 발주서에 저장.")
 
 
 def _render_eza_output(makers_rows, work_date, sequence):
@@ -310,12 +318,10 @@ def _tab_create_order():
         st.warning("📭 메이커스 파일에 주문 데이터가 없습니다.")
         return
 
-    today = datetime.date.today()
-    c_d, c_s = st.columns([1, 1])
-    work_date = c_d.date_input("작업일", value=today, key="makers_work_date")
-    sequence = c_s.number_input(
-        "차수", min_value=1, value=1, step=1, key="makers_sequence",
-    )
+    session_info = render_work_session_selector(CHANNEL_KEY, key_prefix='makers')
+    work_date = session_info['work_date']
+    sequence = session_info['sequence']
+    source_filename = ', '.join(f.name for f in uploaded_files)
 
     output_kind = st.radio(
         "출력 형식",
@@ -324,7 +330,7 @@ def _tab_create_order():
         key="makers_output_kind",
         help=(
             f"**{OUTPUT_DAONE}**: 메이커스 → 다원 19컬럼 발주서. SKU 매핑 필요. "
-            "다원에 직접 전달.\n\n"
+            "다원에 직접 전달 또는 통합 발주서에 저장.\n\n"
             f"**{OUTPUT_EZA}**: 메이커스 → 이지어드민 8컬럼 발주서. 매핑 불필요. "
             "이지어드민 업로드 후 다른 캐처스 채널과 통합되어 다원으로."
         ),
@@ -332,7 +338,8 @@ def _tab_create_order():
 
     st.markdown("---")
     if output_kind == OUTPUT_DAONE:
-        _render_daone_output(makers_rows, work_date, int(sequence))
+        _render_daone_output(makers_rows, work_date, int(sequence),
+                             source_filename, session_info)
     else:
         _render_eza_output(makers_rows, work_date, int(sequence))
 

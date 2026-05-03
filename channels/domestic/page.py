@@ -18,6 +18,12 @@ from outputs.daone.builder import (
     build_daone_xlsx,
 )
 from outputs.nenu_bundle.builder import build_bundle_xlsx
+from channels._session_selector import (
+    render_work_session_selector, render_save_button,
+)
+
+
+CHANNEL_KEY = 'domestic'
 
 
 def _eza_mapping_table():
@@ -69,7 +75,7 @@ def _render_metrics_and_preview(daone_rows):
     return unique_orders, total_qty
 
 
-def _section_daone(eza_rows, work_date, sequence):
+def _section_daone(eza_rows, work_date, sequence, source_filename, session_info):
     st.markdown("### 📋 다원 발주서 (캐처스만)")
     st.caption("판매처그룹='캐처스' 행만 변환. 나머지(네뉴 등) 행은 자동 제외.")
 
@@ -89,15 +95,20 @@ def _section_daone(eza_rows, work_date, sequence):
 
     yymmdd = work_date.strftime('%y%m%d')
     out_name = f"{yymmdd}_{int(sequence)}차발주서(주문건수 {unique_orders}, 주문량수 {total_qty}).xlsx"
-    st.download_button(
-        f"📥 {out_name}",
-        data=xlsx_bytes,
-        file_name=out_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary", width="stretch",
-        key="daone_download",
-    )
-    st.caption("📤 다원 WMS에 수기 업로드.")
+    c_dl, c_save = st.columns([2, 1])
+    with c_dl:
+        st.download_button(
+            f"📥 {out_name}",
+            data=xlsx_bytes,
+            file_name=out_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", width="stretch",
+            key="daone_download",
+        )
+    with c_save:
+        render_save_button(CHANNEL_KEY, session_info, daone_rows,
+                           source_filename, key_prefix='domestic')
+    st.caption("📤 다원 WMS에 수기 업로드 (단독) 또는 통합 발주서에 저장.")
 
 
 def _section_bundle(eza_bytes_list, work_date, sequence):
@@ -183,14 +194,11 @@ def render_page():
         st.warning("📭 EZA 파일에 주문 데이터가 없습니다.")
         return
 
-    today = datetime.date.today()
-    c_d, c_s = st.columns([1, 1])
-    work_date = c_d.date_input("작업일", value=today, key="domestic_work_date")
-    sequence = c_s.number_input(
-        "차수", min_value=1, value=1, step=1, key="domestic_sequence",
-        help="같은 날 재실행 시 직접 +1 변경.",
-    )
+    session_info = render_work_session_selector(CHANNEL_KEY, key_prefix='domestic')
+    work_date = session_info['work_date']
+    sequence = session_info['sequence']
+    source_filename = ', '.join(f.name for f in uploaded_files)
 
-    _section_daone(eza_rows, work_date, int(sequence))
+    _section_daone(eza_rows, work_date, int(sequence), source_filename, session_info)
     st.markdown("---")
     _section_bundle([f.getvalue() for f in uploaded_files], work_date, int(sequence))
