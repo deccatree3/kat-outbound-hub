@@ -173,6 +173,32 @@ def list_keys_for_channel(channel: str, limit: int = 50) -> List[Dict]:
     } for r in rows]
 
 
+def list_all(limit: int = 200) -> List[Dict]:
+    """모든 batch 평면 메타 (rows 제외) — 통합 페이지의 평면 리스트.
+    최신 우선.
+    """
+    ensure_schema()
+    try:
+        conn = pg.connect(autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT work_date, sequence, channel, row_count,
+                       source_filename, note, created_at, updated_at
+                FROM daone_pending_batch
+                ORDER BY work_date DESC, sequence DESC, channel
+                LIMIT %s
+            """, (int(limit),))
+            rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        return []
+    return [{
+        'work_date': r[0], 'sequence': r[1], 'channel': r[2],
+        'row_count': r[3], 'source_filename': r[4], 'note': r[5],
+        'created_at': r[6], 'updated_at': r[7],
+    } for r in rows]
+
+
 def list_all_sessions(limit: int = 50) -> List[Tuple[datetime.date, int]]:
     """모든 채널을 통틀어 (work_date, sequence) distinct — 통합 페이지의 selectbox 용.
     최신 우선.
