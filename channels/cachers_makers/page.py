@@ -38,7 +38,7 @@ def _mapping_table():
         {'메이커스': '— 고정 —',          '다원 19컬럼': '몰명(또는 몰코드) = "000000000001"'},
         {'메이커스': '— 고정 —',          '다원 19컬럼': '출하의뢰번호 = "[캐처스] 카카오메이커스"'},
         {'메이커스': '배송번호',          '다원 19컬럼': '출하의뢰항번'},
-        {'메이커스': '주문번호',          '다원 19컬럼': '고객주문번호'},
+        {'메이커스': '주문번호',          '다원 19컬럼': '주문번호'},
         {'메이커스': '상품 + 옵션',       '다원 19컬럼': '상품명'},
         {'메이커스': 'channel_product_mapping 조회 → SKU', '다원 19컬럼': '제품코드 (1→N 펼침)'},
         {'메이커스': '수량',              '다원 19컬럼': '주문수량 = SKU단위수량 × 메이커스수량'},
@@ -199,7 +199,7 @@ def _render_daone_output(makers_rows, work_date, sequence):
     st.markdown("---")
     st.markdown("**미리보기**")
     df = pd.DataFrame(daone_rows)
-    preview_cols = ['출하의뢰번호', '출하의뢰항번', '고객주문번호', '상품명', '제품코드',
+    preview_cols = ['출하의뢰번호', '출하의뢰항번', '주문번호', '상품명', '제품코드',
                     '주문수량', '수취인명', '수취인우편번호', '수취인주소1', '송장번호', '택배사명']
     available = [c for c in preview_cols if c in df.columns]
     st.dataframe(df[available].head(50), width="stretch", hide_index=True)
@@ -212,7 +212,7 @@ def _render_daone_output(makers_rows, work_date, sequence):
         st.error(f"다원 xlsx 생성 실패: {ex}")
         return
 
-    unique_orders = len({r.get('고객주문번호', '') for r in daone_rows if r.get('고객주문번호')})
+    unique_orders = len({r.get('주문번호', '') for r in daone_rows if r.get('주문번호')})
     total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
 
     yymmdd = work_date.strftime('%y%m%d')

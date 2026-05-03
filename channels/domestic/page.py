@@ -26,7 +26,7 @@ def _eza_mapping_table():
         {'EZA 컬럼': '몰명(또는 몰코드)',    '다원 컬럼': '몰명(또는 몰코드) — 빈값이면 "000000000001"'},
         {'EZA 컬럼': '출하의뢰번호',         '다원 컬럼': '출하의뢰번호'},
         {'EZA 컬럼': '출하의뢰항번',         '다원 컬럼': '출하의뢰항번'},
-        {'EZA 컬럼': '주문번호',             '다원 컬럼': '고객주문번호'},
+        {'EZA 컬럼': '주문번호',             '다원 컬럼': '주문번호'},
         {'EZA 컬럼': '상품명',               '다원 컬럼': '상품명'},
         {'EZA 컬럼': '제품코드',             '다원 컬럼': '제품코드 — 빈값이면 판매처그룹="캐처스"→상품메모, 그 외→바코드'},
         {'EZA 컬럼': '바코드',               '다원 컬럼': '— 제품코드 fallback —'},
@@ -50,7 +50,7 @@ def _eza_mapping_table():
 def _render_metrics_and_preview(daone_rows):
     c1, c2, c3 = st.columns(3)
     c1.metric("주문 행수", len(daone_rows))
-    unique_orders = len({r.get('고객주문번호', '') for r in daone_rows if r.get('고객주문번호')})
+    unique_orders = len({r.get('주문번호', '') for r in daone_rows if r.get('주문번호')})
     c2.metric("주문번호 (고유)", unique_orders)
     try:
         total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
@@ -60,7 +60,7 @@ def _render_metrics_and_preview(daone_rows):
 
     df_preview = pd.DataFrame(daone_rows)
     st.markdown("**미리보기** (다원 양식)")
-    preview_cols = ['몰명(또는 몰코드)', '고객주문번호', '상품명', '제품코드', '주문수량',
+    preview_cols = ['몰명(또는 몰코드)', '주문번호', '상품명', '제품코드', '주문수량',
                     '수취인명', '수취인우편번호', '수취인주소1', '배송메시지']
     available = [c for c in preview_cols if c in df_preview.columns]
     st.dataframe(df_preview[available].head(50), width="stretch", hide_index=True)

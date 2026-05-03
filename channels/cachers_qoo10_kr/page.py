@@ -39,7 +39,7 @@ def _kse_mapping_table():
     return pd.DataFrame([
         {'KSE OMS': '판매마켓',                    '다원 19컬럼': '출하의뢰번호'},
         {'KSE OMS': '접수번호',                     '다원 19컬럼': '출하의뢰항번'},
-        {'KSE OMS': '주문번호',                     '다원 19컬럼': '고객주문번호'},
+        {'KSE OMS': '주문번호',                     '다원 19컬럼': '주문번호'},
         {'KSE OMS': '상품명 + 옵션명',              '다원 19컬럼': '상품명'},
         {'KSE OMS': 'channel_product_mapping 조회 → SKU', '다원 19컬럼': '제품코드 (1→N 펼침)'},
         {'KSE OMS': '수량',                         '다원 19컬럼': '주문수량 = SKU단위수량 × KSE수량'},
@@ -271,7 +271,7 @@ def render_page():
     st.markdown("---")
     st.markdown("**미리보기**")
     df = pd.DataFrame(daone_rows)
-    preview_cols = ['출하의뢰번호', '출하의뢰항번', '고객주문번호', '상품명', '제품코드',
+    preview_cols = ['출하의뢰번호', '출하의뢰항번', '주문번호', '상품명', '제품코드',
                     '주문수량', '수취인명', '수취인우편번호', '수취인주소1', '송장번호', '택배사명']
     available = [c for c in preview_cols if c in df.columns]
     st.dataframe(df[available].head(50), width="stretch", hide_index=True)
@@ -293,7 +293,7 @@ def render_page():
         st.error(f"부착문서 PDF 생성 실패: {ex}")
         attached_pdf_bytes = None
 
-    unique_orders = len({r.get('고객주문번호', '') for r in daone_rows if r.get('고객주문번호')})
+    unique_orders = len({r.get('주문번호', '') for r in daone_rows if r.get('주문번호')})
     total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
 
     yymmdd = work_date.strftime('%y%m%d')
