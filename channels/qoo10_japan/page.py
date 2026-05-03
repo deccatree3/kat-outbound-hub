@@ -933,8 +933,10 @@ def _render_mapping_tab():
 
     try:
         maps_df = pg.query_df("""
-            SELECT qoo10_name, qoo10_option, item_codes, sku_codes, quantities, enabled
-            FROM qoo10_product_mapping ORDER BY enabled DESC, qoo10_name, qoo10_option
+            SELECT product_name, product_option, item_codes, sku_codes, quantities
+            FROM channel_product_mapping
+            WHERE channel = 'qoo10_japan'
+            ORDER BY product_name, product_option
         """)
     except Exception as ex:
         st.error(f"매핑 조회 실패: {ex}")
@@ -948,11 +950,10 @@ def _render_mapping_tab():
             qtys += ['1'] * (len(names) - len(qtys))
         sku_summary = ' + '.join(f"{n}×{q}" for n, q in zip(names, qtys))
         summary_rows.append({
-            'Qoo10 상품명': row['qoo10_name'],
-            'Qoo10 옵션': row['qoo10_option'] or '',
+            'Qoo10 상품명': row['product_name'],
+            'Qoo10 옵션': row['product_option'] or '',
             'SKU 구성': sku_summary,
             '품목수': len(names),
-            '활성': '✅' if row['enabled'] else '⏸️',
         })
     summary_df = pd.DataFrame(summary_rows)
 
@@ -972,14 +973,13 @@ def _render_mapping_tab():
             'Qoo10 옵션': st.column_config.TextColumn(width="medium"),
             'SKU 구성': st.column_config.TextColumn(width="large"),
             '품목수': st.column_config.NumberColumn(width="small"),
-            '활성': st.column_config.TextColumn(width="small"),
         },
     )
 
     st.markdown("---")
     st.markdown("### ✏️ 매핑 편집")
 
-    mapping_keys = [(row['qoo10_name'], row['qoo10_option'] or '') for _, row in maps_df.iterrows()]
+    mapping_keys = [(row['product_name'], row['product_option'] or '') for _, row in maps_df.iterrows()]
     options = ['— 새 매핑 추가 —'] + [
         f"{qn[:50]}{'...' if len(qn)>50 else ''}  /  {qo[:40] if qo else '(옵션없음)'}"
         for qn, qo in mapping_keys
@@ -992,7 +992,6 @@ def _render_mapping_tab():
     if sel_idx == 0:
         edit_qn = st.text_area("Qoo10 상품명", value="", height=80, key="edit_qn_new")
         edit_qo = st.text_input("Qoo10 옵션 (없으면 빈칸)", value="", key="edit_qo_new")
-        edit_enabled = st.checkbox("활성", value=True, key="edit_en_new")
         init_skus = [(sku_name_options[0], 1)] if sku_name_options else []
         is_new = True
         orig_key = None
@@ -1003,7 +1002,6 @@ def _render_mapping_tab():
         st.markdown(f"**Qoo10 옵션**: `{qo or '(없음)'}`")
         edit_qn = qn
         edit_qo = qo
-        edit_enabled = st.checkbox("활성", value=bool(src_row['enabled']), key=f"edit_en_{sel_idx}")
         names = [n.strip() for n in (src_row['item_codes'] or '').split(',') if n.strip()]
         qtys = [int(q) for q in (src_row['quantities'] or '').split(',') if q.strip()]
         init_skus = list(zip(
@@ -1016,7 +1014,7 @@ def _render_mapping_tab():
     st.markdown("**KSE SKU 구성** (세트면 `+ 행 추가`로 여러 품목)")
 
     if not sku_name_options:
-        st.info("선택 가능한 KSE 품목이 없습니다 (이력 비어있음). 직접 매핑이 필요하면 DB에서 `qoo10_product_mapping` 행을 수기로 입력하세요.")
+        st.info("선택 가능한 KSE 품목이 없습니다 (카탈로그 비어있음). 어드민의 'SKU 카탈로그'에서 등록하거나, 첫 출고 후 자동 등록되면 다시 시도하세요.")
         return
 
     sku_init_df = pd.DataFrame({
@@ -1074,7 +1072,7 @@ def _render_mapping_tab():
                     try:
                         if orig_key and (qn, qo) != orig_key:
                             qgen.delete_mapping(*orig_key)
-                        qgen.add_mapping(qn, qo, payload, enabled=edit_enabled)
+                        qgen.add_mapping(qn, qo, payload)
                         st.success("저장됨")
                         st.rerun()
                     except Exception as ex:

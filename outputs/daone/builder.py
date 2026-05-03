@@ -316,22 +316,19 @@ KSE_KR_DEPOT = {
 
 
 def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
-    """KSE OMS dict + Qoo10 매핑 → 다원 19컬럼 dict (SKU 환산 후).
+    """KSE OMS dict + 채널 매핑 (channel='cachers_qoo10_kr') → 다원 19컬럼.
 
-    분기 (Qoo10 일본 빌더와 enabled 분기 반대):
-      매핑 없음            → unknown_rows (등록 강제)
-      매핑 + enabled=True  → not_for_daone_rows (KSE 일본 출고 대상, 다원 제외)
-      매핑 + enabled=False, sku_codes 정상 → daone_rows 에 1→N 펼침
-      매핑 + enabled=False, sku_codes='-'/빈 → incomplete_rows (다원 SKU 미입력)
+    분기:
+      매핑 없음                   → unknown_rows (등록 강제)
+      매핑 + sku_codes 정상       → daone_rows 에 1→N 펼침
+      매핑 + sku_codes='-'/빈     → incomplete_rows (다원 SKU 미입력)
 
     반환: dict {
-        'daone_rows': [...], 'unknown_rows': [...],
-        'not_for_daone_rows': [...], 'incomplete_rows': [...],
+        'daone_rows': [...], 'unknown_rows': [...], 'incomplete_rows': [...],
     }
     """
     daone_rows: List[Dict] = []
     unknown_rows: List[Dict] = []
-    not_for_daone_rows: List[Dict] = []
     incomplete_rows: List[Dict] = []
 
     for k in kse_rows:
@@ -350,10 +347,6 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
         if m is None:
             unknown_rows.append(info)
             continue
-        if m.get('enabled'):
-            not_for_daone_rows.append(info)
-            continue
-        # enabled=False = 다원 출고 대상
         valid = [(s.strip(), q) for s, q in zip(m.get('sku_codes', []), m.get('quantities', []))
                  if s and s.strip() and s.strip() != '-']
         if not valid:
@@ -403,6 +396,5 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
     return {
         'daone_rows': daone_rows,
         'unknown_rows': unknown_rows,
-        'not_for_daone_rows': not_for_daone_rows,
         'incomplete_rows': incomplete_rows,
     }

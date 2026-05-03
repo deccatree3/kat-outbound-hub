@@ -80,26 +80,23 @@ OUTBOUND_HEADERS = [
 
 
 def load_kse_sku_catalog(location: str = 'JP') -> List[Dict]:
-    """KSE SKU 카탈로그 (location='JP' 또는 'KR').
+    """SKU 카탈로그 (전체).
+
+    location 인자는 하위 호환용 — 신규 sku_catalog 테이블은 location 컬럼 없음.
+    창고 구분이 필요하면 channel_product_mapping(channel) 으로 도출.
 
     우선순위:
-      1. kse_sku_catalog 테이블 (location 필터, enabled=True)
-      2. (location='JP'만) stock_snapshots + shipments UNION  ← 자매 프로젝트 fallback
-      3. (location='JP'만) qoo10_outbound 이력 fallback
-    어느 쪽도 실패하면 빈 리스트.
+      1. sku_catalog 테이블
+      2. stock_snapshots + shipments UNION (자매 프로젝트 fallback, 일회성)
+      3. qoo10_outbound 이력 fallback
     """
-    # 1. 신규 테이블
     try:
         from db import sku_catalog as _sc
-        rows = _sc.list_skus(location=location, enabled_only=True)
+        rows = _sc.list_skus()
         if rows:
             return [{'sku_code': r['sku_code'], 'sku_name': r['sku_name'] or ''} for r in rows]
     except Exception:
         pass
-
-    # 2~3. JP 대상 fallback (KR은 fallback 없음 — 사용자가 직접 등록)
-    if location != 'JP':
-        return []
 
     try:
         conn = pg.connect(autocommit=True)
@@ -135,64 +132,28 @@ def load_kse_sku_catalog(location: str = 'JP') -> List[Dict]:
         return []
 
 
+CHANNEL_QOO10_JAPAN = 'qoo10_japan'
+
+
 def add_mapping(qoo10_name: str, qoo10_option: str,
                 skus: List[Tuple[str, str, int]], enabled: bool = True):
+    """Qoo10 일본 매핑 upsert. skus = [(sku_code, sku_name, qty), ...]
+    enabled 인자는 하위 호환용 (채널 분리로 의미 잃음).
     """
-    새/기존 매핑 upsert. skus = [(sku_code, sku_name, qty), ...]
-    sku_code는 sku_name에서 카탈로그로 조회되므로 호출부에서 전달받음.
-    """
-    item_codes = ','.join(s[1] for s in skus)
-    sku_codes = ','.join(s[0] for s in skus)
-    quantities = ','.join(str(s[2]) for s in skus)
-
-    conn = pg.connect()
-    with conn.cursor() as cur:
-        cur.execute("""
-            INSERT INTO qoo10_product_mapping
-            (qoo10_name, qoo10_option, item_codes, sku_codes, quantities, enabled)
-            VALUES (%s, %s, %s, %s, %s, %s)
-            ON CONFLICT (qoo10_name, qoo10_option) DO UPDATE SET
-                item_codes = EXCLUDED.item_codes,
-                sku_codes = EXCLUDED.sku_codes,
-                quantities = EXCLUDED.quantities,
-                enabled = EXCLUDED.enabled,
-                updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
-        """, (qoo10_name, qoo10_option, item_codes, sku_codes, quantities, enabled))
-    conn.commit()
-    conn.close()
+    from db import mapping as _m
+    _m.upsert(CHANNEL_QOO10_JAPAN, qoo10_name, qoo10_option, skus)
 
 
 def delete_mapping(qoo10_name: str, qoo10_option: str):
-    """매핑 삭제"""
-    conn = pg.connect()
-    with conn.cursor() as cur:
-        cur.execute(
-            "DELETE FROM qoo10_product_mapping WHERE qoo10_name=%s AND qoo10_option=%s",
-            (qoo10_name, qoo10_option),
-        )
-    conn.commit()
-    conn.close()
+    """Qoo10 일본 매핑 삭제"""
+    from db import mapping as _m
+    _m.delete(CHANNEL_QOO10_JAPAN, qoo10_name, qoo10_option)
 
 
 def load_mappings() -> Dict[Tuple[str, str], Dict]:
-    """DB에서 상품 매핑 로드. key=(상품명, 옵션)"""
-    conn = pg.connect(autocommit=True)
-    with conn.cursor() as cur:
-        cur.execute("""
-            SELECT qoo10_name, qoo10_option, item_codes, sku_codes, quantities, enabled
-            FROM qoo10_product_mapping
-        """)
-        rows = cur.fetchall()
-    conn.close()
-    result = {}
-    for r in rows:
-        result[(r[0], r[1] or '')] = {
-            'item_codes': (r[2] or '').split(','),
-            'sku_codes': (r[3] or '').split(','),
-            'quantities': [int(x) for x in (r[4] or '1').split(',')],
-            'enabled': bool(r[5]),
-        }
-    return result
+    """Qoo10 일본 매핑 로드. key=(상품명, 옵션)"""
+    from db import mapping as _m
+    return _m.load_for_channel(CHANNEL_QOO10_JAPAN)
 
 
 def parse_qsm_csv(content: bytes) -> List[Dict]:
