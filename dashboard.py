@@ -39,7 +39,7 @@ CHANNELS = {
 }
 
 ADMIN_PAGES = {
-    "sku_catalog": {"label": "🗂 KSE SKU 마스터", "desc": "JP/KR 카탈로그 관리"},
+    "mapping": {"label": "🔧 상품 매핑", "desc": "전 채널 매핑 통합 관리 (조회/편집/삭제)"},
 }
 
 # ─── Sidebar ───
@@ -67,8 +67,8 @@ if admin_selected != '(없음)':
     page = ADMIN_PAGES[admin_selected]
     st.subheader(page['label'])
     st.caption(page['desc'])
-    if admin_selected == 'sku_catalog':
-        from admin.sku_catalog.page import render_page
+    if admin_selected == 'mapping':
+        from admin.mapping.page import render_page
         render_page()
 else:
     ch = CHANNELS[selected]

@@ -80,21 +80,21 @@ OUTBOUND_HEADERS = [
 
 
 def load_kse_sku_catalog(location: str = 'JP') -> List[Dict]:
-    """SKU 카탈로그 (전체).
+    """SKU 카탈로그 (전체). 매핑 테이블에서 distinct 추출.
 
-    location 인자는 하위 호환용 — 신규 sku_catalog 테이블은 location 컬럼 없음.
+    location 인자는 하위 호환용 (현재 사용 안 함).
     창고 구분이 필요하면 channel_product_mapping(channel) 으로 도출.
 
     우선순위:
-      1. sku_catalog 테이블
-      2. stock_snapshots + shipments UNION (자매 프로젝트 fallback, 일회성)
+      1. channel_product_mapping (모든 매핑의 sku_codes/item_codes)
+      2. stock_snapshots + shipments UNION (자매 프로젝트 fallback, 비어있을 때만)
       3. qoo10_outbound 이력 fallback
     """
     try:
-        from db import sku_catalog as _sc
-        rows = _sc.list_skus()
+        from db import mapping as _m
+        rows = _m.list_known_skus()
         if rows:
-            return [{'sku_code': r['sku_code'], 'sku_name': r['sku_name'] or ''} for r in rows]
+            return rows
     except Exception:
         pass
 

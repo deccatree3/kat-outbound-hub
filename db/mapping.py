@@ -135,6 +135,79 @@ def load_for_channel(channel: str) -> Dict[Tuple[str, str], Dict]:
     return result
 
 
+def list_known_skus() -> List[Dict]:
+    """모든 매핑의 sku_codes/item_codes 에서 distinct (sku_code, sku_name) 추출.
+    매핑 테이블이 SKU 마스터 역할을 겸함 (별도 sku_catalog 폐기).
+
+    같은 sku_code가 다른 매핑에서 다른 sku_name 으로 나오면 가장 최근 갱신 매핑의 이름 사용.
+    """
+    ensure_schema()
+    try:
+        conn = pg.connect(autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT sku_codes, item_codes, updated_at
+                FROM channel_product_mapping
+                ORDER BY updated_at DESC NULLS LAST
+            """)
+            rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        return []
+
+    seen: Dict[str, str] = {}
+    for sku_codes, item_codes, _ in rows:
+        codes = [c.strip() for c in (sku_codes or '').split(',')]
+        names = [n.strip() for n in (item_codes or '').split(',')]
+        for i, code in enumerate(codes):
+            if not code or code == '-':
+                continue
+            if code in seen:
+                continue
+            name = names[i] if i < len(names) else ''
+            seen[code] = name
+
+    return [{'sku_code': c, 'sku_name': n}
+            for c, n in sorted(seen.items(), key=lambda x: (x[1] or '', x[0]))]
+
+
+def list_all(channel: Optional[str] = None,
+             search: Optional[str] = None) -> List[Dict]:
+    """모든 매핑 행을 반환 (관리 페이지용). channel 필터 / 검색 지원."""
+    ensure_schema()
+    conds = []
+    params: List = []
+    if channel:
+        conds.append("channel = %s")
+        params.append(channel)
+    if search:
+        conds.append("(product_name ILIKE %s OR product_option ILIKE %s "
+                     "OR sku_codes ILIKE %s OR item_codes ILIKE %s)")
+        s = f"%{search}%"
+        params.extend([s, s, s, s])
+    where = (" WHERE " + " AND ".join(conds)) if conds else ""
+    sql = f"""
+        SELECT channel, product_name, product_option,
+               item_codes, sku_codes, quantities, note, updated_at
+        FROM channel_product_mapping
+        {where}
+        ORDER BY channel, product_name, product_option
+    """
+    try:
+        conn = pg.connect(autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute(sql, params)
+            rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        return []
+
+    return [{'channel': r[0], 'product_name': r[1], 'product_option': r[2] or '',
+             'item_codes': r[3] or '', 'sku_codes': r[4] or '',
+             'quantities': r[5] or '', 'note': r[6], 'updated_at': r[7]}
+            for r in rows]
+
+
 def count_by_channel() -> Dict[str, int]:
     ensure_schema()
     try:

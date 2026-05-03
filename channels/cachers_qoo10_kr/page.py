@@ -22,7 +22,6 @@ import datetime
 import pandas as pd
 import streamlit as st
 
-from db import sku_catalog as sc
 from db import mapping as _map
 from outputs.daone.builder import (
     parse_kse_oms_xlsx,
@@ -54,37 +53,11 @@ def _kse_mapping_table():
     ])
 
 
-def _render_sku_quick_add(expanded: bool = False):
-    """카탈로그에 즉석 SKU 추가 — 매핑 등록 흐름과 같이 사용."""
-    with st.expander("➕ 새 SKU 즉석 등록 (등록 후 아래 매핑 드롭다운에 바로 표시)",
-                     expanded=expanded):
-        c1, c2, c3 = st.columns([2, 3, 1])
-        with c1:
-            new_code = st.text_input(
-                "SKU 코드 *", key="kr_quick_code",
-                placeholder="예) KC_8809885876166",
-            )
-        with c2:
-            new_name = st.text_input(
-                "상품명 (선택)", key="kr_quick_name",
-                placeholder="예) NUKIT VOLCANO PEELING AMPOULE",
-            )
-        with c3:
-            st.write(" ")  # spacer
-            if st.button("➕ 추가", type="primary", width="stretch", key="kr_quick_add_btn"):
-                code = (new_code or '').strip()
-                if not code:
-                    st.error("SKU 코드 필수")
-                elif sc.upsert_sku(code, sku_name=new_name):
-                    st.success(f"카탈로그 등록: {code}")
-                    st.rerun()
-                else:
-                    st.error("등록 실패 (DB 연결 확인)")
-
-
 def _render_pending_mappings(unknown_rows, mappings):
-    """KSE 파일에 등장한 신규 (상품명, 옵션) — 매핑 등록 모달."""
-    sku_list = sc.list_skus()
+    """KSE 파일에 등장한 신규 (상품명, 옵션) — 매핑 등록 모달.
+    SKU 코드 + 이름 + 수량 직접 입력. 기존 매핑의 SKU는 참고용으로 expander 표시.
+    """
+    known_skus = _map.list_known_skus()
 
     # 키 단위로 합치기 (KSE 파일에 같은 상품 여러 행 들어와도 한 번만 노출)
     pending = {}
@@ -122,19 +95,16 @@ def _render_pending_mappings(unknown_rows, mappings):
         },
     )
 
-    # SKU 즉석 등록 폼 (카탈로그 비어있으면 펼친 상태)
-    _render_sku_quick_add(expanded=not sku_list)
-
-    if not sku_list:
-        st.info(
-            "위 폼으로 SKU를 먼저 등록하면 매핑 모달의 드롭다운에 즉시 반영됩니다. "
-            "(다수 SKU 일괄 등록은 사이드바 → 🗂 SKU 카탈로그)"
-        )
-        return
-
-    sku_options = [f"{s['sku_name']} ({s['sku_code']})" if s['sku_name'] else s['sku_code']
-                   for s in sku_list]
-    sku_by_label = {lbl: s for lbl, s in zip(sku_options, sku_list)}
+    # 기존 매핑의 SKU 참고 (자동완성 X — 사용자가 코드 직접 입력)
+    if known_skus:
+        with st.expander(f"📋 기존 등록 SKU 참고 ({len(known_skus)}개) — 코드 복사용", expanded=False):
+            st.dataframe(
+                pd.DataFrame(known_skus), hide_index=True, width="stretch",
+                column_config={
+                    'sku_code': st.column_config.TextColumn('SKU 코드', width="medium"),
+                    'sku_name': st.column_config.TextColumn('상품명', width="large"),
+                },
+            )
 
     items = list(pending.items())
     st.markdown("---")
@@ -148,15 +118,19 @@ def _render_pending_mappings(unknown_rows, mappings):
             ed_key = f"qkr_mapeditor_{idx}_{hash((qname, qoption))}"
             st.markdown("**다원 SKU 구성** (세트면 행 추가)")
             base = pd.DataFrame({
-                'SKU': [sku_options[0]],
+                'SKU 코드': [''],
+                '상품명': [''],
                 '수량': [1],
             })
             edited = st.data_editor(
                 base,
                 column_config={
-                    'SKU': st.column_config.SelectboxColumn(
-                        options=sku_options, required=True, width="large",
-                        help="🗂 SKU 카탈로그에서 등록한 SKU"),
+                    'SKU 코드': st.column_config.TextColumn(
+                        required=True, width="medium",
+                        help="예) KC_8809885876166"),
+                    '상품명': st.column_config.TextColumn(
+                        required=False, width="large",
+                        help="비고용 — 빈값이면 SKU 코드로 채워짐"),
                     '수량': st.column_config.NumberColumn(
                         min_value=1, step=1, default=1, required=True, width="small"),
                 },
@@ -169,17 +143,16 @@ def _render_pending_mappings(unknown_rows, mappings):
                 "💾 매핑 등록",
                 key=f"qkr_save_{ed_key}", type="primary",
             ):
-                valid = edited.dropna(subset=['SKU'])
+                valid = edited[edited['SKU 코드'].astype(str).str.strip() != '']
                 if valid.empty:
-                    st.error("최소 1개 SKU 필요.")
+                    st.error("최소 1개 SKU 코드 필요.")
                 else:
                     payload = []
                     for _, row in valid.iterrows():
-                        info = sku_by_label[row['SKU']]
+                        code = str(row['SKU 코드']).strip()
+                        name = str(row['상품명'] or '').strip() or code
                         qty = int(row['수량'] or 1)
-                        payload.append((info['sku_code'],
-                                        info['sku_name'] or info['sku_code'],
-                                        qty))
+                        payload.append((code, name, qty))
                     if _map.upsert(CHANNEL_KEY, qname, qoption, payload):
                         st.success(
                             "등록 완료: "
@@ -191,7 +164,7 @@ def _render_pending_mappings(unknown_rows, mappings):
 
 
 def render_page():
-    sc.ensure_schema()
+    _map.ensure_schema()
     st.markdown(
         "Qoo10 일본 주문 중 **한국 다원 → KSE 한국 → 일본** 출고 분량. "
         "KSE OMS 주문내역.xlsx + (선택) 라벨.pdf 한 번에 업로드."
