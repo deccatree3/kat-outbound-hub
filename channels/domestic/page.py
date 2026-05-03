@@ -100,7 +100,7 @@ def _section_daone(eza_rows, work_date, sequence):
     st.caption("📤 다원 WMS에 수기 업로드.")
 
 
-def _section_bundle(eza_bytes, work_date, sequence):
+def _section_bundle(eza_bytes_list, work_date, sequence):
     st.markdown("### 📦 일반주문 번들작업건 (네뉴 세트만)")
     st.caption(
         "EZA에서 판매처그룹='캐처스' 행은 자동 제외. 마스터 양식의 세트 행 D셀에 EZA 합계 정수 입력. "
@@ -108,7 +108,7 @@ def _section_bundle(eza_bytes, work_date, sequence):
     )
 
     try:
-        xlsx_bytes, info = build_bundle_xlsx(eza_bytes, work_date, int(sequence))
+        xlsx_bytes, info = build_bundle_xlsx(eza_bytes_list, work_date, int(sequence))
     except Exception as ex:
         st.error(f"번들작업파일 생성 실패: {ex}")
         return
@@ -193,4 +193,4 @@ def render_page():
 
     _section_daone(eza_rows, work_date, int(sequence))
     st.markdown("---")
-    _section_bundle(eza_bytes, work_date, int(sequence))
+    _section_bundle([f.getvalue() for f in uploaded_files], work_date, int(sequence))

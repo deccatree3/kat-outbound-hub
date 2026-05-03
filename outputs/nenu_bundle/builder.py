@@ -76,22 +76,22 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> Dict[str
     return totals
 
 
-def build_bundle_xlsx(eza_bytes: bytes,
+def build_bundle_xlsx(eza_bytes,
                       work_date: datetime.date,
                       sequence: int) -> tuple[bytes, Dict]:
     """마스터 양식에 EZA 합계 채워서 일반주문 번들작업건.xlsx bytes 반환.
-    반환: (bytes, info dict).
-        info = {
-            'sheet_name': 새 시트명,
-            'set_rows_filled': 세트 행 채움 건수,
-            'total_qty': 채운 입고수량 합,
-            'unmatched_barcodes': EZA에 있지만 마스터에 없는 바코드 리스트,
-        }
+    eza_bytes: bytes 또는 List[bytes] (여러 파일 합산).
     """
     if not os.path.exists(TEMPLATE_PATH):
         raise RuntimeError(f"마스터 템플릿이 없습니다: {TEMPLATE_PATH}")
 
-    eza_totals = parse_eza_for_bundle(eza_bytes)
+    if isinstance(eza_bytes, (list, tuple)):
+        eza_totals: Dict[str, int] = {}
+        for b in eza_bytes:
+            for bar, qty in parse_eza_for_bundle(b).items():
+                eza_totals[bar] = eza_totals.get(bar, 0) + qty
+    else:
+        eza_totals = parse_eza_for_bundle(eza_bytes)
 
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
     if 'form' not in wb.sheetnames:
