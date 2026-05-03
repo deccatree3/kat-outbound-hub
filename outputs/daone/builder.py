@@ -398,3 +398,143 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
         'unknown_rows': unknown_rows,
         'incomplete_rows': incomplete_rows,
     }
+
+
+# ─── 캐처스 메이커스 (카카오메이커스) ─────────────────────────────────────
+
+# 다원 메이커스 발주서 샘플 기준 fixed 값
+MAKERS_DAONE_출하의뢰번호 = '[캐처스] 카카오메이커스'
+
+# 메이커스 주문서 헤더 (시트명 '주문내역', 22컬럼)
+MAKERS_HEADERS = [
+    '배송번호', '결제번호', '주문번호', '회차상품 번호', '상품', '옵션', '수량',
+    '주문금액', '배송비', '택배사명', '택배사코드', '송장번호(하이픈 없이 입력)',
+    '주문일시', '결제일시', '수령인명', '수령인 연락처1', '수령인 연락처2',
+    '배송주소', '배송메시지', '우편번호', '정산방식', '발주상태',
+]
+
+
+def parse_makers_xlsx(xlsx_bytes: bytes) -> List[Dict]:
+    """카카오메이커스 주문내역.xlsx → list of dict.
+    시트명 '주문내역' 사용. 헤더 첫 행, 데이터 둘째 행부터.
+    """
+    wb = openpyxl.load_workbook(io.BytesIO(xlsx_bytes), data_only=True, read_only=True)
+    sheet_name = '주문내역' if '주문내역' in wb.sheetnames else wb.sheetnames[0]
+    ws = wb[sheet_name]
+
+    rows_iter = ws.iter_rows(values_only=True)
+    try:
+        header_row = next(rows_iter)
+    except StopIteration:
+        return []
+    header = [str(h).strip() if h is not None else '' for h in header_row]
+
+    out: List[Dict] = []
+    for row in rows_iter:
+        if row is None or all(c is None or str(c).strip() == '' for c in row):
+            continue
+        d = {}
+        for i, h in enumerate(header):
+            v = row[i] if i < len(row) else None
+            d[h] = '' if v is None else v
+        out.append(d)
+    return out
+
+
+def _makers_int(v) -> int:
+    try:
+        return int(float(v)) if v not in (None, '') else 0
+    except (ValueError, TypeError):
+        return 0
+
+
+def _makers_str(v) -> str:
+    if v is None:
+        return ''
+    if isinstance(v, float) and v.is_integer():
+        return str(int(v))
+    return str(v).strip()
+
+
+def makers_to_daone_with_mapping(makers_rows: List[Dict], mappings: Dict) -> Dict:
+    """메이커스 주문내역 dict + 채널 매핑 (channel='cachers_makers') → 다원 19컬럼.
+
+    분기:
+      매핑 없음               → unknown_rows (등록 강제)
+      매핑 + sku_codes 정상   → daone_rows 에 1→N 펼침
+      매핑 + sku_codes='-'/빈 → incomplete_rows
+
+    반환: dict {'daone_rows', 'unknown_rows', 'incomplete_rows'}
+    """
+    daone_rows: List[Dict] = []
+    unknown_rows: List[Dict] = []
+    incomplete_rows: List[Dict] = []
+
+    for r in makers_rows:
+        product = (r.get('상품') or '').strip()
+        option = (r.get('옵션') or '').strip()
+        m = mappings.get((product, option))
+
+        info = {
+            '주문번호':   _makers_str(r.get('주문번호')),
+            '배송번호':   _makers_str(r.get('배송번호')),
+            '상품':       product,
+            '옵션':       option,
+            '수량':       _makers_int(r.get('수량')),
+            '수령인명':   r.get('수령인명') or '',
+        }
+
+        if m is None:
+            unknown_rows.append(info)
+            continue
+        valid = [(s.strip(), q) for s, q in zip(m.get('sku_codes', []), m.get('quantities', []))
+                 if s and s.strip() and s.strip() != '-']
+        if not valid:
+            incomplete_rows.append(info)
+            continue
+
+        base_qty = _makers_int(r.get('수량')) or 1
+        full_name = product + (' / ' + option if option else '')
+        recipient = (r.get('수령인명') or '').strip()
+        phone1 = _makers_str(r.get('수령인 연락처1'))
+        phone2 = _makers_str(r.get('수령인 연락처2'))
+        zip_code = _makers_str(r.get('우편번호'))
+        address = (r.get('배송주소') or '').strip()
+        msg = (r.get('배송메시지') or '').strip()
+        waybill = _makers_str(r.get('송장번호(하이픈 없이 입력)'))
+        carrier = (r.get('택배사명') or '').strip()
+        order_no = _makers_str(r.get('주문번호'))
+        ship_no = _makers_str(r.get('배송번호'))
+
+        for sku_code, sku_unit in valid:
+            try:
+                unit = int(sku_unit)
+            except (ValueError, TypeError):
+                unit = 1
+            d = {h: '' for h in DAONE_HEADERS}
+            d['몰명(또는 몰코드)'] = DEFAULT_몰코드
+            d['출하의뢰번호']     = MAKERS_DAONE_출하의뢰번호
+            d['출하의뢰항번']     = ship_no
+            d['고객주문번호']     = order_no
+            d['상품명']           = full_name.strip()
+            d['제품코드']         = sku_code
+            d['주문수량']         = unit * base_qty
+            d['주문자명']         = recipient
+            d['주문자연락처1']    = phone1
+            d['주문자연락처2']    = phone2
+            d['수취인명']         = recipient
+            d['수취인연락처1']    = phone1
+            d['수취인연락처2']    = phone2
+            d['수취인우편번호']   = zip_code
+            d['수취인주소1']      = address
+            d['주소2']            = ''
+            d['배송메시지']       = msg
+            d['송장번호']         = waybill
+            d['택배사명']         = carrier
+            daone_rows.append(d)
+
+    return {
+        'daone_rows': daone_rows,
+        'unknown_rows': unknown_rows,
+        'incomplete_rows': incomplete_rows,
+    }

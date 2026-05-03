@@ -33,7 +33,7 @@ CHANNELS = {
     "qoo10_japan":          {"label": "Qoo10 일본",       "brand": "캐처스",     "status": "✅ 운영"},
     "domestic":             {"label": "국내몰",           "brand": "캐처스/네뉴", "status": "✅ 운영"},
     "cachers_qoo10_kr":     {"label": "캐처스 큐텐 국내", "brand": "캐처스",     "status": "✅ 운영 (SKU 매핑 추후)"},
-    "cachers_makers":       {"label": "캐처스 메이커스",  "brand": "캐처스",     "status": "Phase 3"},
+    "cachers_makers":       {"label": "캐처스 메이커스",  "brand": "캐처스",     "status": "✅ 운영"},
     "cachers_rocketgrowth": {"label": "캐처스 로켓그로스", "brand": "캐처스",     "status": "Phase 3 (부착문서 多)"},
     "nenu_telepay":         {"label": "네뉴 텔레페이",    "brand": "네뉴",       "status": "Phase 4"},
 }
@@ -83,6 +83,9 @@ else:
         render_page()
     elif selected == "cachers_qoo10_kr":
         from channels.cachers_qoo10_kr.page import render_page
+        render_page()
+    elif selected == "cachers_makers":
+        from channels.cachers_makers.page import render_page
         render_page()
     else:
         st.info(
