@@ -23,9 +23,13 @@ from outputs.daone.builder import (
     makers_to_daone_with_mapping,
     build_daone_xlsx,
 )
+from outputs.eza.builder import build_makers_eza_xls
 
 
 CHANNEL_KEY = 'cachers_makers'
+
+OUTPUT_DAONE = '다원 발주서 (직접)'
+OUTPUT_EZA = '이지어드민 발주서 (통합)'
 
 
 def _mapping_table():
@@ -155,11 +159,125 @@ def _render_pending_mappings(unknown_rows):
                         st.error("매핑 등록 실패 (DB 연결 확인)")
 
 
+def _render_daone_output(makers_rows, work_date, sequence):
+    """옵션 1 — 다원 발주서 직접 생성. SKU 매핑 필요."""
+    try:
+        mappings = _map.load_for_channel(CHANNEL_KEY)
+    except Exception as ex:
+        st.error(f"channel_product_mapping 로드 실패: {ex}")
+        return
+
+    result = makers_to_daone_with_mapping(makers_rows, mappings)
+    daone_rows = result['daone_rows']
+    unknown = result['unknown_rows']
+    incomplete = result['incomplete_rows']
+
+    c1, c2, c3, c4 = st.columns(4)
+    c1.metric("메이커스 행수", len(makers_rows))
+    c2.metric("✅ 다원 행수 (펼침 후)", len(daone_rows))
+    c3.metric("🆕 미매핑", len(unknown))
+    c4.metric("⚠️ 미완전", len(incomplete),
+              help="매핑은 있으나 sku_codes='-' (다원 SKU 미입력)")
+
+    if incomplete:
+        with st.expander(
+            f"⚠️ incomplete 매핑 {len(incomplete)}건",
+            expanded=False,
+        ):
+            st.dataframe(pd.DataFrame(incomplete), hide_index=True, width="stretch")
+
+    _render_pending_mappings(unknown)
+
+    if unknown:
+        return
+
+    if not daone_rows:
+        st.info("📭 다원 출고 대상 행이 없습니다.")
+        return
+
+    st.markdown("---")
+    st.markdown("**미리보기**")
+    df = pd.DataFrame(daone_rows)
+    preview_cols = ['출하의뢰번호', '출하의뢰항번', '고객주문번호', '상품명', '제품코드',
+                    '주문수량', '수취인명', '수취인우편번호', '수취인주소1', '송장번호', '택배사명']
+    available = [c for c in preview_cols if c in df.columns]
+    st.dataframe(df[available].head(50), width="stretch", hide_index=True)
+    if len(df) > 50:
+        st.caption(f"… 50/{len(df)} 행 표시")
+
+    try:
+        xlsx_bytes = build_daone_xlsx(daone_rows)
+    except Exception as ex:
+        st.error(f"다원 xlsx 생성 실패: {ex}")
+        return
+
+    unique_orders = len({r.get('고객주문번호', '') for r in daone_rows if r.get('고객주문번호')})
+    total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
+
+    yymmdd = work_date.strftime('%y%m%d')
+    out_name = f"{yymmdd}_{int(sequence)}차발주서_메이커스(주문건수 {unique_orders}, 주문량수 {total_qty}).xlsx"
+    st.download_button(
+        f"📥 {out_name}",
+        data=xlsx_bytes,
+        file_name=out_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary", width="stretch",
+        key="makers_daone_download",
+    )
+    st.caption("📤 다원에 메이커스 발주서 별도 전달.")
+
+
+def _render_eza_output(makers_rows, work_date, sequence):
+    """옵션 2 — 이지어드민 발주서 (8컬럼). 매핑 미사용 — EZA가 자체 매핑 보유."""
+    c1, c2 = st.columns(2)
+    c1.metric("메이커스 행수", len(makers_rows))
+    total_qty = sum(int(r.get('수량', 0) or 0) for r in makers_rows)
+    c2.metric("총 수량", total_qty)
+
+    # 미리보기
+    st.markdown("---")
+    st.markdown("**미리보기 (이지어드민 8컬럼)**")
+    preview = pd.DataFrame([{
+        '주문번호': r.get('주문번호', ''),
+        '상품명': f"{r.get('상품', '')}_{r.get('옵션', '')}" if r.get('옵션') else r.get('상품', ''),
+        '수량': r.get('수량', ''),
+        '주문일': str(r.get('주문일시', ''))[:10],
+        '수령인': r.get('수령인명', ''),
+        '수령자연락처': r.get('수령인 연락처1', ''),
+        '주소': r.get('배송주소', ''),
+        '배송메모': r.get('배송메시지', ''),
+    } for r in makers_rows[:50]])
+    st.dataframe(preview, width="stretch", hide_index=True)
+    if len(makers_rows) > 50:
+        st.caption(f"… 50/{len(makers_rows)} 행 표시")
+
+    try:
+        xls_bytes = build_makers_eza_xls(makers_rows)
+    except Exception as ex:
+        st.error(f"이지어드민 xls 생성 실패: {ex}")
+        return
+
+    yymmdd = work_date.strftime('%y%m%d')
+    out_name = f"카카오메이커스 발주서 업로드_{yymmdd}.xls"
+    st.download_button(
+        f"📥 {out_name}",
+        data=xls_bytes,
+        file_name=out_name,
+        mime="application/vnd.ms-excel",
+        type="primary", width="stretch",
+        key="makers_eza_download",
+    )
+    st.caption(
+        "📤 이지어드민에 업로드 → 다른 캐처스 채널과 통합되어 통합 다원 발주서로 출력. "
+        "(다원에 별도 전달 불필요)"
+    )
+
+
 def render_page():
     _map.ensure_schema()
     st.markdown(
-        "카카오메이커스 주문내역.xlsx → 다원 발주서.xlsx 변환. "
-        "상품/옵션 ↔ SKU 매핑은 어드민에서 사전 등록."
+        "카카오메이커스 주문내역.xlsx 업로드 후 출력 형식 선택. "
+        "다원 발주서 (직접) — SKU 매핑 필요 / 이지어드민 발주서 (통합) — 매핑 불필요."
     )
 
     uploaded_files = st.file_uploader(
@@ -192,17 +310,6 @@ def render_page():
         st.warning("📭 메이커스 파일에 주문 데이터가 없습니다.")
         return
 
-    try:
-        mappings = _map.load_for_channel(CHANNEL_KEY)
-    except Exception as ex:
-        st.error(f"channel_product_mapping 로드 실패: {ex}")
-        return
-
-    result = makers_to_daone_with_mapping(makers_rows, mappings)
-    daone_rows = result['daone_rows']
-    unknown = result['unknown_rows']
-    incomplete = result['incomplete_rows']
-
     today = datetime.date.today()
     c_d, c_s = st.columns([1, 1])
     work_date = c_d.date_input("작업일", value=today, key="makers_work_date")
@@ -210,57 +317,21 @@ def render_page():
         "차수", min_value=1, value=1, step=1, key="makers_sequence",
     )
 
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("메이커스 행수", len(makers_rows))
-    c2.metric("✅ 다원 행수 (펼침 후)", len(daone_rows))
-    c3.metric("🆕 미매핑", len(unknown))
-    c4.metric("⚠️ 미완전", len(incomplete),
-              help="매핑은 있으나 sku_codes='-' (다원 SKU 미입력)")
-
-    if incomplete:
-        with st.expander(
-            f"⚠️ incomplete 매핑 {len(incomplete)}건",
-            expanded=False,
-        ):
-            st.dataframe(pd.DataFrame(incomplete), hide_index=True, width="stretch")
-
-    _render_pending_mappings(unknown)
-
-    if unknown:
-        return
-
-    if not daone_rows:
-        st.info("📭 다원 출고 대상 행이 없습니다.")
-        return
-
-    # 미리보기
-    st.markdown("---")
-    st.markdown("**미리보기**")
-    df = pd.DataFrame(daone_rows)
-    preview_cols = ['출하의뢰번호', '출하의뢰항번', '고객주문번호', '상품명', '제품코드',
-                    '주문수량', '수취인명', '수취인우편번호', '수취인주소1', '송장번호', '택배사명']
-    available = [c for c in preview_cols if c in df.columns]
-    st.dataframe(df[available].head(50), width="stretch", hide_index=True)
-    if len(df) > 50:
-        st.caption(f"… 50/{len(df)} 행 표시")
-
-    # 다운로드
-    try:
-        xlsx_bytes = build_daone_xlsx(daone_rows)
-    except Exception as ex:
-        st.error(f"다원 xlsx 생성 실패: {ex}")
-        return
-
-    unique_orders = len({r.get('고객주문번호', '') for r in daone_rows if r.get('고객주문번호')})
-    total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
-
-    yymmdd = work_date.strftime('%y%m%d')
-    out_name = f"{yymmdd}_{int(sequence)}차발주서_메이커스(주문건수 {unique_orders}, 주문량수 {total_qty}).xlsx"
-    st.download_button(
-        f"📥 {out_name}",
-        data=xlsx_bytes,
-        file_name=out_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary", width="stretch",
-        key="makers_daone_download",
+    output_kind = st.radio(
+        "출력 형식",
+        options=[OUTPUT_DAONE, OUTPUT_EZA],
+        horizontal=True,
+        key="makers_output_kind",
+        help=(
+            f"**{OUTPUT_DAONE}**: 메이커스 → 다원 19컬럼 발주서. SKU 매핑 필요. "
+            "다원에 직접 전달.\n\n"
+            f"**{OUTPUT_EZA}**: 메이커스 → 이지어드민 8컬럼 발주서. 매핑 불필요. "
+            "이지어드민 업로드 후 다른 캐처스 채널과 통합되어 다원으로."
+        ),
     )
+
+    st.markdown("---")
+    if output_kind == OUTPUT_DAONE:
+        _render_daone_output(makers_rows, work_date, int(sequence))
+    else:
+        _render_eza_output(makers_rows, work_date, int(sequence))
