@@ -162,23 +162,31 @@ def render_page():
         "상품/옵션 ↔ SKU 매핑은 어드민에서 사전 등록."
     )
 
-    uploaded = st.file_uploader(
-        "메이커스 주문내역.xlsx",
+    uploaded_files = st.file_uploader(
+        "메이커스 주문내역.xlsx (여러 개 가능)",
         type=['xlsx'],
+        accept_multiple_files=True,
         key="makers_xlsx",
-        help="이지오토 N — 메이커스에서 직접 다운로드한 주문내역 파일.",
+        help="이지오토 N — 메이커스에서 직접 다운로드한 주문내역 파일. 여러 개 한꺼번에 끌어다 놓을 수 있음.",
     )
 
-    if not uploaded:
+    if not uploaded_files:
         with st.expander("📋 메이커스 → 다원 19컬럼 매핑 (참고)", expanded=False):
             st.dataframe(_mapping_table(), hide_index=True, width="stretch")
         return
 
-    try:
-        makers_rows = parse_makers_xlsx(uploaded.getvalue())
-    except Exception as ex:
-        st.error(f"파싱 실패: {ex}")
-        return
+    makers_rows = []
+    parse_errors = []
+    for f in uploaded_files:
+        try:
+            rows = parse_makers_xlsx(f.getvalue())
+            makers_rows.extend(rows)
+        except Exception as ex:
+            parse_errors.append(f"{f.name}: {ex}")
+    if parse_errors:
+        st.error("일부 파일 파싱 실패:\n" + "\n".join(parse_errors))
+    if len(uploaded_files) > 1:
+        st.caption(f"📂 {len(uploaded_files)}개 파일 합산 — 총 {len(makers_rows)} 행")
 
     if not makers_rows:
         st.warning("📭 메이커스 파일에 주문 데이터가 없습니다.")

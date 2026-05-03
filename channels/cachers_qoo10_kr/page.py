@@ -171,29 +171,30 @@ def render_page():
     )
 
     uploaded_files = st.file_uploader(
-        "KSE 어드민 파일 — 주문내역(.xlsx) + 쉽먼트 라벨(.pdf, 선택)",
+        "KSE 어드민 파일 — 주문내역(.xlsx) + 쉽먼트 라벨(.pdf, 선택). 여러 개 가능",
         type=['xlsx', 'pdf'],
         accept_multiple_files=True,
         key="kse_oms_files",
-        help="두 파일을 같이 끌어다 놓으세요. 확장자로 자동 분류됨.",
+        help="여러 xlsx/pdf 한꺼번에 끌어다 놓으세요. 확장자로 자동 분류됨.",
     )
 
-    uploaded_xlsx = next((f for f in (uploaded_files or []) if f.name.lower().endswith('.xlsx')), None)
-    uploaded_pdf = next((f for f in (uploaded_files or []) if f.name.lower().endswith('.pdf')), None)
+    uploaded_xlsxs = [f for f in (uploaded_files or []) if f.name.lower().endswith('.xlsx')]
+    uploaded_pdfs = [f for f in (uploaded_files or []) if f.name.lower().endswith('.pdf')]
+    uploaded_pdf = uploaded_pdfs[0] if uploaded_pdfs else None  # passthrough 첫 번째 (사양 후속)
 
-    chk_xlsx = '✅' if uploaded_xlsx else ''
-    chk_pdf = '✅' if uploaded_pdf else ''
+    chk_xlsx = f'✅ ({len(uploaded_xlsxs)})' if uploaded_xlsxs else ''
+    chk_pdf = f'✅ ({len(uploaded_pdfs)})' if uploaded_pdfs else ''
     st.markdown(
         "<div style='font-size:0.8em'>\n\n"
         "| 파일 | 용도 | 업로드 |\n"
         "|------|------|:----:|\n"
-        f"| `*.xlsx` | KSE OMS 주문내역 → 다원 발주서 변환 | {chk_xlsx} |\n"
+        f"| `*.xlsx` | KSE OMS 주문내역 → 다원 발주서 변환 (여러 파일 합산) | {chk_xlsx} |\n"
         f"| `*.pdf` | 인박스 부착 라벨 → 파일명만 변경 | {chk_pdf} |\n\n"
         "</div>",
         unsafe_allow_html=True,
     )
 
-    if not uploaded_xlsx:
+    if not uploaded_xlsxs:
         with st.expander("📋 KSE OMS → 다원 19컬럼 매핑 (참고)", expanded=False):
             st.dataframe(_kse_mapping_table(), hide_index=True, width="stretch")
         return
@@ -204,11 +205,18 @@ def render_page():
         st.error(f"channel_product_mapping 로드 실패: {ex}")
         return
 
-    try:
-        kse_rows = parse_kse_oms_xlsx(uploaded_xlsx.getvalue())
-    except Exception as ex:
-        st.error(f"KSE OMS 파일 파싱 실패: {ex}")
-        return
+    kse_rows = []
+    parse_errors = []
+    for f in uploaded_xlsxs:
+        try:
+            rows = parse_kse_oms_xlsx(f.getvalue())
+            kse_rows.extend(rows)
+        except Exception as ex:
+            parse_errors.append(f"{f.name}: {ex}")
+    if parse_errors:
+        st.error("일부 파일 파싱 실패:\n" + "\n".join(parse_errors))
+    if len(uploaded_xlsxs) > 1:
+        st.caption(f"📂 {len(uploaded_xlsxs)}개 xlsx 합산 — 총 {len(kse_rows)} 행")
 
     if not kse_rows:
         st.warning("📭 KSE OMS 파일에 주문 데이터가 없습니다.")

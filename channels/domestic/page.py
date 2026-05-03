@@ -153,24 +153,31 @@ def render_page():
         "이지오토 Y 흐름이라 EZA가 자동 수집, 우리는 변환만."
     )
 
-    uploaded = st.file_uploader(
-        "EZA 확장주문검색 파일 (.xls)",
+    uploaded_files = st.file_uploader(
+        "EZA 확장주문검색 파일 (.xls, 여러 개 가능)",
         type=['xls'],
+        accept_multiple_files=True,
         key="domestic_eza",
-        help="EZA > 주문관리 > 확장주문검색 > 엑셀다운 받은 파일",
+        help="EZA > 주문관리 > 확장주문검색 > 엑셀다운. 여러 개 한꺼번에 끌어다 놓을 수 있음.",
     )
 
-    if not uploaded:
+    if not uploaded_files:
         with st.expander("📋 EZA → 다원 19컬럼 매핑 (참고)", expanded=False):
             st.dataframe(_eza_mapping_table(), hide_index=True, width="stretch")
         return
 
-    eza_bytes = uploaded.getvalue()
-    try:
-        eza_rows = parse_eza_xls(eza_bytes)
-    except Exception as ex:
-        st.error(f"EZA 파일 파싱 실패: {ex}")
-        return
+    eza_rows = []
+    parse_errors = []
+    for f in uploaded_files:
+        try:
+            rows = parse_eza_xls(f.getvalue())
+            eza_rows.extend(rows)
+        except Exception as ex:
+            parse_errors.append(f"{f.name}: {ex}")
+    if parse_errors:
+        st.error("일부 파일 파싱 실패:\n" + "\n".join(parse_errors))
+    if len(uploaded_files) > 1:
+        st.caption(f"📂 {len(uploaded_files)}개 파일 합산 — 총 {len(eza_rows)} 행")
 
     if not eza_rows:
         st.warning("📭 EZA 파일에 주문 데이터가 없습니다.")
