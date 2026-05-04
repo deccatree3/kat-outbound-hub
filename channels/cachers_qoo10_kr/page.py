@@ -41,8 +41,8 @@ CHANNEL_KEY = 'cachers_qoo10_kr'
 def _kse_mapping_table():
     return pd.DataFrame([
         {'KSE OMS': '판매마켓',                    '다원 19컬럼': '출하의뢰번호'},
-        {'KSE OMS': '접수번호',                     '다원 19컬럼': '출하의뢰항번'},
-        {'KSE OMS': '주문번호',                     '다원 19컬럼': '주문번호'},
+        {'KSE OMS': '주문번호',                     '다원 19컬럼': '출하의뢰항번'},
+        {'KSE OMS': '접수번호',                     '다원 19컬럼': '주문번호'},
         {'KSE OMS': '상품명 + 옵션명',              '다원 19컬럼': '상품명'},
         {'KSE OMS': 'channel_product_mapping 조회 → SKU', '다원 19컬럼': '제품코드 (1→N 펼침)'},
         {'KSE OMS': '수량',                         '다원 19컬럼': '주문수량 = SKU단위수량 × KSE수량'},
