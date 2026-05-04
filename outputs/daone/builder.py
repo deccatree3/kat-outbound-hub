@@ -310,6 +310,54 @@ def kse_oms_to_daone(kse_rows: List[Dict]) -> List[Dict]:
     return out
 
 
+# ─── KSE 국내 전용 발주서 (7컬럼) ─────────────────────────────────────
+# 다원 표준 19컬럼과 별도 양식 — KSE 국내 운영팀 요구사항.
+
+KSE_KR_ORDER_HEADERS = [
+    '몰명', '출하의뢰번호', '고객주문번호', '접수번호',
+    '제품코드', '주문수량', '국가',
+]
+
+KSE_KR_ORDER_COUNTRY = '일본'
+
+
+def build_kse_kr_order_xlsx(daone_rows: List[Dict]) -> bytes:
+    """KSE 국내 전용 7컬럼 발주서.xlsx.
+    daone_rows (다원 19컬럼 dict) 기반으로 추출:
+      몰명         ← 몰명(또는 몰코드)
+      출하의뢰번호  ← 출하의뢰번호
+      고객주문번호  ← 출하의뢰항번 (큐텐 주문번호)
+      접수번호      ← 주문번호 (KSE 송장번호)
+      제품코드      ← 제품코드
+      주문수량      ← 주문수량
+      국가         ← '일본' (fixed)
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = '발주서'
+    ws.append(KSE_KR_ORDER_HEADERS)
+    for c in range(1, len(KSE_KR_ORDER_HEADERS) + 1):
+        ws.cell(1, c).fill = _HEADER_FILL
+
+    for r in daone_rows:
+        ws.append([
+            r.get('몰명(또는 몰코드)', DEFAULT_몰코드),
+            r.get('출하의뢰번호', ''),
+            r.get('출하의뢰항번', ''),  # 큐텐 주문번호
+            r.get('주문번호', ''),       # KSE 송장(접수)번호
+            r.get('제품코드', ''),
+            r.get('주문수량', ''),
+            KSE_KR_ORDER_COUNTRY,
+        ])
+
+    widths = [14, 14, 16, 18, 14, 8, 8]
+    for i, w in enumerate(widths, 1):
+        ws.column_dimensions[get_column_letter(i)].width = w
+    buf = io.BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
 def convert_kse_oms_to_daone(xlsx_bytes: bytes) -> tuple[bytes, int]:
     """원샷 변환 (매핑 미사용, 제품코드 빈값): KSE OMS xlsx → 다원 19컬럼 발주서.
     호환성용. 실제 운영에선 kse_oms_to_daone_with_mapping 사용 권장.

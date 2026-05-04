@@ -27,6 +27,7 @@ from outputs.daone.builder import (
     parse_kse_oms_xlsx,
     kse_oms_to_daone_with_mapping,
     build_daone_xlsx,
+    build_kse_kr_order_xlsx,
 )
 from outputs.kse_label.attached import build_kse_attached_pdf
 from outputs.packing.boxes import compute_packing
@@ -277,9 +278,9 @@ def render_page():
     if len(df) > 50:
         st.caption(f"… 50/{len(df)} 행 표시")
 
-    # 다운로드 — 발주서(19컬럼, 다원 업로드용) + 패킹리스트(23컬럼+색, 작업참고용) 분리
+    # 다운로드 — 발주서(KSE 국내 7컬럼, 다원 업로드용) + 패킹리스트(23컬럼+색, 참고용)
     try:
-        order_xlsx = build_daone_xlsx(daone_rows)  # 19컬럼 only
+        order_xlsx = build_kse_kr_order_xlsx(daone_rows)
         packing_xlsx = build_daone_xlsx(daone_rows, add_packing_columns=True)
     except Exception as ex:
         st.error(f"xlsx 생성 실패: {ex}")
