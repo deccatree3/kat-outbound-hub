@@ -1,16 +1,18 @@
 """
-이지어드민(EZA) 발주서 빌더.
+이지어드민(EZA) 발주서 / 송장 빌더.
 
-채널별 raw 주문서 → EZA 업로드 양식(.xls). EZA 안에서 다른 캐처스 채널과
-통합되어 통합 다원 발주서로 출력됨 (= 다원 입장 단순화 흐름).
+채널별 raw → EZA 업로드 양식. EZA 안에서 다른 채널과 통합되어 다원으로.
 
 현재 지원:
   - 메이커스 (cachers_makers) → 메이커스 EZA 발주서 (8컬럼, .xls)
+  - 국내몰 송장 — 다원 채번 → EZA 송장 업로드 양식 (.xlsx)
 """
 import datetime
 import io
 from typing import Dict, List
 
+import openpyxl
+import xlrd
 import xlwt
 
 
@@ -39,6 +41,86 @@ def _to_excel_date(value) -> tuple:
             except ValueError:
                 return value, None
     return ('' if value is None else str(value)), None
+
+
+# ─── 국내몰 송장 양식 (이지어드민 업로드용) ──────────────────────────────
+
+EZA_WAYBILL_DEFAULT_CARRIER = 'CJ대한통운'
+
+
+def build_eza_waybill_xlsx(daone_invoice_xls_bytes: bytes,
+                           carrier: str = EZA_WAYBILL_DEFAULT_CARRIER) -> tuple[bytes, Dict]:
+    """다원 채번.xls (12컬럼) → 이지어드민 송장 업로드 양식.xlsx (9컬럼).
+
+    출력 컬럼 위치 (B/C/F~I 빈 컬럼 그대로 유지 — 양식 호환):
+      A 택배사 / D 송장번호 / E 관리번호
+
+    매핑:
+      A 택배사   = carrier (default 'CJ대한통운')
+      D 송장번호 = 채번 파일의 운송장번호 (하이픈 제거)
+      E 관리번호 = 채번 파일의 주문번호
+
+    반환: (xlsx_bytes, info)
+      info = {'filled': N, 'skipped': [{ 행, 원인 }]}
+    """
+    wb_in = xlrd.open_workbook(file_contents=daone_invoice_xls_bytes)
+    ws_in = wb_in.sheet_by_index(0)
+    if ws_in.nrows < 2:
+        raise RuntimeError("채번 파일에 데이터가 없습니다.")
+    headers = [str(ws_in.cell_value(0, c)).strip() for c in range(ws_in.ncols)]
+
+    def find_idx(*names):
+        for n in names:
+            if n in headers:
+                return headers.index(n)
+        return None
+
+    order_i = find_idx('주문번호')
+    waybill_i = find_idx('운송장번호', '송장번호')
+    if order_i is None or waybill_i is None:
+        raise RuntimeError(
+            f"채번 파일에서 '주문번호' 또는 '운송장번호' 컬럼을 찾지 못했습니다. "
+            f"실제 헤더: {headers}"
+        )
+
+    wb_out = openpyxl.Workbook()
+    ws_out = wb_out.active
+    ws_out.title = 'Sheet1'
+    ws_out.cell(1, 1, '택배사')
+    ws_out.cell(1, 4, '송장번호')
+    ws_out.cell(1, 5, '관리번호')
+    # 컬럼 폭
+    for letter, w in [('A', 13), ('B', 13), ('C', 13), ('D', 15), ('E', 13)]:
+        ws_out.column_dimensions[letter].width = w
+
+    filled = 0
+    skipped: List[Dict] = []
+    for r in range(1, ws_in.nrows):
+        order_raw = ws_in.cell_value(r, order_i)
+        waybill_raw = ws_in.cell_value(r, waybill_i)
+
+        # 주문번호 정수형 정규화 (xlrd가 float로 읽을 수 있음)
+        try:
+            order_no = str(int(float(order_raw))) if order_raw not in ('', None) else ''
+        except (ValueError, TypeError):
+            order_no = str(order_raw).strip()
+
+        waybill = ''.join(c for c in str(waybill_raw) if c.isdigit())
+
+        if not order_no or not waybill:
+            skipped.append({'행': r + 1, '주문번호': order_no, '운송장번호': str(waybill_raw),
+                            '원인': '필수값 없음'})
+            continue
+
+        out_r = filled + 2  # 헤더 1행 다음부터
+        ws_out.cell(out_r, 1, carrier)
+        ws_out.cell(out_r, 4, waybill)
+        ws_out.cell(out_r, 5, order_no)
+        filled += 1
+
+    buf = io.BytesIO()
+    wb_out.save(buf)
+    return buf.getvalue(), {'filled': filled, 'skipped': skipped}
 
 
 def build_makers_eza_xls(makers_rows: List[Dict]) -> bytes:

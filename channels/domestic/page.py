@@ -18,6 +18,7 @@ from outputs.daone.builder import (
     build_daone_xlsx,
 )
 from outputs.nenu_bundle.builder import build_bundle_xlsx
+from outputs.eza.builder import build_eza_waybill_xlsx, EZA_WAYBILL_DEFAULT_CARRIER
 from channels._session_selector import (
     render_work_session_selector, render_save_button,
 )
@@ -158,7 +159,7 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     )
 
 
-def render_page():
+def _tab_create_order():
     st.markdown(
         "EZA **확장주문검색.xls** 한 번 업로드 → **다원 발주서**(캐처스) + **번들작업파일**(네뉴 세트) 동시 생성. "
         "이지오토 Y 흐름이라 EZA가 자동 수집, 우리는 변환만."
@@ -202,3 +203,61 @@ def render_page():
     _section_daone(eza_rows, work_date, int(sequence), source_filename, session_info)
     st.markdown("---")
     _section_bundle([f.getvalue() for f in uploaded_files], work_date, int(sequence))
+
+
+def _tab_eza_waybill():
+    st.markdown(
+        "다원 채번.xls 업로드 → **이지어드민 송장 업로드 양식.xlsx** 다운로드 → 이지어드민 송장 일괄 등록. "
+        "택배사 / 송장번호 / 관리번호(주문번호) 3 컬럼만 채워진 양식."
+    )
+
+    uploaded = st.file_uploader(
+        "다원 채번 파일 (.xls)",
+        type=['xls'],
+        accept_multiple_files=False,
+        key="domestic_waybill_xls",
+        help="다원에서 받은 운송장번호 채번 파일.",
+    )
+    if not uploaded:
+        return
+
+    carrier = st.text_input(
+        "택배사명", value=EZA_WAYBILL_DEFAULT_CARRIER, key="domestic_waybill_carrier",
+        help="이지어드민에 등록될 택배사. 기본 'CJ대한통운'.",
+    )
+
+    try:
+        xlsx_bytes, info = build_eza_waybill_xlsx(uploaded.getvalue(), carrier=carrier)
+    except Exception as ex:
+        st.error(f"송장 양식 생성 실패: {ex}")
+        return
+
+    c1, c2 = st.columns(2)
+    c1.metric("✅ 송장 기입", info['filled'])
+    c2.metric("⚠️ skip", len(info['skipped']),
+              help="주문번호/운송장번호 빈 행 — 양식에서 제외")
+
+    if info['skipped']:
+        with st.expander(f"⚠️ skip {len(info['skipped'])}건", expanded=False):
+            st.dataframe(pd.DataFrame(info['skipped']), hide_index=True, width="stretch")
+
+    out_name = uploaded.name.replace('.xls', '_송장업로드양식.xlsx')
+    st.download_button(
+        f"📥 {out_name}",
+        data=xlsx_bytes,
+        file_name=out_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary", width="stretch",
+        key="domestic_waybill_download",
+    )
+    st.caption("📤 이지어드민에 송장 일괄 등록 양식으로 업로드.")
+
+
+def render_page():
+    tab_order, tab_waybill = st.tabs([
+        "📤 발주서 생성", "📥 송장 양식 생성"
+    ])
+    with tab_order:
+        _tab_create_order()
+    with tab_waybill:
+        _tab_eza_waybill()
