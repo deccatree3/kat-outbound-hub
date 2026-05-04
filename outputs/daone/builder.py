@@ -43,6 +43,18 @@ _HEADER_FILL = PatternFill(start_color='E8E8E8', end_color='E8E8E8', fill_type='
 # KSE 큐텐 국내 빌드 시 'NO' 추가 컬럼 헤더 색상 (#FFFF00)
 _NO_COL_HEADER_FILL = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
 
+# 패킹 그룹(아웃박스NO)별 행 색상 팔레트 (연한 톤, 가독성 우선).
+# 같은 아웃박스NO = 같은 색. 아웃박스NO 순서대로 순환.
+_GROUP_COLOR_PALETTE = [
+    'FFF59D',  # 노랑
+    'C5E1A5',  # 연두
+    'B3E5FC',  # 하늘
+    'F8BBD0',  # 분홍
+    'D1C4E9',  # 연보라
+    'FFCC80',  # 살구
+    'B2DFDB',  # 청록
+]
+
 
 DAONE_HEADERS = [
     '몰명(또는 몰코드)',
@@ -190,12 +202,29 @@ def build_daone_xlsx(daone_rows: List[Dict],
     else:
         ordered = daone_rows
 
-    for r in ordered:
+    # 패킹 그룹(아웃박스NO) → 색 매핑 (등장 순서대로 팔레트 순환)
+    obox_to_color: Dict = {}
+    if add_packing_columns:
+        for r in ordered:
+            obno = r.get('_packing_outbox_no')
+            if obno is None or obno in obox_to_color:
+                continue
+            obox_to_color[obno] = _GROUP_COLOR_PALETTE[len(obox_to_color) % len(_GROUP_COLOR_PALETTE)]
+
+    for ri, r in enumerate(ordered, 2):
         row_values = [r.get(h, '') for h in DAONE_HEADERS]
         if add_packing_columns:
             row_values += [r.get('_packing_inbox'), r.get('_packing_inbox_no'),
                            r.get('_packing_outbox'), r.get('_packing_outbox_no')]
         ws.append(row_values)
+        # 같은 아웃박스NO 행에 같은 색 채움 (모든 컬럼)
+        if add_packing_columns:
+            obno = r.get('_packing_outbox_no')
+            color = obox_to_color.get(obno)
+            if color:
+                fill = PatternFill(start_color=color, end_color=color, fill_type='solid')
+                for c in range(1, len(headers) + 1):
+                    ws.cell(ri, c).fill = fill
 
     widths = [14, 18, 14, 14, 40, 14, 8, 12, 16, 16, 12, 16, 16, 12, 50, 50, 30, 16, 12]
     if add_packing_columns:
