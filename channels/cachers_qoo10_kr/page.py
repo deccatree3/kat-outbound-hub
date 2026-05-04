@@ -277,11 +277,12 @@ def render_page():
     if len(df) > 50:
         st.caption(f"… 50/{len(df)} 행 표시")
 
-    # 다운로드
+    # 다운로드 — 발주서(19컬럼, 다원 업로드용) + 패킹리스트(23컬럼+색, 작업참고용) 분리
     try:
-        xlsx_bytes = build_daone_xlsx(daone_rows, add_packing_columns=True)
+        order_xlsx = build_daone_xlsx(daone_rows)  # 19컬럼 only
+        packing_xlsx = build_daone_xlsx(daone_rows, add_packing_columns=True)
     except Exception as ex:
-        st.error(f"다원 xlsx 생성 실패: {ex}")
+        st.error(f"xlsx 생성 실패: {ex}")
         return
 
     # 부착문서 PDF — 아웃박스별 라벨
@@ -296,16 +297,30 @@ def render_page():
     total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
 
     yymmdd = work_date.strftime('%y%m%d')
-    out_name = f"{yymmdd}_{int(sequence)}차발주서_큐텐국내(주문건수 {unique_orders}, 주문량수 {total_qty}).xlsx"
-    c_dl, c_save = st.columns([2, 1])
-    with c_dl:
+    info_suffix = f"(주문건수 {unique_orders}, 주문량수 {total_qty})"
+    order_name = f"{yymmdd}_{int(sequence)}차발주서_큐텐국내{info_suffix}.xlsx"
+    packing_name = f"{yymmdd}_{int(sequence)}차패킹리스트_큐텐국내{info_suffix}.xlsx"
+
+    c_order, c_pack, c_save = st.columns([2, 2, 1])
+    with c_order:
         st.download_button(
-            f"📥 {out_name}",
-            data=xlsx_bytes,
-            file_name=out_name,
+            f"📥 {order_name}",
+            data=order_xlsx,
+            file_name=order_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary", width="stretch",
             key="kse_daone_download",
+            help="다원 시스템 업로드용 (19컬럼)",
+        )
+    with c_pack:
+        st.download_button(
+            f"📥 {packing_name}",
+            data=packing_xlsx,
+            file_name=packing_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="secondary", width="stretch",
+            key="kse_packing_download",
+            help="패킹 작업 참고용 (인박스/아웃박스 + 색)",
         )
     with c_save:
         render_save_button(CHANNEL_KEY, session_info, daone_rows,
