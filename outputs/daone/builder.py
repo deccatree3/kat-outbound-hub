@@ -274,8 +274,8 @@ def kse_oms_to_daone(kse_rows: List[Dict]) -> List[Dict]:
         d = {h: '' for h in DAONE_HEADERS}
         d['몰명(또는 몰코드)'] = DEFAULT_몰코드
         d['출하의뢰번호']     = k.get('판매마켓', '')
-        d['출하의뢰항번']     = k.get('접수번호', '')
-        d['주문번호']     = k.get('주문번호', '')
+        d['출하의뢰항번']     = k.get('주문번호', '')      # 큐텐 주문번호
+        d['주문번호']         = k.get('접수번호', '')      # KSE 송장(접수)번호
         d['상품명']           = full_name.strip()
         d['제품코드']         = ''  # SKU 매핑은 다음 단계
         d['주문수량']         = qty
