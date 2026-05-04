@@ -29,8 +29,8 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
     key_prefix: 채널 페이지 안에서 위젯 key 충돌 방지용.
     """
     history = _b.list_keys_for_channel(channel, limit=50)
-    next_seq = _b.next_sequence_for_channel(channel)
     today = datetime.date.today()
+    next_seq = _b.next_sequence_for_channel(channel, work_date=today)
 
     options: List = [NEW_OPTION_KEY] + [(h['work_date'], h['sequence']) for h in history]
     history_by_key = {(h['work_date'], h['sequence']): h for h in history}
@@ -58,12 +58,21 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
 
     if sel == NEW_OPTION_KEY:
         c_d, c_s = st.columns([1, 1])
+        wd_key = f"{key_prefix}_new_work_date"
+        seq_key = f"{key_prefix}_new_sequence"
+
+        def _refresh_seq():
+            wd = st.session_state.get(wd_key, today)
+            st.session_state[seq_key] = _b.next_sequence_for_channel(channel, work_date=wd)
+
         work_date = c_d.date_input(
-            "작업일", value=today, key=f"{key_prefix}_new_work_date",
+            "작업일", value=today, key=wd_key, on_change=_refresh_seq,
         )
+        # 첫 렌더링 시 session_state 에 값 없으면 default = next_seq (계산된 today 기준)
+        if seq_key not in st.session_state:
+            st.session_state[seq_key] = int(next_seq)
         sequence = c_s.number_input(
-            "차수", min_value=1, value=int(next_seq), step=1,
-            key=f"{key_prefix}_new_sequence",
+            "차수", min_value=1, step=1, key=seq_key,
         )
         return {
             'work_date': work_date,

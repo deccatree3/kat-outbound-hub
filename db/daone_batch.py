@@ -220,17 +220,28 @@ def list_all_sessions(limit: int = 50) -> List[Tuple[datetime.date, int]]:
         return []
 
 
-def next_sequence_for_channel(channel: str) -> int:
-    """해당 채널의 가장 큰 sequence + 1. 없으면 1."""
+def next_sequence_for_channel(channel: str,
+                              work_date: Optional[datetime.date] = None) -> int:
+    """해당 채널의 가장 큰 sequence + 1. 없으면 1.
+    work_date 지정 시 그 날짜 기준 (다른 날짜 sequence 무시) — 매일 1차부터 시작.
+    None이면 모든 날짜 통틀어.
+    """
     ensure_schema()
     try:
         conn = pg.connect(autocommit=True)
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT COALESCE(MAX(sequence), 0) + 1
-                FROM daone_pending_batch
-                WHERE channel=%s
-            """, (channel,))
+            if work_date is None:
+                cur.execute("""
+                    SELECT COALESCE(MAX(sequence), 0) + 1
+                    FROM daone_pending_batch
+                    WHERE channel=%s
+                """, (channel,))
+            else:
+                cur.execute("""
+                    SELECT COALESCE(MAX(sequence), 0) + 1
+                    FROM daone_pending_batch
+                    WHERE channel=%s AND work_date=%s
+                """, (channel, work_date))
             n = cur.fetchone()[0]
         conn.close()
         return int(n)
