@@ -43,17 +43,10 @@ _HEADER_FILL = PatternFill(start_color='E8E8E8', end_color='E8E8E8', fill_type='
 # KSE 큐텐 국내 빌드 시 'NO' 추가 컬럼 헤더 색상 (#FFFF00)
 _NO_COL_HEADER_FILL = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
 
-# 패킹 그룹(아웃박스NO)별 행 색상 팔레트 (연한 톤, 가독성 우선).
-# 같은 아웃박스NO = 같은 색. 아웃박스NO 순서대로 순환.
-_GROUP_COLOR_PALETTE = [
-    'FFF59D',  # 노랑
-    'C5E1A5',  # 연두
-    'B3E5FC',  # 하늘
-    'F8BBD0',  # 분홍
-    'D1C4E9',  # 연보라
-    'FFCC80',  # 살구
-    'B2DFDB',  # 청록
-]
+# 패킹 그룹(아웃박스NO) 격번 색상 — 단일 색 (예시 파일 기준).
+# 패턴: 색없음 → 색 → 색없음 → 색 ... (홀수 그룹 색없음, 짝수 그룹 색)
+# 색 = Office Accent6, Lighter 80% (#FCE4D6 연한 살구)
+_GROUP_FILL_COLOR = 'FCE4D6'
 
 
 DAONE_HEADERS = [
@@ -202,14 +195,18 @@ def build_daone_xlsx(daone_rows: List[Dict],
     else:
         ordered = daone_rows
 
-    # 패킹 그룹(아웃박스NO) → 색 매핑 (등장 순서대로 팔레트 순환)
-    obox_to_color: Dict = {}
+    # 패킹 그룹(아웃박스NO) → 색 매핑 (격번: 짝수 그룹만 색, 홀수 그룹은 색 없음).
+    # 등장 순서 1번째=색없음, 2번째=색, 3번째=색없음, 4번째=색...
+    obox_order: Dict = {}  # 아웃박스NO → 등장 순서 (1-indexed)
     if add_packing_columns:
         for r in ordered:
             obno = r.get('_packing_outbox_no')
-            if obno is None or obno in obox_to_color:
+            if obno is None or obno in obox_order:
                 continue
-            obox_to_color[obno] = _GROUP_COLOR_PALETTE[len(obox_to_color) % len(_GROUP_COLOR_PALETTE)]
+            obox_order[obno] = len(obox_order) + 1
+
+    group_fill = PatternFill(start_color=_GROUP_FILL_COLOR,
+                             end_color=_GROUP_FILL_COLOR, fill_type='solid')
 
     for ri, r in enumerate(ordered, 2):
         row_values = [r.get(h, '') for h in DAONE_HEADERS]
@@ -217,14 +214,13 @@ def build_daone_xlsx(daone_rows: List[Dict],
             row_values += [r.get('_packing_inbox'), r.get('_packing_inbox_no'),
                            r.get('_packing_outbox'), r.get('_packing_outbox_no')]
         ws.append(row_values)
-        # 같은 아웃박스NO 행에 같은 색 채움 (모든 컬럼)
+        # 짝수 등장 그룹만 색 채움 (모든 컬럼)
         if add_packing_columns:
             obno = r.get('_packing_outbox_no')
-            color = obox_to_color.get(obno)
-            if color:
-                fill = PatternFill(start_color=color, end_color=color, fill_type='solid')
+            order = obox_order.get(obno)
+            if order is not None and order % 2 == 0:
                 for c in range(1, len(headers) + 1):
-                    ws.cell(ri, c).fill = fill
+                    ws.cell(ri, c).fill = group_fill
 
     widths = [14, 18, 14, 14, 40, 14, 8, 12, 16, 16, 12, 16, 16, 12, 50, 50, 30, 16, 12]
     if add_packing_columns:
