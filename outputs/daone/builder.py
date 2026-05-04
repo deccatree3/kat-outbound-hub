@@ -43,8 +43,9 @@ _HEADER_FILL = PatternFill(start_color='E8E8E8', end_color='E8E8E8', fill_type='
 # KSE 큐텐 국내 빌드 시 'NO' 추가 컬럼 헤더 색상 (#FFFF00)
 _NO_COL_HEADER_FILL = PatternFill(start_color='FFFF00', end_color='FFFF00', fill_type='solid')
 
-# 패킹 그룹(아웃박스NO) 격번 색상 — 단일 색 (예시 파일 기준).
-# 패턴: 색없음 → 색 → 색없음 → 색 ... (홀수 그룹 색없음, 짝수 그룹 색)
+# 인박스NO 단위 격번 색상 — 단일 색 (예시 파일 기준).
+# 같은 인박스(=같은 사람 주문=같은 KSE 송장) 모든 행 같은 색.
+# 패턴: 인박스NO 1=색없음, 2=색, 3=색없음, 4=색 ... (홀수 색없음, 짝수 색)
 # 색 = Office Accent6, Lighter 80% (#FCE4D6 연한 살구)
 _GROUP_FILL_COLOR = 'FCE4D6'
 
@@ -195,16 +196,6 @@ def build_daone_xlsx(daone_rows: List[Dict],
     else:
         ordered = daone_rows
 
-    # 패킹 그룹(아웃박스NO) → 색 매핑 (격번: 짝수 그룹만 색, 홀수 그룹은 색 없음).
-    # 등장 순서 1번째=색없음, 2번째=색, 3번째=색없음, 4번째=색...
-    obox_order: Dict = {}  # 아웃박스NO → 등장 순서 (1-indexed)
-    if add_packing_columns:
-        for r in ordered:
-            obno = r.get('_packing_outbox_no')
-            if obno is None or obno in obox_order:
-                continue
-            obox_order[obno] = len(obox_order) + 1
-
     group_fill = PatternFill(start_color=_GROUP_FILL_COLOR,
                              end_color=_GROUP_FILL_COLOR, fill_type='solid')
 
@@ -214,11 +205,10 @@ def build_daone_xlsx(daone_rows: List[Dict],
             row_values += [r.get('_packing_inbox'), r.get('_packing_inbox_no'),
                            r.get('_packing_outbox'), r.get('_packing_outbox_no')]
         ws.append(row_values)
-        # 짝수 등장 그룹만 색 채움 (모든 컬럼)
+        # 인박스NO 짝수면 행 전체에 색 채움 (같은 인박스의 모든 SKU 행 같은 색)
         if add_packing_columns:
-            obno = r.get('_packing_outbox_no')
-            order = obox_order.get(obno)
-            if order is not None and order % 2 == 0:
+            inbno = r.get('_packing_inbox_no')
+            if isinstance(inbno, int) and inbno % 2 == 0:
                 for c in range(1, len(headers) + 1):
                     ws.cell(ri, c).fill = group_fill
 
