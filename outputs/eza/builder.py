@@ -48,25 +48,31 @@ def _to_excel_date(value) -> tuple:
 EZA_WAYBILL_DEFAULT_CARRIER = 'CJ대한통운'
 
 
-def build_eza_waybill_xlsx(daone_invoice_xls_bytes: bytes,
-                           carrier: str = EZA_WAYBILL_DEFAULT_CARRIER) -> tuple[bytes, Dict]:
-    """다원 채번.xls (12컬럼) → 이지어드민 송장 업로드 양식.xlsx (9컬럼).
+def _normalize_waybill(value) -> str:
+    if value is None:
+        return ''
+    return ''.join(c for c in str(value) if c.isdigit())
 
-    출력 컬럼 위치 (B/C/F~I 빈 컬럼 그대로 유지 — 양식 호환):
-      A 택배사 / D 송장번호 / E 관리번호
 
-    매핑:
-      A 택배사   = carrier (default 'CJ대한통운')
-      D 송장번호 = 채번 파일의 운송장번호 (하이픈 제거)
-      E 관리번호 = 채번 파일의 주문번호
+def _normalize_order_no(value) -> str:
+    if value in ('', None):
+        return ''
+    try:
+        return str(int(float(value)))
+    except (ValueError, TypeError):
+        return str(value).strip()
 
-    반환: (xlsx_bytes, info)
-      info = {'filled': N, 'skipped': [{ 행, 원인 }]}
+
+def parse_daone_invoice_xls(data: bytes,
+                            default_carrier: str = EZA_WAYBILL_DEFAULT_CARRIER
+                            ) -> tuple[List[tuple], List[Dict]]:
+    """다원 채번.xls → [(carrier, waybill, order_no), ...] + skip 리스트.
+    다원 양식엔 택배사 컬럼이 없어 default_carrier 적용.
     """
-    wb_in = xlrd.open_workbook(file_contents=daone_invoice_xls_bytes)
+    wb_in = xlrd.open_workbook(file_contents=data)
     ws_in = wb_in.sheet_by_index(0)
     if ws_in.nrows < 2:
-        raise RuntimeError("채번 파일에 데이터가 없습니다.")
+        return [], [{'원인': '데이터 없음'}]
     headers = [str(ws_in.cell_value(0, c)).strip() for c in range(ws_in.ncols)]
 
     def find_idx(*names):
@@ -79,48 +85,97 @@ def build_eza_waybill_xlsx(daone_invoice_xls_bytes: bytes,
     waybill_i = find_idx('운송장번호', '송장번호')
     if order_i is None or waybill_i is None:
         raise RuntimeError(
-            f"채번 파일에서 '주문번호' 또는 '운송장번호' 컬럼을 찾지 못했습니다. "
+            f"다원 채번 파일에서 '주문번호' 또는 '운송장번호' 컬럼을 찾지 못함. "
             f"실제 헤더: {headers}"
         )
 
+    triples = []
+    skipped = []
+    for r in range(1, ws_in.nrows):
+        order_no = _normalize_order_no(ws_in.cell_value(r, order_i))
+        waybill = _normalize_waybill(ws_in.cell_value(r, waybill_i))
+        if not order_no or not waybill:
+            skipped.append({'source': '다원', '행': r + 1,
+                            '주문번호': order_no, '송장번호': waybill,
+                            '원인': '필수값 없음'})
+            continue
+        triples.append((default_carrier, waybill, order_no))
+    return triples, skipped
+
+
+def parse_3pl_invoice_xlsx(data: bytes,
+                           default_carrier: str = EZA_WAYBILL_DEFAULT_CARRIER
+                           ) -> tuple[List[tuple], List[Dict]]:
+    """3PL 출고요청서.xlsx (우리 25컬럼 양식) — 송장번호 채워진 상태.
+    택배사는 무조건 default_carrier (CJ대한통운) — 양식 내 '택배사' 컬럼은 무시.
+    """
+    wb_in = openpyxl.load_workbook(io.BytesIO(data), data_only=True)
+    ws_in = wb_in.active
+    if ws_in.max_row < 2:
+        return [], [{'원인': '데이터 없음'}]
+    headers = [str(ws_in.cell(1, c).value or '').strip()
+               for c in range(1, ws_in.max_column + 1)]
+
+    def find_idx(*names):
+        for n in names:
+            if n in headers:
+                return headers.index(n) + 1   # openpyxl 1-indexed
+        return None
+
+    order_i = find_idx('주문번호', '고객주문번호')
+    waybill_i = find_idx('송장번호', '운송장번호')
+    if order_i is None or waybill_i is None:
+        raise RuntimeError(
+            f"3PL 파일에서 '주문번호' 또는 '송장번호' 컬럼을 찾지 못함. "
+            f"실제 헤더: {headers}"
+        )
+
+    triples = []
+    skipped = []
+    for r in range(2, ws_in.max_row + 1):
+        order_no = _normalize_order_no(ws_in.cell(r, order_i).value)
+        waybill = _normalize_waybill(ws_in.cell(r, waybill_i).value)
+        if not order_no or not waybill:
+            skipped.append({'source': '3PL', '행': r,
+                            '주문번호': order_no, '송장번호': waybill,
+                            '원인': '필수값 없음'})
+            continue
+        triples.append((default_carrier, waybill, order_no))
+    return triples, skipped
+
+
+def build_eza_waybill_from_triples(triples: List[tuple]) -> bytes:
+    """[(carrier, waybill, order_no), ...] → 이지어드민 송장 양식.xlsx.
+
+    출력 컬럼 위치:
+      A 택배사 / D 송장번호 / E 관리번호
+    """
     wb_out = openpyxl.Workbook()
     ws_out = wb_out.active
     ws_out.title = 'Sheet1'
     ws_out.cell(1, 1, '택배사')
     ws_out.cell(1, 4, '송장번호')
     ws_out.cell(1, 5, '관리번호')
-    # 컬럼 폭
     for letter, w in [('A', 13), ('B', 13), ('C', 13), ('D', 15), ('E', 13)]:
         ws_out.column_dimensions[letter].width = w
 
-    filled = 0
-    skipped: List[Dict] = []
-    for r in range(1, ws_in.nrows):
-        order_raw = ws_in.cell_value(r, order_i)
-        waybill_raw = ws_in.cell_value(r, waybill_i)
-
-        # 주문번호 정수형 정규화 (xlrd가 float로 읽을 수 있음)
-        try:
-            order_no = str(int(float(order_raw))) if order_raw not in ('', None) else ''
-        except (ValueError, TypeError):
-            order_no = str(order_raw).strip()
-
-        waybill = ''.join(c for c in str(waybill_raw) if c.isdigit())
-
-        if not order_no or not waybill:
-            skipped.append({'행': r + 1, '주문번호': order_no, '운송장번호': str(waybill_raw),
-                            '원인': '필수값 없음'})
-            continue
-
-        out_r = filled + 2  # 헤더 1행 다음부터
-        ws_out.cell(out_r, 1, carrier)
-        ws_out.cell(out_r, 4, waybill)
-        ws_out.cell(out_r, 5, order_no)
-        filled += 1
+    for i, (carrier, waybill, order_no) in enumerate(triples, 2):
+        ws_out.cell(i, 1, carrier)
+        ws_out.cell(i, 4, waybill)
+        ws_out.cell(i, 5, order_no)
 
     buf = io.BytesIO()
     wb_out.save(buf)
-    return buf.getvalue(), {'filled': filled, 'skipped': skipped}
+    return buf.getvalue()
+
+
+def build_eza_waybill_xlsx(daone_invoice_xls_bytes: bytes,
+                           carrier: str = EZA_WAYBILL_DEFAULT_CARRIER) -> tuple[bytes, Dict]:
+    """다원 채번.xls 단일 파일 → 이지어드민 송장 양식.xlsx (하위 호환)."""
+    triples, skipped = parse_daone_invoice_xls(daone_invoice_xls_bytes, carrier)
+    return build_eza_waybill_from_triples(triples), {
+        'filled': len(triples), 'skipped': skipped,
+    }
 
 
 def build_makers_eza_xls(makers_rows: List[Dict]) -> bytes:

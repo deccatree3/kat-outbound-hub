@@ -18,7 +18,10 @@ from outputs.daone.builder import (
     build_daone_xlsx,
 )
 from outputs.nenu_bundle.builder import build_bundle_xlsx
-from outputs.eza.builder import build_eza_waybill_xlsx, EZA_WAYBILL_DEFAULT_CARRIER
+from outputs.eza.builder import (
+    build_eza_waybill_xlsx, EZA_WAYBILL_DEFAULT_CARRIER,
+    parse_daone_invoice_xls, parse_3pl_invoice_xlsx, build_eza_waybill_from_triples,
+)
 from outputs.cachers_3pl.builder import (
     build_cachers_3pl_xlsx, filter_target_rows as _3pl_filter, TARGET_SUPPLIER as _3PL_SUPPLIER,
 )
@@ -251,41 +254,89 @@ def _tab_create_order():
 
 def _tab_eza_waybill():
     st.markdown(
-        "다원 채번.xls 업로드 → **이지어드민 송장 업로드 양식.xlsx** 다운로드 → 이지어드민 송장 일괄 등록. "
-        "택배사 / 송장번호 / 관리번호(주문번호) 3 컬럼만 채워진 양식."
+        "다원 채번.xls + 3PL 출고요청서.xlsx (송장 채워진) → **이지어드민 송장 업로드 양식.xlsx**. "
+        "두 source 합산해서 1개 파일로. 한 가지만 업로드해도 OK."
     )
 
     uploaded = st.file_uploader(
-        "다원 채번 파일 (.xls)",
-        type=['xls'],
-        accept_multiple_files=False,
-        key="domestic_waybill_xls",
-        help="다원에서 받은 운송장번호 채번 파일.",
+        "다원 채번 (.xls) + 3PL 송장 채운 출고요청서 (.xlsx) 한 번에 업로드 (여러 개 가능)",
+        type=['xls', 'xlsx'],
+        accept_multiple_files=True,
+        key="domestic_waybill_files",
+        help="확장자로 자동 분류 (.xls → 다원 채번, .xlsx → 3PL 출고요청서).",
     )
     if not uploaded:
         return
 
-    carrier = st.text_input(
-        "택배사명", value=EZA_WAYBILL_DEFAULT_CARRIER, key="domestic_waybill_carrier",
-        help="이지어드민에 등록될 택배사. 기본 'CJ대한통운'.",
+    carrier = EZA_WAYBILL_DEFAULT_CARRIER  # 고정: CJ대한통운
+    st.caption(f"📦 택배사 = `{carrier}` 고정. 양식의 관리번호 = 주문번호(고객주문번호).")
+
+    daone_files = [f for f in uploaded if f.name.lower().endswith('.xls')]
+    threepl_files = [f for f in uploaded if f.name.lower().endswith('.xlsx')]
+
+    chk_d = f'✅ ({len(daone_files)})' if daone_files else ''
+    chk_3 = f'✅ ({len(threepl_files)})' if threepl_files else ''
+    st.markdown(
+        "<div style='font-size:0.8em'>\n\n"
+        "| 파일 | 용도 | 업로드 |\n"
+        "|------|------|:----:|\n"
+        f"| `*.xls` | 다원 채번 (12컬럼) — 택배사 default 적용 | {chk_d} |\n"
+        f"| `*.xlsx` | 3PL 출고요청서 (송장/택배사 채워짐) | {chk_3} |\n\n"
+        "</div>",
+        unsafe_allow_html=True,
     )
 
+    all_triples = []
+    all_skipped = []
+    parse_errors = []
+
+    for f in daone_files:
+        try:
+            triples, skipped = parse_daone_invoice_xls(f.getvalue(), default_carrier=carrier)
+            all_triples.extend(triples)
+            for s in skipped:
+                s.setdefault('파일', f.name)
+            all_skipped.extend(skipped)
+        except Exception as ex:
+            parse_errors.append(f"{f.name}: {ex}")
+
+    for f in threepl_files:
+        try:
+            triples, skipped = parse_3pl_invoice_xlsx(f.getvalue(), default_carrier=carrier)
+            all_triples.extend(triples)
+            for s in skipped:
+                s.setdefault('파일', f.name)
+            all_skipped.extend(skipped)
+        except Exception as ex:
+            parse_errors.append(f"{f.name}: {ex}")
+
+    if parse_errors:
+        st.error("일부 파일 파싱 실패:\n" + "\n".join(parse_errors))
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("✅ 송장 기입", len(all_triples))
+    c2.metric("⚠️ skip", len(all_skipped),
+              help="주문번호/송장번호 빈 행 — 양식에서 제외")
+    unique_carriers = sorted({t[0] for t in all_triples})
+    c3.metric("📦 택배사 종류", len(unique_carriers),
+              help='/'.join(unique_carriers) if unique_carriers else '')
+
+    if all_skipped:
+        with st.expander(f"⚠️ skip {len(all_skipped)}건", expanded=False):
+            st.dataframe(pd.DataFrame(all_skipped), hide_index=True, width="stretch")
+
+    if not all_triples:
+        st.info("📭 송장 기입할 행이 없습니다.")
+        return
+
     try:
-        xlsx_bytes, info = build_eza_waybill_xlsx(uploaded.getvalue(), carrier=carrier)
+        xlsx_bytes = build_eza_waybill_from_triples(all_triples)
     except Exception as ex:
         st.error(f"송장 양식 생성 실패: {ex}")
         return
 
-    c1, c2 = st.columns(2)
-    c1.metric("✅ 송장 기입", info['filled'])
-    c2.metric("⚠️ skip", len(info['skipped']),
-              help="주문번호/운송장번호 빈 행 — 양식에서 제외")
-
-    if info['skipped']:
-        with st.expander(f"⚠️ skip {len(info['skipped'])}건", expanded=False):
-            st.dataframe(pd.DataFrame(info['skipped']), hide_index=True, width="stretch")
-
-    out_name = uploaded.name.replace('.xls', '_송장업로드양식.xlsx')
+    today_str = datetime.date.today().strftime('%y%m%d')
+    out_name = f"{today_str}_이지어드민_송장업로드양식({len(all_triples)}건).xlsx"
     st.download_button(
         f"📥 {out_name}",
         data=xlsx_bytes,
@@ -294,7 +345,7 @@ def _tab_eza_waybill():
         type="primary", width="stretch",
         key="domestic_waybill_download",
     )
-    st.caption("📤 이지어드민에 송장 일괄 등록 양식으로 업로드.")
+    st.caption("📤 이지어드민 송장 일괄 등록 양식으로 업로드.")
 
 
 def render_page():
