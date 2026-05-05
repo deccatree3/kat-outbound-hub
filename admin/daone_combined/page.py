@@ -13,6 +13,7 @@ import streamlit as st
 
 from db import daone_batch as _b
 from outputs.daone.builder import build_daone_xlsx
+from utils.timezone import kst_today
 
 
 CHANNEL_LABELS = {
@@ -144,7 +145,7 @@ def render_page():
                 except Exception as ex:
                     st.error(f"통합 xlsx 생성 실패: {ex}")
                 else:
-                    today_str = datetime.date.today().strftime('%y%m%d')
+                    today_str = kst_today().strftime('%y%m%d')
                     unique_orders = len({r.get('고객주문번호', '') for r in all_rows if r.get('고객주문번호')})
                     total_qty = sum(int(r.get('주문수량', 0) or 0) for r in all_rows)
                     out_name = (

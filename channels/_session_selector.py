@@ -18,6 +18,7 @@ from typing import Dict, List
 import streamlit as st
 
 from db import daone_batch as _b
+from utils.timezone import kst_today
 
 
 NEW_OPTION_KEY = '__new__'
@@ -29,7 +30,7 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
     key_prefix: 채널 페이지 안에서 위젯 key 충돌 방지용.
     """
     history = _b.list_keys_for_channel(channel, limit=50)
-    today = datetime.date.today()
+    today = kst_today()
     next_seq = _b.next_sequence_for_channel(channel, work_date=today)
 
     options: List = [NEW_OPTION_KEY] + [(h['work_date'], h['sequence']) for h in history]

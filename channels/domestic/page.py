@@ -28,6 +28,7 @@ from outputs.cachers_3pl.builder import (
 from channels._session_selector import (
     render_work_session_selector, render_save_button,
 )
+from utils.timezone import kst_today
 
 
 CHANNEL_KEY = 'domestic'
@@ -335,7 +336,7 @@ def _tab_eza_waybill():
         st.error(f"송장 양식 생성 실패: {ex}")
         return
 
-    today_str = datetime.date.today().strftime('%y%m%d')
+    today_str = kst_today().strftime('%y%m%d')
     out_name = f"{today_str}_이지어드민_송장업로드양식({len(all_triples)}건).xlsx"
     st.download_button(
         f"📥 {out_name}",

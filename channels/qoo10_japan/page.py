@@ -15,6 +15,7 @@ import pandas as pd
 import streamlit as st
 
 from db import pg
+from utils.timezone import kst_today
 from qoo10 import api_client as qapi
 from qoo10 import generator as qgen
 
@@ -154,7 +155,7 @@ def _step1_qsm_collect():
             else:
                 st.caption(exp_msg)
         st.caption("QSM **신규주문**(배송요청 상태) = QSM 배송관리 화면의 '신규주문 N건'과 동일.")
-        today = datetime.date.today()
+        today = kst_today()
 
         if st.button("🔄 QSM에서 가져오기", key="step1_api_fetch",
                      type="primary", width="stretch"):
@@ -506,7 +507,7 @@ def _step2_outbound_generate():
                 )
             else:
                 xlsx_bytes = qgen.build_outbound_xlsx(out_rows)
-                today_str = datetime.date.today().strftime('%Y%m%d')
+                today_str = kst_today().strftime('%Y%m%d')
                 try:
                     n_saved = qgen.save_outbound_log(
                         rows, out_rows, mappings, det_name or 'unknown.csv'
@@ -911,7 +912,7 @@ def _render_history_tab():
     csv_export = df_hist.to_csv(index=False).encode('utf-8-sig')
     st.download_button(
         "📥 조회 결과 CSV 다운로드", data=csv_export,
-        file_name=f"qoo10_outbound_history_{datetime.date.today().strftime('%Y%m%d')}.csv",
+        file_name=f"qoo10_outbound_history_{kst_today().strftime('%Y%m%d')}.csv",
         mime="text/csv",
     )
 
