@@ -35,7 +35,7 @@ OUTPUT_TO_EZA: Dict[str, str] = {
     '몰명':           None,         # EZA 에 없음 → 빈값
     '출하의뢰번호':    '출하의뢰번호',
     '출하의뢰항번':    '출하의뢰항번',
-    '주문번호':       '주문번호',
+    '주문번호':       '고객주문번호',
     '판매처 상품명':   '판매처 상품명',
     '판매처 옵션':    '판매처 옵션',
     '자체상품코드':    '제품코드',
@@ -76,7 +76,13 @@ def build_cachers_3pl_xlsx(eza_rows: List[Dict]) -> Tuple[bytes, int]:
         out_row = []
         for h in OUTPUT_HEADERS:
             eza_key = OUTPUT_TO_EZA.get(h)
-            v = r.get(eza_key, '') if eza_key else ''
+            if eza_key is None:
+                v = ''
+            else:
+                v = r.get(eza_key, '')
+                # 신·구 양식 호환: 신규 '고객주문번호' 비어있으면 옛 '주문번호' fallback
+                if (not v) and eza_key == '고객주문번호':
+                    v = r.get('주문번호', '')
             out_row.append(v)
         ws.append(out_row)
 

@@ -80,7 +80,7 @@ EZA_TO_DAONE = {
     '몰명(또는 몰코드)':  '몰명(또는 몰코드)',
     '출하의뢰번호':       '출하의뢰번호',
     '출하의뢰항번':       '출하의뢰항번',
-    '주문번호':           '고객주문번호',
+    '고객주문번호':       '고객주문번호',
     '상품명':             '상품명',
     '제품코드':           '제품코드',
     '상품수량':           '주문수량',
@@ -136,6 +136,10 @@ def transform_to_daone(eza_rows: List[Dict]) -> List[Dict]:
         daone = {h: '' for h in DAONE_HEADERS}
         for eza_h, daone_h in EZA_TO_DAONE.items():
             daone[daone_h] = eza.get(eza_h, '')
+
+        # 0) 신·구 EZA 양식 호환: '고객주문번호' 빈값이면 옛 '주문번호' 로 폴백
+        if not str(daone.get('고객주문번호') or '').strip():
+            daone['고객주문번호'] = eza.get('주문번호', '')
 
         # 1) 몰명(또는 몰코드) 빈값 → 기본값
         if not str(daone.get('몰명(또는 몰코드)') or '').strip():
@@ -259,8 +263,9 @@ def parse_kse_oms_xlsx(data: bytes) -> List[Dict]:
                 d[h] = str(int(v))
             else:
                 d[h] = str(v)
-        # 빈 행 건너뜀 (번호 컬럼이 비어있으면)
-        if not d.get('번호') and not d.get('주문번호'):
+        # 빈 행 건너뜀 (번호 컬럼이 비어있으면). 신·구 양식 모두 호환.
+        if (not d.get('번호') and not d.get('고객주문번호')
+                and not d.get('주문번호')):
             continue
         rows.append(d)
     return rows

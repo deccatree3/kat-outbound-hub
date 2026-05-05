@@ -38,8 +38,8 @@ class DomesticAdapter(ChannelAdapter):
             out.append(Order(
                 channel=self.channel_id,
                 brand=self.brand,
-                order_no=str(d.get('주문번호', '')),
-                cart_no=str(d.get('출하의뢰번호') or d.get('주문번호', '')),
+                order_no=str(d.get('고객주문번호') or d.get('주문번호', '')),
+                cart_no=str(d.get('출하의뢰번호') or d.get('고객주문번호') or d.get('주문번호', '')),
                 sku_code=str(d.get('제품코드') or d.get('상품메모') or d.get('바코드') or ''),
                 qty=qty,
                 recipient_name=d.get('수취인명', ''),
