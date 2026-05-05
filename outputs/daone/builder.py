@@ -410,8 +410,12 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
         if m is None:
             unknown_rows.append(info)
             continue
-        valid = [(s.strip(), q) for s, q in zip(m.get('sku_codes', []), m.get('quantities', []))
-                 if s and s.strip() and s.strip() != '-']
+        items_list = m.get('item_codes', [])
+        valid = [
+            (s.strip(), q, items_list[i].strip() if i < len(items_list) else '')
+            for i, (s, q) in enumerate(zip(m.get('sku_codes', []), m.get('quantities', [])))
+            if s and s.strip() and s.strip() != '-'
+        ]
         if not valid:
             incomplete_rows.append(info)
             continue
@@ -421,9 +425,10 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
         except (ValueError, TypeError):
             base_qty = 1
 
-        full_name = name + (' / ' + option if option else '')
+        # 매핑된 item_code 가 없으면 KSE OMS raw (상품명+옵션) 으로 폴백
+        raw_full_name = name + (' / ' + option if option else '')
 
-        for sku_code, sku_unit in valid:
+        for sku_code, sku_unit, item_code in valid:
             try:
                 unit = int(sku_unit)
             except (ValueError, TypeError):
@@ -433,7 +438,7 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
             d['출하의뢰번호']     = k.get('판매마켓', '')
             d['출하의뢰항번']     = k.get('주문번호', '')      # 큐텐 주문번호
             d['고객주문번호']     = k.get('접수번호', '')      # KSE 송장(접수)번호
-            d['상품명']           = full_name.strip()
+            d['상품명']           = (item_code or raw_full_name).strip()
             d['제품코드']         = sku_code
             d['주문수량']         = unit * base_qty
             # 패킹 그룹 키 보존 (도착지송장번호 + 장바구니번호 → 같은 인박스NO)
@@ -550,14 +555,19 @@ def makers_to_daone_with_mapping(makers_rows: List[Dict], mappings: Dict) -> Dic
         if m is None:
             unknown_rows.append(info)
             continue
-        valid = [(s.strip(), q) for s, q in zip(m.get('sku_codes', []), m.get('quantities', []))
-                 if s and s.strip() and s.strip() != '-']
+        items_list = m.get('item_codes', [])
+        valid = [
+            (s.strip(), q, items_list[i].strip() if i < len(items_list) else '')
+            for i, (s, q) in enumerate(zip(m.get('sku_codes', []), m.get('quantities', [])))
+            if s and s.strip() and s.strip() != '-'
+        ]
         if not valid:
             incomplete_rows.append(info)
             continue
 
         base_qty = _makers_int(r.get('수량')) or 1
-        full_name = product + (' / ' + option if option else '')
+        # 매핑된 item_code 가 없으면 메이커스 raw (상품명+옵션) 으로 폴백
+        raw_full_name = product + (' / ' + option if option else '')
         recipient = (r.get('수령인명') or '').strip()
         phone1 = _makers_str(r.get('수령인 연락처1'))
         phone2 = _makers_str(r.get('수령인 연락처2'))
@@ -569,7 +579,7 @@ def makers_to_daone_with_mapping(makers_rows: List[Dict], mappings: Dict) -> Dic
         order_no = _makers_str(r.get('주문번호'))
         ship_no = _makers_str(r.get('배송번호'))
 
-        for sku_code, sku_unit in valid:
+        for sku_code, sku_unit, item_code in valid:
             try:
                 unit = int(sku_unit)
             except (ValueError, TypeError):
@@ -579,7 +589,7 @@ def makers_to_daone_with_mapping(makers_rows: List[Dict], mappings: Dict) -> Dic
             d['출하의뢰번호']     = MAKERS_DAONE_출하의뢰번호
             d['출하의뢰항번']     = ship_no
             d['고객주문번호']     = order_no
-            d['상품명']           = full_name.strip()
+            d['상품명']           = (item_code or raw_full_name).strip()
             d['제품코드']         = sku_code
             d['주문수량']         = unit * base_qty
             d['주문자명']         = recipient
