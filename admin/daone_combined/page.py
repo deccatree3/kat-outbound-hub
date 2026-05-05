@@ -145,7 +145,7 @@ def render_page():
                     st.error(f"통합 xlsx 생성 실패: {ex}")
                 else:
                     today_str = datetime.date.today().strftime('%y%m%d')
-                    unique_orders = len({r.get('주문번호', '') for r in all_rows if r.get('주문번호')})
+                    unique_orders = len({r.get('고객주문번호', '') for r in all_rows if r.get('고객주문번호')})
                     total_qty = sum(int(r.get('주문수량', 0) or 0) for r in all_rows)
                     out_name = (
                         f"{today_str}_통합발주서"
@@ -187,7 +187,7 @@ def render_page():
                     preview_rows.extend(b['rows'])
             if preview_rows:
                 df_prev = pd.DataFrame(preview_rows)
-                preview_cols = ['몰명(또는 몰코드)', '출하의뢰번호', '주문번호', '상품명',
+                preview_cols = ['몰명(또는 몰코드)', '출하의뢰번호', '고객주문번호', '상품명',
                                 '제품코드', '주문수량', '수취인명', '수취인우편번호', '수취인주소1']
                 available = [c for c in preview_cols if c in df_prev.columns]
                 st.dataframe(df_prev[available].head(100),

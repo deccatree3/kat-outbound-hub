@@ -54,7 +54,7 @@ DAONE_HEADERS = [
     '몰명(또는 몰코드)',
     '출하의뢰번호',
     '출하의뢰항번',
-    '주문번호',
+    '고객주문번호',
     '상품명',
     '제품코드',
     '주문수량',
@@ -80,7 +80,7 @@ EZA_TO_DAONE = {
     '몰명(또는 몰코드)':  '몰명(또는 몰코드)',
     '출하의뢰번호':       '출하의뢰번호',
     '출하의뢰항번':       '출하의뢰항번',
-    '주문번호':           '주문번호',
+    '주문번호':           '고객주문번호',
     '상품명':             '상품명',
     '제품코드':           '제품코드',
     '상품수량':           '주문수량',
@@ -290,7 +290,7 @@ def kse_oms_to_daone(kse_rows: List[Dict]) -> List[Dict]:
         d['몰명(또는 몰코드)'] = DEFAULT_몰코드
         d['출하의뢰번호']     = k.get('판매마켓', '')
         d['출하의뢰항번']     = k.get('주문번호', '')      # 큐텐 주문번호
-        d['주문번호']         = k.get('접수번호', '')      # KSE 송장(접수)번호
+        d['고객주문번호']     = k.get('접수번호', '')      # KSE 송장(접수)번호
         d['상품명']           = full_name.strip()
         d['제품코드']         = ''  # SKU 매핑은 다음 단계
         d['주문수량']         = qty
@@ -344,7 +344,7 @@ def build_kse_kr_order_xlsx(daone_rows: List[Dict]) -> bytes:
             r.get('몰명(또는 몰코드)', DEFAULT_몰코드),
             r.get('출하의뢰번호', ''),
             r.get('출하의뢰항번', ''),  # 큐텐 주문번호
-            r.get('주문번호', ''),       # KSE 송장(접수)번호
+            r.get('고객주문번호', ''),   # KSE 송장(접수)번호
             r.get('제품코드', ''),
             r.get('주문수량', ''),
             KSE_KR_ORDER_COUNTRY,
@@ -432,7 +432,7 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
             d['몰명(또는 몰코드)'] = DEFAULT_몰코드
             d['출하의뢰번호']     = k.get('판매마켓', '')
             d['출하의뢰항번']     = k.get('주문번호', '')      # 큐텐 주문번호
-            d['주문번호']         = k.get('접수번호', '')      # KSE 송장(접수)번호
+            d['고객주문번호']     = k.get('접수번호', '')      # KSE 송장(접수)번호
             d['상품명']           = full_name.strip()
             d['제품코드']         = sku_code
             d['주문수량']         = unit * base_qty
@@ -578,7 +578,7 @@ def makers_to_daone_with_mapping(makers_rows: List[Dict], mappings: Dict) -> Dic
             d['몰명(또는 몰코드)'] = DEFAULT_몰코드
             d['출하의뢰번호']     = MAKERS_DAONE_출하의뢰번호
             d['출하의뢰항번']     = ship_no
-            d['주문번호']     = order_no
+            d['고객주문번호']     = order_no
             d['상품명']           = full_name.strip()
             d['제품코드']         = sku_code
             d['주문수량']         = unit * base_qty
