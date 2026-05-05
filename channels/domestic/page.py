@@ -19,6 +19,9 @@ from outputs.daone.builder import (
 )
 from outputs.nenu_bundle.builder import build_bundle_xlsx
 from outputs.eza.builder import build_eza_waybill_xlsx, EZA_WAYBILL_DEFAULT_CARRIER
+from outputs.cachers_3pl.builder import (
+    build_cachers_3pl_xlsx, filter_target_rows as _3pl_filter, TARGET_SUPPLIER as _3PL_SUPPLIER,
+)
 from channels._session_selector import (
     render_work_session_selector, render_save_button,
 )
@@ -159,6 +162,45 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     )
 
 
+def _section_3pl(eza_rows, work_date, sequence):
+    """캐처스-3PL-참기름-자연앤미 출고요청서 (공급처 필터)."""
+    target = _3pl_filter(eza_rows)
+    if not target:
+        st.info(
+            f"📭 공급처 = `{_3PL_SUPPLIER}` 인 행이 없어 3PL 출고요청서는 생략."
+        )
+        return
+
+    st.markdown("### 🥡 캐처스 3PL 출고요청서 (참기름·자연앤미)")
+    st.caption(
+        f"EZA 의 공급처 = `{_3PL_SUPPLIER}` 행만 추출. 25컬럼 양식. "
+        "몰명 컬럼은 빈값 (EZA 에 없음)."
+    )
+
+    try:
+        xlsx_bytes, n = build_cachers_3pl_xlsx(eza_rows)
+    except Exception as ex:
+        st.error(f"3PL 출고요청서 생성 실패: {ex}")
+        return
+
+    c1, c2 = st.columns(2)
+    c1.metric("타겟 행수 (공급처 매칭)", n)
+    total_qty = sum(int(r.get('주문수량', 0) or 0) for r in target)
+    c2.metric("주문수량 합계", total_qty)
+
+    yymmdd = work_date.strftime('%y%m%d')
+    out_name = f"{yymmdd}_{int(sequence)}차_캐처스3PL출고요청서_참기름자연앤미({n}건).xlsx"
+    st.download_button(
+        f"📥 {out_name}",
+        data=xlsx_bytes,
+        file_name=out_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary", width="stretch",
+        key=f"3pl_download_{work_date}_{sequence}",
+    )
+    st.caption("📤 3PL 측에 수기 전달.")
+
+
 def _tab_create_order():
     st.markdown(
         "EZA **확장주문검색.xls** 한 번 업로드 → **다원 발주서**(캐처스) + **번들작업파일**(네뉴 세트) 동시 생성. "
@@ -203,6 +245,8 @@ def _tab_create_order():
     _section_daone(eza_rows, work_date, int(sequence), source_filename, session_info)
     st.markdown("---")
     _section_bundle([f.getvalue() for f in uploaded_files], work_date, int(sequence))
+    st.markdown("---")
+    _section_3pl(eza_rows, work_date, int(sequence))
 
 
 def _tab_eza_waybill():
