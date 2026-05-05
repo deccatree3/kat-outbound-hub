@@ -298,7 +298,7 @@ def render_page():
     total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
 
     yymmdd = work_date.strftime('%y%m%d')
-    info_suffix = f"(주문건수 {unique_orders}, 주문량수 {total_qty})"
+    info_suffix = f"(주문건수 {unique_orders}, 주문수량 {total_qty})"
     order_name = f"{yymmdd}_{int(sequence)}차발주서_큐텐국내{info_suffix}.xlsx"
     packing_name = f"{yymmdd}_{int(sequence)}차패킹리스트_큐텐국내{info_suffix}.xlsx"
 

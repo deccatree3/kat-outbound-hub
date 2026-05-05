@@ -219,7 +219,7 @@ def _render_daone_output(makers_rows, work_date, sequence, source_filename, sess
     total_qty = sum(int(r.get('주문수량', 0) or 0) for r in daone_rows)
 
     yymmdd = work_date.strftime('%y%m%d')
-    out_name = f"{yymmdd}_{int(sequence)}차발주서_메이커스(주문건수 {unique_orders}, 주문량수 {total_qty}).xlsx"
+    out_name = f"{yymmdd}_{int(sequence)}차발주서_메이커스(주문건수 {unique_orders}, 주문수량 {total_qty}).xlsx"
     c_dl, c_save = st.columns([2, 1])
     with c_dl:
         st.download_button(

@@ -84,7 +84,7 @@ def _render_metrics_and_preview(daone_rows):
 
 
 def _section_daone(eza_rows, work_date, sequence, source_filename, session_info):
-    st.markdown("### 📋 다원 발주서 (캐처스만)")
+    st.markdown("### 📋 [캐처스]다원 출고요청")
     st.caption("판매처그룹='캐처스' 행만 변환. 나머지(네뉴 등) 행은 자동 제외.")
 
     cachers_rows = [r for r in eza_rows if str(r.get('판매처그룹', '')).strip() == '캐처스']
@@ -102,7 +102,7 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info)
         return
 
     yymmdd = work_date.strftime('%y%m%d')
-    out_name = f"{yymmdd}_{int(sequence)}차발주서(주문건수 {unique_orders}, 주문량수 {total_qty}).xlsx"
+    out_name = f"{yymmdd}_{int(sequence)}차발주서(주문건수 {unique_orders}, 주문수량 {total_qty}).xlsx"
     c_dl, c_save = st.columns([2, 1])
     with c_dl:
         st.download_button(
@@ -120,7 +120,7 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info)
 
 
 def _section_bundle(eza_bytes_list, work_date, sequence):
-    st.markdown("### 📦 일반주문 번들작업건 (네뉴 세트만)")
+    st.markdown("### 📦 [네뉴]번들작업요청")
     st.caption(
         "EZA에서 판매처그룹='캐처스' 행은 자동 제외. 마스터 양식의 세트 행 D셀에 EZA 합계 정수 입력. "
         "단품 출고수량(C)은 Excel SUMIFS로 자동 계산."
@@ -167,33 +167,39 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
 
 
 def _section_3pl(eza_rows, work_date, sequence):
-    """캐처스-3PL-참기름-자연앤미 출고요청서 (공급처 필터)."""
-    target = _3pl_filter(eza_rows)
-    if not target:
-        st.info(
-            f"📭 공급처 = `{_3PL_SUPPLIER}` 인 행이 없어 3PL 출고요청서는 생략."
-        )
-        return
-
-    st.markdown("### 🥡 캐처스 3PL 출고요청서 (참기름·자연앤미)")
+    """캐처스 3PL-자연미앤 출고요청서 (공급처 필터)."""
+    st.markdown("### 🥡 [캐처스]3PL-자연미앤")
     st.caption(
         f"EZA 의 공급처 = `{_3PL_SUPPLIER}` 행만 추출. 25컬럼 양식. "
         "몰명 컬럼은 빈값 (EZA 에 없음)."
     )
 
+    target = _3pl_filter(eza_rows)
+    n = len(target)
+    unique_orders = len({
+        str(r.get('고객주문번호') or r.get('주문번호') or '').strip()
+        for r in target
+        if (r.get('고객주문번호') or r.get('주문번호'))
+    })
+    total_qty = sum(int(r.get('주문수량', 0) or 0) for r in target)
+
+    c1, c2, c3 = st.columns(3)
+    c1.metric("주문 행수", n)
+    c2.metric("주문번호 (고유)", unique_orders)
+    c3.metric("주문수량 합계", total_qty)
+
+    if n == 0:
+        st.info(f"📭 공급처 = `{_3PL_SUPPLIER}` 인 행이 없어 출고요청서를 생성하지 않습니다.")
+        return
+
     try:
-        xlsx_bytes, n = build_cachers_3pl_xlsx(eza_rows)
+        xlsx_bytes, _ = build_cachers_3pl_xlsx(eza_rows)
     except Exception as ex:
         st.error(f"3PL 출고요청서 생성 실패: {ex}")
         return
 
-    c1, c2 = st.columns(2)
-    c1.metric("타겟 행수 (공급처 매칭)", n)
-    total_qty = sum(int(r.get('주문수량', 0) or 0) for r in target)
-    c2.metric("주문수량 합계", total_qty)
-
     yymmdd = work_date.strftime('%y%m%d')
-    out_name = f"{yymmdd}_{int(sequence)}차_캐처스3PL출고요청서_참기름자연앤미({n}건).xlsx"
+    out_name = f"{yymmdd}_{int(sequence)}차_3PL자연미앤출고요청서(주문건수 {unique_orders}, 주문수량 {total_qty}).xlsx"
     st.download_button(
         f"📥 {out_name}",
         data=xlsx_bytes,
