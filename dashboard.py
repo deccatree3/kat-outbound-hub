@@ -30,11 +30,11 @@ st.caption("캐처스/네뉴 출고 통합")
 
 # 채널 레지스트리. status는 사용자에게 표시되는 진행도. 'render'가 있으면 dispatch 가능.
 CHANNELS = {
-    "cachers_qoo10":        {"label": "[캐처스] Qoo10",   "brand": "캐처스",     "status": "🆕 통합 (작업 진행 중)"},
-    "qoo10_japan":          {"label": "Qoo10 일본 출고",  "brand": "캐처스",     "status": "✅ 운영"},
+    "cachers_qoo10":        {"label": "[캐처스] Qoo10",   "brand": "캐처스",     "status": "✅ 운영 (일본+국내 통합)"},
     "domestic":             {"label": "국내몰",           "brand": "캐처스/네뉴", "status": "✅ 운영"},
-    "cachers_qoo10_kr":     {"label": "Qoo10 국내 출고",  "brand": "캐처스",     "status": "✅ 운영"},
     "cachers_makers":       {"label": "캐처스 메이커스",  "brand": "캐처스",     "status": "✅ 운영"},
+    # qoo10_japan / cachers_qoo10_kr 은 cachers_qoo10 안에서 내부 dispatch.
+    # 사이드바에서는 숨김. dispatch elif 는 유지 (직접 navigation 시 호환).
     "cachers_rocketgrowth": {"label": "캐처스 로켓그로스", "brand": "캐처스",     "status": "Phase 3 (부착문서 多)"},
     "nenu_telepay":         {"label": "네뉴 텔레페이",    "brand": "네뉴",       "status": "Phase 4"},
 }
