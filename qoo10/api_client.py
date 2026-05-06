@@ -360,6 +360,53 @@ def register_waybills_batch(sak: str,
     return results
 
 
+def set_seller_check_yn(sak: str,
+                        order_nos: List[str],
+                        ship_date: str) -> Dict:
+    """ShippingBasic.SetSellerCheckYN_V2 — 신규주문(stat=2) → 배송준비(stat=3) 전이.
+
+    Args:
+        sak: 인증키 (Authcode)
+        order_nos: 주문번호 list (콤마 구분 최대 1000건). 빈 list 면 즉시 반환.
+        ship_date: 발송예정일 'YYYYMMDD' (8자리)
+
+    Returns:
+        {'ok': bool, 'count': N, 'code': ResultCode, 'msg': ResultMsg, 'order_nos': '...'}
+    """
+    if not order_nos:
+        return {'ok': True, 'count': 0, 'code': 0, 'msg': 'no orders', 'order_nos': ''}
+    order_csv = ','.join(str(o).strip() for o in order_nos if str(o).strip())
+    if not order_csv:
+        return {'ok': True, 'count': 0, 'code': 0, 'msg': 'no orders', 'order_nos': ''}
+
+    params = {
+        "v": "1.0",
+        "returnType": "json",
+        "method": "ShippingBasic.SetSellerCheckYN_V2",
+        "key": sak,
+        "OrderNo": order_csv,
+        "ShippingDate": str(ship_date).strip(),
+    }
+    r = requests.post(BASE_URL, data=params, timeout=60)
+    body = r.text
+    try:
+        data = json.loads(body)
+        rcode = data.get('ResultCode')
+        rmsg = data.get('ResultMsg', '')
+    except json.JSONDecodeError:
+        return {
+            'ok': False, 'count': len(order_nos), 'code': r.status_code,
+            'msg': body[:300], 'order_nos': order_csv,
+        }
+    return {
+        'ok': rcode == 0 or rcode == '0',
+        'count': len(order_nos),
+        'code': rcode,
+        'msg': rmsg,
+        'order_nos': order_csv,
+    }
+
+
 def api_response_to_qsm_dict(api_order: Dict) -> Dict:
     """
     API 응답 1행 → QSM detail.csv DictReader 호환 키 형태.

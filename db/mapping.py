@@ -31,10 +31,12 @@ CREATE TABLE IF NOT EXISTS channel_product_mapping (
     sku_codes      TEXT NOT NULL,
     quantities     TEXT NOT NULL,
     note           TEXT,
+    is_active      BOOLEAN NOT NULL DEFAULT TRUE,
     updated_at     TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul'),
     PRIMARY KEY (channel, product_name, product_option)
 );
 CREATE INDEX IF NOT EXISTS idx_cpm_channel ON channel_product_mapping (channel);
+CREATE INDEX IF NOT EXISTS idx_cpm_active ON channel_product_mapping (channel, is_active);
 """
 
 
@@ -61,8 +63,12 @@ def ensure_schema() -> bool:
 
 
 def upsert(channel: str, product_name: str, product_option: str,
-           skus: List[Tuple[str, str, int]], note: Optional[str] = None) -> bool:
-    """매핑 upsert. skus = [(sku_code, sku_name, qty), ...]"""
+           skus: List[Tuple[str, str, int]],
+           note: Optional[str] = None,
+           is_active: Optional[bool] = None) -> bool:
+    """매핑 upsert. skus = [(sku_code, sku_name, qty), ...].
+    is_active=None 이면 신규는 TRUE 로, 기존은 그대로 유지.
+    """
     ensure_schema()
     if not channel or not product_name:
         return False
@@ -72,18 +78,56 @@ def upsert(channel: str, product_name: str, product_option: str,
     try:
         conn = pg.connect()
         with conn.cursor() as cur:
+            if is_active is None:
+                # 신규는 TRUE, 기존은 유지
+                cur.execute("""
+                    INSERT INTO channel_product_mapping
+                    (channel, product_name, product_option, item_codes, sku_codes,
+                     quantities, note, is_active)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, TRUE)
+                    ON CONFLICT (channel, product_name, product_option) DO UPDATE SET
+                        item_codes = EXCLUDED.item_codes,
+                        sku_codes  = EXCLUDED.sku_codes,
+                        quantities = EXCLUDED.quantities,
+                        note       = COALESCE(EXCLUDED.note, channel_product_mapping.note),
+                        updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
+                """, (channel, product_name, product_option or '',
+                      item_codes, sku_codes, quantities, note))
+            else:
+                cur.execute("""
+                    INSERT INTO channel_product_mapping
+                    (channel, product_name, product_option, item_codes, sku_codes,
+                     quantities, note, is_active)
+                    VALUES (%s, %s, %s, %s, %s, %s, %s, %s)
+                    ON CONFLICT (channel, product_name, product_option) DO UPDATE SET
+                        item_codes = EXCLUDED.item_codes,
+                        sku_codes  = EXCLUDED.sku_codes,
+                        quantities = EXCLUDED.quantities,
+                        note       = COALESCE(EXCLUDED.note, channel_product_mapping.note),
+                        is_active  = EXCLUDED.is_active,
+                        updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
+                """, (channel, product_name, product_option or '',
+                      item_codes, sku_codes, quantities, note, bool(is_active)))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
+def set_active(channel: str, product_name: str, product_option: str,
+               is_active: bool) -> bool:
+    """매핑 활성/비활성 토글만."""
+    ensure_schema()
+    try:
+        conn = pg.connect()
+        with conn.cursor() as cur:
             cur.execute("""
-                INSERT INTO channel_product_mapping
-                (channel, product_name, product_option, item_codes, sku_codes, quantities, note)
-                VALUES (%s, %s, %s, %s, %s, %s, %s)
-                ON CONFLICT (channel, product_name, product_option) DO UPDATE SET
-                    item_codes = EXCLUDED.item_codes,
-                    sku_codes  = EXCLUDED.sku_codes,
-                    quantities = EXCLUDED.quantities,
-                    note       = COALESCE(EXCLUDED.note, channel_product_mapping.note),
+                UPDATE channel_product_mapping
+                SET is_active = %s,
                     updated_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
-            """, (channel, product_name, product_option or '',
-                  item_codes, sku_codes, quantities, note))
+                WHERE channel=%s AND product_name=%s AND product_option=%s
+            """, (bool(is_active), channel, product_name, product_option or ''))
         conn.commit()
         conn.close()
         return True
@@ -107,17 +151,24 @@ def delete(channel: str, product_name: str, product_option: str) -> bool:
         return False
 
 
-def load_for_channel(channel: str) -> Dict[Tuple[str, str], Dict]:
-    """채널별 매핑 dict 반환. key=(product_name, product_option)"""
+def load_for_channel(channel: str, active_only: bool = True) -> Dict[Tuple[str, str], Dict]:
+    """채널별 매핑 dict. key=(product_name, product_option).
+    active_only=True 면 is_active=TRUE 만 반환 (운영 흐름 default).
+    """
     ensure_schema()
+    where = "channel = %s"
+    params: List = [channel]
+    if active_only:
+        where += " AND is_active = TRUE"
     try:
         conn = pg.connect(autocommit=True)
         with conn.cursor() as cur:
-            cur.execute("""
-                SELECT product_name, product_option, item_codes, sku_codes, quantities, note
+            cur.execute(f"""
+                SELECT product_name, product_option, item_codes, sku_codes,
+                       quantities, note, is_active
                 FROM channel_product_mapping
-                WHERE channel = %s
-            """, (channel,))
+                WHERE {where}
+            """, params)
             rows = cur.fetchall()
         conn.close()
     except Exception:
@@ -130,7 +181,8 @@ def load_for_channel(channel: str) -> Dict[Tuple[str, str], Dict]:
             'sku_codes':  (r[3] or '').split(','),
             'quantities': [int(x) for x in (r[4] or '1').split(',') if x.strip()],
             'note':       r[5],
-            'enabled':    True,  # 채널로 분리되어 enabled 의미 없음 (호환용)
+            'is_active':  bool(r[6]),
+            'enabled':    True,  # 호환용
         }
     return result
 
@@ -188,7 +240,7 @@ def list_all(channel: Optional[str] = None,
     where = (" WHERE " + " AND ".join(conds)) if conds else ""
     sql = f"""
         SELECT channel, product_name, product_option,
-               item_codes, sku_codes, quantities, note, updated_at
+               item_codes, sku_codes, quantities, note, is_active, updated_at
         FROM channel_product_mapping
         {where}
         ORDER BY channel, product_name, product_option
@@ -204,7 +256,8 @@ def list_all(channel: Optional[str] = None,
 
     return [{'channel': r[0], 'product_name': r[1], 'product_option': r[2] or '',
              'item_codes': r[3] or '', 'sku_codes': r[4] or '',
-             'quantities': r[5] or '', 'note': r[6], 'updated_at': r[7]}
+             'quantities': r[5] or '', 'note': r[6],
+             'is_active': bool(r[7]), 'updated_at': r[8]}
             for r in rows]
 
 
