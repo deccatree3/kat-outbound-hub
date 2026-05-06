@@ -24,16 +24,16 @@ CHANNEL_KR = 'cachers_qoo10_kr'
 
 
 def _classify(qsm_rows, jp_map, kr_map):
-    """QSM dict 행들 → JP/KR/미매핑 분류.
+    """QSM dict 행들 → JP/KR/미매핑/충돌 분류.
 
-    매핑 lookup 은 활성(is_active=TRUE) 매핑만 사용 (load_for_channel 호출부에서 필터).
-    같은 (상품명, 옵션) 이 양쪽 채널 활성이면 KR 우선 (배송준비 전환 후 KSE OMS 국내가 수집).
+    매핑 lookup 은 활성(is_active=TRUE) 매핑만 사용.
+    같은 (상품명, 옵션) 이 양쪽 채널 모두 활성이면 운영 오류 — 분류 보류 (conflict_orders).
     양쪽 모두 비활성이거나 매핑 없음 → 미매핑.
     """
     jp_orders = []
     kr_orders = []
     unknown_orders = []
-    both_active = []   # 양쪽 활성 (KR 로 처리되지만 운영자 정책 확인 권장)
+    conflict_orders = []  # 양쪽 활성 = 운영 오류, 처리 보류
 
     for q in qsm_rows:
         name = (q.get('상품명') or '').strip()
@@ -44,8 +44,7 @@ def _classify(qsm_rows, jp_map, kr_map):
         in_kr = key in kr_map
 
         if in_jp and in_kr:
-            both_active.append(q)
-            kr_orders.append(q)
+            conflict_orders.append(q)
         elif in_kr:
             kr_orders.append(q)
         elif in_jp:
@@ -53,21 +52,39 @@ def _classify(qsm_rows, jp_map, kr_map):
         else:
             unknown_orders.append(q)
 
-    return jp_orders, kr_orders, unknown_orders, both_active
+    return jp_orders, kr_orders, unknown_orders, conflict_orders
 
 
-def _render_classify_result(jp, kr, unknown, both_active):
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("총 신규주문", len(jp) + len(kr) + len(unknown))
+def _render_classify_result(jp, kr, unknown, conflicts):
+    c1, c2, c3, c4, c5 = st.columns(5)
+    total = len(jp) + len(kr) + len(unknown) + len(conflicts)
+    c1.metric("총 신규주문", total)
     c2.metric("🇰🇷 국내 출고", len(kr))
     c3.metric("🇯🇵 일본 출고", len(jp))
     c4.metric("🆕 미매핑", len(unknown))
+    c5.metric("⚠️ 충돌", len(conflicts),
+              help="양쪽 채널 모두 활성 매핑 — 한쪽만 활성으로 토글 필요")
 
-    if both_active:
-        st.info(
-            f"ℹ️ 양쪽 채널 모두 활성 매핑인 주문 {len(both_active)}건 — KR(국내) 으로 분류. "
-            "어드민 → 🔧 상품 매핑에서 한쪽만 활성으로 설정해두면 운영 의도와 일치."
+    if conflicts:
+        st.error(
+            f"⚠️ **양쪽 채널 모두 활성 매핑인 주문 {len(conflicts)}건** — 운영 오류. "
+            "어드민 → 🔧 상품 매핑에서 한쪽만 활성으로 토글 후 재가져오기. "
+            "이 행들은 분류되지 않음 (KR/JP 어디로도 보내지 않음)."
         )
+        seen = set()
+        rows = []
+        for q in conflicts:
+            k = ((q.get('상품명') or '').strip(), (q.get('옵션정보') or '').strip())
+            if k in seen:
+                continue
+            seen.add(k)
+            rows.append({
+                '상품명': k[0],
+                '옵션': k[1] or '(없음)',
+                '대표 주문번호': q.get('주문번호', ''),
+            })
+        with st.expander(f"⚠️ 충돌 키 목록 ({len(rows)}개)", expanded=True):
+            st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
     if unknown:
         st.error(
