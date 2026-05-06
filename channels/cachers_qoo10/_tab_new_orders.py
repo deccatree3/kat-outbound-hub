@@ -25,12 +25,15 @@ CHANNEL_KR = 'cachers_qoo10_kr'
 
 def _classify(qsm_rows, jp_map, kr_map):
     """QSM dict 행들 → JP/KR/미매핑 분류.
-    같은 (상품명, 옵션) 이 양쪽 모두 활성이면 KR 우선 (warning 표시).
+
+    매핑 lookup 은 활성(is_active=TRUE) 매핑만 사용 (load_for_channel 호출부에서 필터).
+    같은 (상품명, 옵션) 이 양쪽 채널 활성이면 KR 우선 (배송준비 전환 후 KSE OMS 국내가 수집).
+    양쪽 모두 비활성이거나 매핑 없음 → 미매핑.
     """
     jp_orders = []
     kr_orders = []
     unknown_orders = []
-    conflict_keys = set()
+    both_active = []   # 양쪽 활성 (KR 로 처리되지만 운영자 정책 확인 권장)
 
     for q in qsm_rows:
         name = (q.get('상품명') or '').strip()
@@ -41,8 +44,8 @@ def _classify(qsm_rows, jp_map, kr_map):
         in_kr = key in kr_map
 
         if in_jp and in_kr:
-            conflict_keys.add(key)
-            kr_orders.append(q)  # KR 우선 (배송준비 전환 후 KSE OMS 자동 수집)
+            both_active.append(q)
+            kr_orders.append(q)
         elif in_kr:
             kr_orders.append(q)
         elif in_jp:
@@ -50,25 +53,21 @@ def _classify(qsm_rows, jp_map, kr_map):
         else:
             unknown_orders.append(q)
 
-    return jp_orders, kr_orders, unknown_orders, conflict_keys
+    return jp_orders, kr_orders, unknown_orders, both_active
 
 
-def _render_classify_result(jp, kr, unknown, conflicts):
+def _render_classify_result(jp, kr, unknown, both_active):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("총 신규주문", len(jp) + len(kr) + len(unknown))
     c2.metric("🇰🇷 국내 출고", len(kr))
     c3.metric("🇯🇵 일본 출고", len(jp))
     c4.metric("🆕 미매핑", len(unknown))
 
-    if conflicts:
-        st.warning(
-            f"⚠️ 양쪽 채널 모두 활성 매핑인 (상품명, 옵션) {len(conflicts)}건 — "
-            "KR 우선으로 분류됨. 어드민 → 🔧 상품 매핑에서 한쪽만 활성으로 설정 권장."
+    if both_active:
+        st.info(
+            f"ℹ️ 양쪽 채널 모두 활성 매핑인 주문 {len(both_active)}건 — KR(국내) 으로 분류. "
+            "어드민 → 🔧 상품 매핑에서 한쪽만 활성으로 설정해두면 운영 의도와 일치."
         )
-        with st.expander("충돌 키 목록", expanded=False):
-            st.dataframe(pd.DataFrame([
-                {'상품명': k[0], '옵션': k[1] or '(없음)'} for k in sorted(conflicts)
-            ]), hide_index=True, width="stretch")
 
     if unknown:
         st.error(
@@ -185,8 +184,8 @@ def render():
     jp_map = _m.load_for_channel(CHANNEL_JP, active_only=True)
     kr_map = _m.load_for_channel(CHANNEL_KR, active_only=True)
 
-    jp_orders, kr_orders, unknown_orders, conflicts = _classify(qsm_rows, jp_map, kr_map)
-    _render_classify_result(jp_orders, kr_orders, unknown_orders, conflicts)
+    jp_orders, kr_orders, unknown_orders, both_active = _classify(qsm_rows, jp_map, kr_map)
+    _render_classify_result(jp_orders, kr_orders, unknown_orders, both_active)
 
     _render_kr_action(kr_orders)
     _render_jp_action(jp_orders)
