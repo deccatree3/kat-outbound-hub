@@ -30,8 +30,15 @@ def _tab_kr_outbound():
 
 
 def _tab_jp_outbound():
-    """일본 출고 — qoo10_japan step2~6 단일 페이지 (Phase C-3 에서 구현)."""
-    st.info("⏳ 일본 출고 탭은 Phase C-3 진행 예정. 현재는 기존 'Qoo10 일본 출고' 채널 사용.")
+    """일본 출고 — 기존 qoo10_japan render_page 재사용 (C-3a).
+    추후 stepper → 단일 페이지 스크롤 형태로 재구성 (C-3b).
+    """
+    st.caption(
+        "⚠️ 임시: 기존 6 단계 stepper 그대로. step1(QSM 가져오기)는 신규주문 처리 탭으로 이미 이전. "
+        "step2 부터 진행하세요. (단일 페이지 스크롤 재구성은 다음 단계 예정)"
+    )
+    from channels.qoo10_japan.page import render_page as _jp_render
+    _jp_render()
 
 
 def render_page():
