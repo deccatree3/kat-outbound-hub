@@ -11,8 +11,8 @@ from db import mapping as _map
 
 
 CHANNEL_LABELS = {
-    'qoo10_japan':       'Qoo10 일본 (캐처스)',
-    'cachers_qoo10_kr':  '캐처스 큐텐 국내 (KSE)',
+    'qoo10_japan':       'Qoo10 일본 출고',
+    'cachers_qoo10_kr':  'Qoo10 국내 출고',
     'cachers_makers':    '캐처스 메이커스',
 }
 

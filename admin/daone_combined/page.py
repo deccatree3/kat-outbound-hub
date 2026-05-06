@@ -18,7 +18,7 @@ from utils.timezone import kst_today
 
 CHANNEL_LABELS = {
     'domestic':         '국내몰 (캐처스)',
-    'cachers_qoo10_kr': '캐처스 큐텐 국내 (KSE)',
+    'cachers_qoo10_kr': 'Qoo10 국내 출고',
     'cachers_makers':   '캐처스 메이커스',
 }
 
