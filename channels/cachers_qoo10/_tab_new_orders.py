@@ -107,14 +107,18 @@ def _render_classify_result(jp, kr, unknown, conflicts):
 
 
 def _render_kr_action(kr_orders):
-    """KR 분기 — SetSellerCheckYN_V2 호출 placeholder (Phase C-4 에서 실제 호출)."""
+    """KR 분기 — SetSellerCheckYN_V2 호출 (배송준비 stat=3 전이)."""
     if not kr_orders:
         return
     st.markdown("---")
+    today = kst_today()
+    today_str = today.strftime('%Y-%m-%d')
+    today_yyyymmdd = today.strftime('%Y%m%d')
+
     st.markdown("### 🇰🇷 국내 출고 분기 (한국 다원 → KSE → 일본)")
     st.caption(
         f"KR 활성 매핑 {len(kr_orders)} 건 — 배송준비(stat=3) 전이 후 KSE OMS 국내가 "
-        f"자동 수집. 발송예정일은 KST 오늘 ({kst_today().strftime('%Y-%m-%d')})."
+        f"자동 수집. 발송예정일은 KST 오늘 ({today_str})."
     )
 
     # 주문 미리보기
@@ -129,11 +133,56 @@ def _render_kr_action(kr_orders):
     if len(kr_orders) > 50:
         st.caption(f"… 50/{len(kr_orders)} 행 표시")
 
-    if st.button(
-        f"🚚 KR {len(kr_orders)}건 배송준비로 전환 (Phase C-4 구현 예정)",
-        disabled=True, width="stretch", key="kr_send_ready_btn",
-    ):
-        st.info("아직 구현 전")
+    # 마지막 호출 결과가 있으면 표시
+    last_result = st.session_state.get('cu_kr_last_result')
+    if last_result:
+        if last_result['ok']:
+            st.success(
+                f"✅ 직전 호출 성공: {last_result['count']}건 배송준비 전이 완료. "
+                f"(ResultMsg: {last_result['msg']})"
+            )
+        else:
+            st.error(
+                f"❌ 직전 호출 실패 (ResultCode={last_result['code']}, "
+                f"ResultMsg={last_result['msg']})"
+            )
+
+    btn_label = f"🚚 KR {len(kr_orders)}건 배송준비로 전환 (발송예정일 {today_str})"
+    if st.button(btn_label, type="primary", width="stretch", key="kr_send_ready_btn"):
+        order_nos = [str(q.get('주문번호', '')).strip() for q in kr_orders
+                     if str(q.get('주문번호', '')).strip()]
+        if not order_nos:
+            st.error("주문번호 없음 — 호출 중단")
+            return
+        try:
+            sak = qapi.get_sak()
+        except Exception as ex:
+            st.error(f"SAK 발급 실패: {ex}")
+            return
+        with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(order_nos)}건)..."):
+            try:
+                result = qapi.set_seller_check_yn(sak, order_nos, today_yyyymmdd)
+            except Exception as ex:
+                st.error(f"API 호출 실패: {ex}")
+                return
+        st.session_state['cu_kr_last_result'] = result
+        if result['ok']:
+            # 성공 시 처리된 KR 주문 session 에서 제거 (재요청 방지) — JP/미매핑/충돌은 유지
+            qsm_rows = st.session_state.get('cu_qsm_rows', [])
+            kr_order_set = set(order_nos)
+            remaining = [q for q in qsm_rows
+                         if str(q.get('주문번호', '')).strip() not in kr_order_set]
+            st.session_state['cu_qsm_rows'] = remaining
+            st.success(
+                f"✅ {len(order_nos)}건 배송준비 전이 완료. "
+                "이후 KSE OMS 국내가 자동 수집 — 우리 시스템에서 추가 작업 X."
+            )
+            st.rerun()
+        else:
+            st.error(
+                f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']}). "
+                "Qoo10 셀러 지원 또는 자격증명 만료 확인 필요."
+            )
 
 
 def _render_jp_action(jp_orders):
