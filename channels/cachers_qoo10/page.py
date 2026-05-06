@@ -30,15 +30,42 @@ def _tab_kr_outbound():
 
 
 def _tab_jp_outbound():
-    """일본 출고 — 기존 qoo10_japan render_page 재사용 (C-3a).
-    추후 stepper → 단일 페이지 스크롤 형태로 재구성 (C-3b).
+    """일본 출고 — qoo10_japan step1~6 함수를 단일 페이지 스크롤로 호출 (C-3b).
+
+    UI: stepper 제거 + 섹션별 마크다운 헤더 + 스크롤.
+    데이터 흐름은 qoo10_japan session_state 키 (qoo10_detail_bytes 등) 그대로 — 신규주문 처리 탭과 별개 (다음 단계에서 통합).
     """
-    st.caption(
-        "⚠️ 임시: 기존 6 단계 stepper 그대로. step1(QSM 가져오기)는 신규주문 처리 탭으로 이미 이전. "
-        "step2 부터 진행하세요. (단일 페이지 스크롤 재구성은 다음 단계 예정)"
+    from channels.qoo10_japan.page import (
+        render_credentials_sidebar,
+        _step1_qsm_collect, _step2_outbound_generate,
+        _step3_oms_upload_guide, _step4_collect_waybills,
+        _step5_qsm_waybill_register, _step6_qsm_register_guide,
     )
-    from channels.qoo10_japan.page import render_page as _jp_render
-    _jp_render()
+    # 사이드바 인증키
+    render_credentials_sidebar()
+
+    st.caption(
+        "📜 단일 페이지 스크롤 — 위에서 아래로 순차 작업. "
+        "신규주문 처리 탭과 별개 흐름 (자동 데이터 전달은 다음 단계 예정)."
+    )
+
+    st.markdown("---")
+    _step1_qsm_collect()
+
+    st.markdown("---")
+    _step2_outbound_generate()
+
+    st.markdown("---")
+    _step3_oms_upload_guide()
+
+    st.markdown("---")
+    _step4_collect_waybills()
+
+    st.markdown("---")
+    _step5_qsm_waybill_register()
+
+    st.markdown("---")
+    _step6_qsm_register_guide()
 
 
 def render_page():
