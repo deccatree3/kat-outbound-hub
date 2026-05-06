@@ -56,8 +56,8 @@ def _classify(qsm_rows, jp_map, kr_map):
 def _render_classify_result(jp, kr, unknown, conflicts):
     c1, c2, c3, c4 = st.columns(4)
     c1.metric("총 신규주문", len(jp) + len(kr) + len(unknown))
-    c2.metric("🇯🇵 JP 활성", len(jp))
-    c3.metric("🇰🇷 KR 활성", len(kr))
+    c2.metric("🇰🇷 국내 출고", len(kr))
+    c3.metric("🇯🇵 일본 출고", len(jp))
     c4.metric("🆕 미매핑", len(unknown))
 
     if conflicts:
@@ -190,6 +190,7 @@ def render():
 
     _render_kr_action(kr_orders)
     _render_jp_action(jp_orders)
+    # ↑ 위에서 KR(국내) 먼저 처리(배송준비 전환) → JP(일본) 출고 탭으로 진행 순서
 
     st.markdown("---")
     if st.button("🗑 가져온 주문 초기화", key="cu_reset_btn"):
