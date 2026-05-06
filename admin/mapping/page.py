@@ -117,9 +117,9 @@ def render_page():
         edit_ch = new_ch
         edit_pn = st.text_area("상품명", value="", height=80, key="adm_map_new_pn")
         edit_po = st.text_input("옵션 (없으면 빈칸)", value="", key="adm_map_new_po")
-        edit_active = st.checkbox(
-            "✅ 사용중 (운영 흐름에 적용)", value=True, key="adm_map_new_active",
-            help="비활성(⏸)으로 두면 같은 채널 운영 lookup 에서 제외됨.",
+        edit_active = st.toggle(
+            "🟢 사용중 (운영 흐름에 적용)", value=True, key="adm_map_new_active",
+            help="OFF (⏸ 비활성) 로 두면 같은 채널 운영 lookup 에서 제외됨.",
         )
         init_sku_df = pd.DataFrame({
             'SKU 코드': [''], '상품명': [''], '수량': [1],
@@ -135,11 +135,11 @@ def render_page():
         edit_ch = ch_orig
         edit_pn = pn_orig
         edit_po = po_orig
-        edit_active = st.checkbox(
-            "✅ 사용중 (운영 흐름에 적용)",
+        edit_active = st.toggle(
+            "🟢 사용중 (운영 흐름에 적용)",
             value=bool(src_row.get('is_active', True)),
             key=f"adm_map_active_{sel_idx}",
-            help="비활성(⏸)으로 두면 같은 채널 운영 lookup 에서 제외됨.",
+            help="OFF (⏸ 비활성) 로 두면 같은 채널 운영 lookup 에서 제외됨.",
         )
         names = [n.strip() for n in (src_row['item_codes'] or '').split(',')]
         codes = [c.strip() for c in (src_row['sku_codes'] or '').split(',')]
