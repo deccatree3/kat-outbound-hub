@@ -30,6 +30,7 @@ st.caption("캐처스/네뉴 출고 통합")
 
 # 채널 레지스트리. status는 사용자에게 표시되는 진행도. 'render'가 있으면 dispatch 가능.
 CHANNELS = {
+    "cachers_qoo10":        {"label": "[캐처스] Qoo10",   "brand": "캐처스",     "status": "🆕 통합 (작업 진행 중)"},
     "qoo10_japan":          {"label": "Qoo10 일본 출고",  "brand": "캐처스",     "status": "✅ 운영"},
     "domestic":             {"label": "국내몰",           "brand": "캐처스/네뉴", "status": "✅ 운영"},
     "cachers_qoo10_kr":     {"label": "Qoo10 국내 출고",  "brand": "캐처스",     "status": "✅ 운영"},
@@ -79,7 +80,10 @@ else:
     st.subheader(f"{ch['label']}")
     st.caption(f"화주: {ch['brand']} · 상태: {ch['status']}")
 
-    if selected == "qoo10_japan":
+    if selected == "cachers_qoo10":
+        from channels.cachers_qoo10.page import render_page
+        render_page()
+    elif selected == "qoo10_japan":
         from channels.qoo10_japan.page import render_page
         render_page()
     elif selected == "domestic":
