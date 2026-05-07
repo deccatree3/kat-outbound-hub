@@ -51,7 +51,7 @@ st.sidebar.title("🚚 출고 작업")
 selected = st.sidebar.selectbox(
     "채널 선택",
     options=list(CHANNELS.keys()),
-    format_func=lambda k: f"{CHANNELS[k]['label']} ({CHANNELS[k]['brand']})",
+    format_func=lambda k: CHANNELS[k]['label'],
 )
 
 st.sidebar.markdown("---")
