@@ -52,13 +52,18 @@ def _render_resume_section():
             "여기서 선택하면 detail 없이도 송장 취합/등록(③~⑤) 가능."
         )
         options = [None] + [p['id'] for p in pending]
-        label_map = {
-            p['id']: (
-                f"{p['created_at'].strftime('%m-%d %H:%M') if p['created_at'] else '시간미상'}"
-                f" · {p['file_name']} · 주문 {p['cart_count']}건"
-            )
-            for p in pending
-        }
+        def _make_label(p):
+            wd = p.get('work_date')
+            sq = p.get('sequence')
+            head = (f"{wd.strftime('%Y-%m-%d')} / {sq}차"
+                    if wd and sq else
+                    (p['created_at'].strftime('%m-%d %H:%M')
+                     if p['created_at'] else '시간미상'))
+            time_part = (f" - {p['created_at'].strftime('%H:%M')}"
+                         if p['created_at'] else '')
+            return (f"{head}{time_part} · 주문 {p['cart_count']}건"
+                    f" · {p['file_name']}")
+        label_map = {p['id']: _make_label(p) for p in pending}
         sel = st.selectbox(
             "미완료 brief 선택",
             options=options,
@@ -76,6 +81,11 @@ def _render_resume_section():
             st.session_state['qoo10_brief_bytes'] = content
             st.session_state['qoo10_brief_name'] = fname
             st.session_state['qoo10_brief_id'] = sel
+            # 선택한 brief 의 work_date/sequence 도 session 에 복원
+            sel_meta = next((p for p in pending if p['id'] == sel), None)
+            if sel_meta:
+                st.session_state['qoo10_brief_work_date'] = sel_meta.get('work_date')
+                st.session_state['qoo10_brief_sequence'] = sel_meta.get('sequence')
             # detail 은 없음 → ③부터 진행
             st.session_state.pop('qoo10_detail_bytes', None)
             st.session_state.pop('qoo10_detail_name', None)
@@ -116,14 +126,18 @@ def _tab_jp_outbound():
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
     detail_name = st.session_state.get('qoo10_detail_name', '')
     brief_name = st.session_state.get('qoo10_brief_name', '')
+    wd = st.session_state.get('qoo10_brief_work_date')
+    sq = st.session_state.get('qoo10_brief_sequence')
+    session_tag = (f"**{wd.strftime('%Y-%m-%d')} / {sq}차** · "
+                   if wd and sq else "")
 
     if det_ok:
         # A. 신규 흐름 — ① 부터
         mode_label = ('자동(API)' if st.session_state.get('cu_collect_mode') == 'api'
                       else '수동(CSV)')
         st.success(
-            f"✅ 신규주문 — 총 {len(qsm_rows)}건 ({mode_label}) · "
-            f"`{detail_name}` / `{brief_name}`"
+            f"✅ {session_tag}신규주문 — 총 {len(qsm_rows)}건 ({mode_label}) · "
+            f"`{brief_name}`"
         )
         st.markdown("---")
         _step2_outbound_generate()  # ①
@@ -133,7 +147,7 @@ def _tab_jp_outbound():
     else:
         # B. 이어서 흐름 — brief 만 있음
         st.info(
-            f"📜 **기존 작업 이어서** — `{brief_name}` 로드됨. "
+            f"📜 {session_tag}**기존 작업 이어서** — `{brief_name}` 로드됨. "
             "①(출고요청서 생성)/②(OMS 업로드)는 이미 완료된 것으로 간주하고 **③ 송장 취합부터** 진행."
         )
         st.markdown("---")

@@ -564,32 +564,95 @@ def count_disabled_in_brief(brief_rows: List[Dict], mappings: Dict) -> int:
     return n
 
 
+_BRIEF_SCHEMA_ENSURED = False
+
+
+def _ensure_brief_schema():
+    """qoo10_pending_brief 에 work_date, sequence 컬럼 보장 (1회)."""
+    global _BRIEF_SCHEMA_ENSURED
+    if _BRIEF_SCHEMA_ENSURED:
+        return
+    try:
+        conn = pg.connect()
+        with conn.cursor() as cur:
+            cur.execute("""
+                ALTER TABLE qoo10_pending_brief
+                    ADD COLUMN IF NOT EXISTS work_date DATE
+            """)
+            cur.execute("""
+                ALTER TABLE qoo10_pending_brief
+                    ADD COLUMN IF NOT EXISTS sequence INT
+            """)
+        conn.commit()
+        conn.close()
+        _BRIEF_SCHEMA_ENSURED = True
+    except Exception:
+        pass
+
+
+def next_brief_sequence(work_date) -> int:
+    """qoo10_pending_brief 의 work_date 기준 max(sequence)+1. 없으면 1."""
+    _ensure_brief_schema()
+    try:
+        conn = pg.connect(autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT COALESCE(MAX(sequence), 0) + 1
+                FROM qoo10_pending_brief
+                WHERE work_date = %s
+            """, (work_date,))
+            n = cur.fetchone()[0]
+        conn.close()
+        return int(n or 1)
+    except Exception:
+        return 1
+
+
 def save_pending_brief(content: bytes, file_name: str, cart_count: int,
-                        disabled_count: int = 0) -> int:
-    """brief.csv 바이트를 DB에 임시저장. 이미 같은 파일명이 있으면 덮어쓰기.
+                        disabled_count: int = 0,
+                        work_date=None, sequence: int = None) -> int:
+    """brief.csv 바이트를 DB에 임시저장. 이미 같은 (work_date, sequence) 가 있으면 덮어쓰기 (work_date+sequence 지정된 경우).
+    그 외에는 file_name 기준 덮어쓰기 (기존 호환).
+
     disabled_count: Tab ① 취급안함(매핑 비활성) 분류 건수 — Tab ②에서 기대 미취급 수로 활용.
+    work_date / sequence: Phase 1 — 작업일/차수 키. 둘 다 지정 시 PK 역할.
     """
+    _ensure_brief_schema()
     conn = pg.connect()
     with conn.cursor() as cur:
-        cur.execute("""
-            SELECT id FROM qoo10_pending_brief
-            WHERE file_name = %s AND consumed_at IS NULL
-            ORDER BY created_at DESC LIMIT 1
-        """, (file_name,))
-        existing = cur.fetchone()
+        existing = None
+        if work_date is not None and sequence is not None:
+            cur.execute("""
+                SELECT id FROM qoo10_pending_brief
+                WHERE work_date = %s AND sequence = %s AND consumed_at IS NULL
+                ORDER BY created_at DESC LIMIT 1
+            """, (work_date, int(sequence)))
+            existing = cur.fetchone()
+        if not existing:
+            cur.execute("""
+                SELECT id FROM qoo10_pending_brief
+                WHERE file_name = %s AND consumed_at IS NULL
+                ORDER BY created_at DESC LIMIT 1
+            """, (file_name,))
+            existing = cur.fetchone()
         if existing:
             cur.execute("""
                 UPDATE qoo10_pending_brief
-                SET content = %s, cart_count = %s, disabled_count = %s,
+                SET file_name = %s, content = %s, cart_count = %s, disabled_count = %s,
+                    work_date = COALESCE(%s, work_date),
+                    sequence  = COALESCE(%s, sequence),
                     created_at = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
                 WHERE id = %s
-            """, (content, cart_count, disabled_count, existing[0]))
+            """, (file_name, content, cart_count, disabled_count,
+                  work_date, sequence, existing[0]))
             rid = existing[0]
         else:
             cur.execute("""
-                INSERT INTO qoo10_pending_brief (file_name, content, cart_count, disabled_count)
-                VALUES (%s, %s, %s, %s) RETURNING id
-            """, (file_name, content, cart_count, disabled_count))
+                INSERT INTO qoo10_pending_brief
+                  (file_name, content, cart_count, disabled_count, work_date, sequence)
+                VALUES (%s, %s, %s, %s, %s, %s) RETURNING id
+            """, (file_name, content, cart_count, disabled_count,
+                  work_date, sequence))
             rid = cur.fetchone()[0]
     conn.commit()
     conn.close()
@@ -598,19 +661,23 @@ def save_pending_brief(content: bytes, file_name: str, cart_count: int,
 
 def list_pending_briefs(include_consumed: bool = False, limit: int = 20) -> List[Dict]:
     """임시저장된 brief 목록"""
+    _ensure_brief_schema()
     conn = pg.connect(autocommit=True)
     with conn.cursor() as cur:
         where = "" if include_consumed else "WHERE consumed_at IS NULL"
         cur.execute(f"""
-            SELECT id, created_at, file_name, cart_count, disabled_count, consumed_at
+            SELECT id, created_at, file_name, cart_count, disabled_count, consumed_at,
+                   work_date, sequence
             FROM qoo10_pending_brief {where}
-            ORDER BY created_at DESC LIMIT %s
+            ORDER BY work_date DESC NULLS LAST, sequence DESC NULLS LAST,
+                     created_at DESC LIMIT %s
         """, (limit,))
         rows = cur.fetchall()
     conn.close()
     return [
         {'id': r[0], 'created_at': r[1], 'file_name': r[2],
-         'cart_count': r[3], 'disabled_count': r[4] or 0, 'consumed_at': r[5]}
+         'cart_count': r[3], 'disabled_count': r[4] or 0, 'consumed_at': r[5],
+         'work_date': r[6], 'sequence': r[7]}
         for r in rows
     ]
 

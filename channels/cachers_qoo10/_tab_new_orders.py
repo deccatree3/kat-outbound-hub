@@ -237,7 +237,38 @@ def _render_product_summary(jp_orders, kr_orders, unknown_orders, conflicts):
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
-def _collect_via_api():
+def _render_session_selector():
+    """탭 1 상단 — Qoo10 작업일/차수 selector. brief 저장 시 PK 역할."""
+    today = kst_today()
+    wd_key = "cu_work_date"
+    seq_key = "cu_sequence"
+
+    def _refresh_seq():
+        wd = st.session_state.get(wd_key, today)
+        try:
+            st.session_state[seq_key] = qgen.next_brief_sequence(wd)
+        except Exception:
+            st.session_state[seq_key] = 1
+
+    if seq_key not in st.session_state:
+        try:
+            st.session_state[seq_key] = qgen.next_brief_sequence(today)
+        except Exception:
+            st.session_state[seq_key] = 1
+
+    c_d, c_s = st.columns([1, 1])
+    work_date = c_d.date_input(
+        "작업일", value=today, key=wd_key, on_change=_refresh_seq,
+        help="기본값 = KST 오늘. 다른 날짜로 바꾸면 차수도 그 날짜 기준으로 재계산.",
+    )
+    sequence = c_s.number_input(
+        "차수", min_value=1, step=1, key=seq_key,
+        help="해당 작업일의 N차. 같은 (작업일, 차수) 로 재수집 시 덮어쓰기.",
+    )
+    return work_date, int(sequence)
+
+
+def _collect_via_api(work_date=None, sequence=None):
     """QSM API → cu_qsm_rows + qoo10_detail/brief bytes (일본 출고 탭에서 재사용)."""
     import datetime as _dt
     api_status = qapi.get_credentials_status()
@@ -282,15 +313,18 @@ def _collect_via_api():
         st.session_state['qoo10_brief_name'] = f"API_DeliveryManagement_brief_{ts}.csv"
         try:
             bid = qgen.save_pending_brief(
-                brief_bytes, st.session_state['qoo10_brief_name'], len(api_orders))
+                brief_bytes, st.session_state['qoo10_brief_name'], len(api_orders),
+                work_date=work_date, sequence=sequence)
             st.session_state['qoo10_brief_id'] = bid
+            st.session_state['qoo10_brief_work_date'] = work_date
+            st.session_state['qoo10_brief_sequence'] = sequence
         except Exception as ex:
             st.warning(f"brief 임시저장 실패 (세션 내에서는 사용 가능): {ex}")
         st.success(f"✅ {len(qsm_rows)}건 가져옴")
         st.rerun()
 
 
-def _collect_via_csv():
+def _collect_via_csv(work_date=None, sequence=None):
     """QSM detail/brief CSV 2개 업로드 → cu_qsm_rows + qoo10_detail/brief bytes."""
     st.caption(
         "QSM > 배송관리 > 배송요청 > 신규주문에서 받은 detail / brief CSV 2개를 업로드. "
@@ -314,8 +348,12 @@ def _collect_via_csv():
                 st.session_state['qoo10_brief_name'] = f.name
                 try:
                     cnt = len(qgen.parse_qsm_csv(content))
-                    bid = qgen.save_pending_brief(content, f.name, cnt)
+                    bid = qgen.save_pending_brief(
+                        content, f.name, cnt,
+                        work_date=work_date, sequence=sequence)
                     st.session_state['qoo10_brief_id'] = bid
+                    st.session_state['qoo10_brief_work_date'] = work_date
+                    st.session_state['qoo10_brief_sequence'] = sequence
                 except Exception as ex:
                     st.warning(f"brief 임시저장 실패 (세션 내에서는 사용 가능): {ex}")
 
@@ -350,7 +388,8 @@ def _collect_via_csv():
 def _clear_collected_state():
     for k in ('cu_qsm_rows', 'cu_collect_mode', 'cu_kr_last_result',
               'qoo10_detail_bytes', 'qoo10_detail_name',
-              'qoo10_brief_bytes', 'qoo10_brief_name', 'qoo10_brief_id'):
+              'qoo10_brief_bytes', 'qoo10_brief_name', 'qoo10_brief_id',
+              'qoo10_brief_work_date', 'qoo10_brief_sequence'):
         st.session_state.pop(k, None)
 
 
@@ -361,6 +400,9 @@ def render():
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
 
     if not qsm_rows:
+        # 작업일/차수 → brief 임시저장 PK
+        work_date, sequence = _render_session_selector()
+
         # 수집 모드 선택
         mode_options = (["자동 (QSM API)", "수동 (CSV 2개 업로드)"]
                         if api_available else ["수동 (CSV 2개 업로드)"])
@@ -371,14 +413,20 @@ def render():
                  "Qoo10 API 자격증명이 등록되지 않아 자동 수집 비활성화됨",
         )
         if mode.startswith("자동"):
-            _collect_via_api()
+            _collect_via_api(work_date=work_date, sequence=sequence)
         else:
-            _collect_via_csv()
+            _collect_via_csv(work_date=work_date, sequence=sequence)
         return
 
     # 수집 완료 — 분류 결과
     mode_label = '자동(API)' if st.session_state.get('cu_collect_mode') == 'api' else '수동(CSV)'
-    st.caption(f"수집 방식: **{mode_label}** · 일본 출고 탭에서 재사용 가능")
+    wd = st.session_state.get('qoo10_brief_work_date')
+    sq = st.session_state.get('qoo10_brief_sequence')
+    session_tag = (f" · {wd.strftime('%Y-%m-%d')} / {sq}차"
+                   if wd and sq else "")
+    st.caption(
+        f"수집 방식: **{mode_label}**{session_tag} · 일본 출고 탭에서 재사용 가능"
+    )
 
     st.markdown("---")
     st.markdown(f"### 📊 분류 결과 (총 {len(qsm_rows)}건)")
