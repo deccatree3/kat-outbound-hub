@@ -498,10 +498,20 @@ def render(brand: str):
     else:
         st.error("❌ 검수 실패")
 
-    if report.issues:
-        with st.expander(f"검수 이슈 {len(report.issues)}건", expanded=(report.overall == "fail")):
-            for issue in report.issues:
-                st.markdown(f"- {issue}")
+    # 비-ok 체크만 노출
+    non_ok = [c for c in report.checks if c.status != "ok"]
+    if non_ok:
+        with st.expander(
+            f"검수 이슈 {len(non_ok)}건", expanded=(report.overall == "fail")
+        ):
+            for chk in non_ok:
+                icon = "❌" if chk.status == "fail" else "⚠️"
+                line = f"{icon} **{chk.name}**"
+                if chk.detail:
+                    line += f" — {chk.detail}"
+                if chk.expected is not None or chk.actual is not None:
+                    line += f"  (기대 `{chk.expected}` / 실제 `{chk.actual}`)"
+                st.markdown(line)
 
     # SKU 별 검수 결과 — 거래명세서 매칭 인덱스
     inv_by_bc: dict[str, Any] = {}
