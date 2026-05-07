@@ -355,11 +355,7 @@ def _clear_collected_state():
 
 
 def render():
-    st.markdown(
-        "신규주문(QSM stat=2) 수집 → 매핑 활성여부 lookup 으로 KR/JP 자동 분류. "
-        "**KR 활성 매핑** = 한국 다원→KSE→일본 / **JP 활성 매핑** = 일본 KSE 직접 출고. "
-        "여기서 수집한 데이터는 **일본 출고 탭**에서도 그대로 사용됨 (재수집 불필요)."
-    )
+    st.markdown("자동 또는 수동 방법으로 QSM의 신규주문을 수집해주세요.")
 
     api_available = qapi.has_credentials()
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
