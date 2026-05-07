@@ -264,7 +264,7 @@ def _step1_qsm_collect():
 
 
 def _step2_outbound_generate():
-    st.markdown("#### ② KSE 출고요청서 생성")
+    st.markdown("#### ① KSE 출고요청서 생성")
     st.caption("검수 지표를 확인 후 OMS 업로드용 xlsx를 다운로드하세요.")
 
     det_bytes = st.session_state.get('qoo10_detail_bytes')
@@ -535,7 +535,7 @@ def _step2_outbound_generate():
 
 
 def _step3_oms_upload_guide():
-    st.markdown("#### ③ KSE 출고요청서 등록")
+    st.markdown("#### ② KSE 출고요청서 등록")
     st.caption("앞 단계에서 다운로드한 출고요청서를 KSE OMS에 업로드하는 방법 안내.")
 
     st.info(
@@ -550,7 +550,7 @@ def _step3_oms_upload_guide():
 
 
 def _step4_collect_waybills():
-    st.markdown("#### ④ KSE 송장번호 취합")
+    st.markdown("#### ③ KSE 송장번호 취합")
     st.caption("작업 내역을 선택한 뒤 KSE OMS 주문(출고&입고) 내역 파일을 업로드하세요.")
 
     brief_bytes_t2 = st.session_state.get('qoo10_brief_bytes')
@@ -629,7 +629,7 @@ def _step4_collect_waybills():
 
 
 def _step5_qsm_waybill_register():
-    st.markdown("#### ⑤ QSM 송장 파일 생성")
+    st.markdown("#### ④ QSM 송장 파일 생성")
     st.caption("아래 brief 파일을 다운로드하여 QSM 송장번호 등록 화면에 업로드하세요.")
 
     brief_bytes_t2 = st.session_state.get('qoo10_brief_bytes')
@@ -813,7 +813,7 @@ def _step5_qsm_waybill_register():
 
 
 def _step6_qsm_register_guide():
-    st.markdown("#### ⑥ QSM 송장 등록")
+    st.markdown("#### ⑤ QSM 송장 등록")
     st.caption("앞 단계에서 다운로드한 송장 brief 파일을 QSM에 업로드하는 방법 안내.")
 
     st.info(
