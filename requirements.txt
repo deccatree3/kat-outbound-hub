@@ -8,5 +8,7 @@ psycopg[binary]>=3.1
 psycopg_pool>=3.2
 sqlalchemy>=2.0
 alembic>=1.12
+pdfplumber>=0.10
+xlsxwriter>=3.1
 plotly>=5.20
 reportlab>=4.0
