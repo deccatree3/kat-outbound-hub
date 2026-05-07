@@ -75,11 +75,23 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
         sequence = c_s.number_input(
             "차수", min_value=1, step=1, key=seq_key,
         )
+        # 신규 모드에서 사용자가 입력한 (작업일, 차수) 가 이미 존재하면 얼럿 + 삭제 옵션
+        existing_meta = history_by_key.get((work_date, int(sequence)))
+        if existing_meta:
+            st.warning(
+                f"⚠️ **이미 등록된 작업** — {work_date.strftime('%Y-%m-%d')} / "
+                f"{int(sequence)}차 / {channel} (현재 {existing_meta['row_count']}행"
+                + (f" · {existing_meta['source_filename']}"
+                   if existing_meta.get('source_filename') else '')
+                + "). 저장 시 **덮어쓰기** 됩니다."
+            )
+            _render_delete_action(channel, work_date, int(sequence),
+                                  key_prefix, suffix="new_collide")
         return {
             'work_date': work_date,
             'sequence': int(sequence),
             'is_new': True,
-            'existing_meta': None,
+            'existing_meta': existing_meta,
         }
     else:
         wd, seq = sel
@@ -90,12 +102,41 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
             + (f" · {meta['source_filename']}" if meta and meta.get('source_filename') else '')
             + ") — 저장 시 덮어쓰기."
         )
+        _render_delete_action(channel, wd, int(seq), key_prefix, suffix="existing")
         return {
             'work_date': wd,
             'sequence': int(seq),
             'is_new': False,
             'existing_meta': meta,
         }
+
+
+def _render_delete_action(channel: str, work_date: datetime.date, sequence: int,
+                          key_prefix: str, suffix: str) -> None:
+    """기존 batch 삭제 — 2단계 확인 (체크박스 + 삭제 버튼)."""
+    confirm_key = f"{key_prefix}_del_confirm_{suffix}"
+    btn_key = f"{key_prefix}_del_btn_{suffix}"
+    c_chk, c_btn = st.columns([3, 1])
+    with c_chk:
+        confirmed = st.checkbox(
+            f"🗑 이 작업({work_date.strftime('%Y-%m-%d')} / {sequence}차) 삭제 확인",
+            key=confirm_key, value=False,
+            help="체크 후 오른쪽 버튼 클릭 시 DB 에서 즉시 삭제됨 (복구 불가).",
+        )
+    with c_btn:
+        if st.button("🗑 삭제", key=btn_key, disabled=not confirmed,
+                     width="stretch"):
+            if _b.delete(work_date, sequence, channel):
+                st.success(
+                    f"삭제됨 — {work_date.strftime('%Y-%m-%d')} / {sequence}차 / {channel}"
+                )
+                # 관련 위젯 state 초기화
+                for k in (confirm_key, f"{key_prefix}_session_sel",
+                          f"{key_prefix}_new_work_date", f"{key_prefix}_new_sequence"):
+                    st.session_state.pop(k, None)
+                st.rerun()
+            else:
+                st.error("삭제 실패 (DB 연결 확인)")
 
 
 def render_save_button(channel: str,
@@ -108,7 +149,8 @@ def render_save_button(channel: str,
         st.button("💾 저장 (행 없음)", disabled=True, key=f"{key_prefix}_save_disabled")
         return
     label = f"💾 통합 발주서에 저장 ({len(daone_rows)}행)"
-    if not session_info['is_new']:
+    is_overwrite = (not session_info['is_new']) or bool(session_info.get('existing_meta'))
+    if is_overwrite:
         label = f"💾 덮어쓰기 저장 ({len(daone_rows)}행)"
     if st.button(label, type="secondary", width="stretch",
                  key=f"{key_prefix}_save_btn"):
