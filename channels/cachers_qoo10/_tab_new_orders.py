@@ -59,8 +59,8 @@ def _render_classify_result(jp, kr, unknown, conflicts):
     c1, c2, c3, c4, c5 = st.columns(5)
     total = len(jp) + len(kr) + len(unknown) + len(conflicts)
     c1.metric("총 신규주문", total)
-    c2.metric("🇰🇷 국내 출고", len(kr))
-    c3.metric("🇯🇵 일본 출고", len(jp))
+    c2.metric("국내 출고", len(kr))
+    c3.metric("일본 출고", len(jp))
     c4.metric("🆕 미매핑", len(unknown))
     c5.metric("⚠️ 충돌", len(conflicts),
               help="양쪽 채널 모두 활성 매핑 — 한쪽만 활성으로 토글 필요")
@@ -121,7 +121,7 @@ def _render_kr_action(kr_orders):
     today_str = today.strftime('%Y-%m-%d')
     today_yyyymmdd = today.strftime('%Y%m%d')
 
-    st.markdown("### 🇰🇷 국내 출고 분기 (한국 다원 → KSE → 일본)")
+    st.markdown("### 국내 출고 분기 (한국 다원 → KSE → 일본)")
     st.caption(
         f"KR 활성 매핑 {len(kr_orders)} 건 — 배송준비(stat=3) 전이 후 KSE OMS 국내가 "
         f"자동 수집. 발송예정일은 KST 오늘 ({today_str})."
