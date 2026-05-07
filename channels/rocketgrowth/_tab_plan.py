@@ -1,7 +1,7 @@
 """탭 1: 발주 계획 (자매 페이지 lines 401-1374 의 신규 계획 모드 이전).
 
-C-1 (현재): 파일 업로드 + 자동 분류 + 파싱 + 마스터 로드
-C-2 (다음): 발주 계획 산출 + 편집 UI
+C-1 (완료): 파일 업로드 + 자동 분류 + 파싱 + 마스터 로드
+C-2 (현재): 발주 계획 산출 + 팔레트 최적화 + 편집 UI
 C-3 (다음): 저장 + 쿠팡 양식 다운로드
 """
 from __future__ import annotations
@@ -22,9 +22,11 @@ from rocketgrowth.export import extract_template_option_ids
 from rocketgrowth.ingestion.coupang_file import parse_coupang_inventory_file
 from rocketgrowth.ingestion.wms_file import aggregate_wms_by_barcode, parse_wms_inventory_file
 from rocketgrowth.models import CoupangProduct, WmsProduct
-from rocketgrowth.planning import PlanParams
+from rocketgrowth.planning import PlanInput, PlanParams, compute_plan, urgency_badge
+from rocketgrowth.pallet import PalletItem, optimize_to_pallet
+from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
 
-from channels.rocketgrowth._helpers import section_note
+from channels.rocketgrowth._helpers import ni, resolve_parent_barcode, section_note
 
 
 _BRAND_TO_COMPANY = {
@@ -251,14 +253,620 @@ def render(brand: str):
         f"WMS 상품 {len(wms_masters)}개"
     )
 
-    # session 에 결과 저장 — C-2 에서 발주 산출 시 사용
+    cp_master_by_opt = {m.coupang_option_id: m for m in cp_masters}
+    wms_master_by_bc = {m.wms_barcode: m for m in wms_masters}
+    wms_master_by_opt = {m.coupang_option_id: m for m in wms_masters if m.coupang_option_id}
+
+    include_all = False  # 비관리 SKU 항상 제외
+
+    # ─── 4. 기본 추천 수량 계산 (판매 기반) ──────────────────────
+    rows = []
+    for cp in cp_snap.rows:
+        cm = cp_master_by_opt.get(cp.coupang_option_id)
+        if not cm:
+            if not include_all:
+                continue
+        else:
+            if not cm.milkrun_managed and not include_all:
+                continue
+
+        parent_bc, unit_qty = resolve_parent_barcode(
+            cm, wms_master_by_bc, wms_master_by_opt
+        ) if cm else (None, 1)
+        own_bc = cm.wms_barcode if cm else None
+        own_wp = wms_master_by_bc.get(own_bc) if own_bc else None
+        parent_wp = wms_master_by_bc.get(parent_bc) if parent_bc else None
+        box_qty = (
+            (own_wp.box_qty if own_wp and own_wp.box_qty else None)
+            or (parent_wp.box_qty if parent_wp and parent_wp.box_qty else None)
+            or 1
+        )
+        shelf_life = (
+            (own_wp.shelf_life_days if own_wp else None)
+            or (parent_wp.shelf_life_days if parent_wp else None)
+        )
+        weight_g = (
+            (own_wp.weight_g if own_wp and own_wp.weight_g else None)
+            or (parent_wp.weight_g if parent_wp and parent_wp.weight_g else None)
+            or 0
+        )
+
+        engine_out = compute_plan(
+            PlanInput(
+                coupang_option_id=cp.coupang_option_id,
+                product_name=cp.product_name,
+                option_name=cp.option_name,
+                orderable_stock=cp.orderable_stock,
+                inbound_stock=cp.inbound_stock,
+                sales_qty_7d=cp.sales_qty_7d,
+                sales_qty_30d=cp.sales_qty_30d,
+                box_qty=box_qty,
+            ),
+            plan_params,
+        )
+
+        wms_product_name = (
+            (own_wp.product_name if own_wp and own_wp.product_name else None)
+            or (parent_wp.product_name if parent_wp and parent_wp.product_name else None)
+            or cp.product_name
+            or (cm.product_name if cm else "")
+        )
+
+        rows.append({
+            "urgency": urgency_badge(engine_out.urgency),
+            "urgency_key": engine_out.urgency,
+            "coupang_option_id": cp.coupang_option_id,
+            "parent_wms_barcode": parent_bc,
+            "own_wms_barcode": own_bc,
+            "unit_qty": unit_qty,
+            "product_name": wms_product_name,
+            "orderable": cp.orderable_stock,
+            "inbound_stock": cp.inbound_stock,
+            "sales_7d": cp.sales_qty_7d,
+            "sales_30d": cp.sales_qty_30d,
+            "velocity": round(engine_out.sales_velocity_daily, 2),
+            "days_until_stockout": engine_out.days_until_stockout,
+            "stock_at_arrival": round(engine_out.stock_at_arrival, 1),
+            "target_at_arrival": round(engine_out.target_at_arrival, 1),
+            "stock_2w": round(engine_out.stock_after_2w, 1),
+            "stock_4w": round(engine_out.stock_after_4w, 1),
+            "box_qty": box_qty,
+            "basic_boxes": engine_out.inbound_boxes,
+            "inbound_basic": engine_out.inbound_qty_suggested,
+            "inbound_pallet": engine_out.inbound_qty_suggested,
+            "pallet_boxes": engine_out.inbound_boxes,
+            "pallet_adjusted": False,
+            "inbound_final": engine_out.inbound_qty_suggested,
+            "days_sellable_after": (
+                round(engine_out.days_sellable_after, 1)
+                if engine_out.days_sellable_after else None
+            ),
+            "shelf_life_days": shelf_life,
+            "weight_g": weight_g,
+            "master_missing": cm is None,
+        })
+
+    if not rows:
+        st.warning(
+            "표시할 SKU가 없습니다. 상품 정보 관리에서 milkrun_managed=True 로 설정된 "
+            f"{brand_company} 옵션이 있는지 확인하세요."
+        )
+        return
+
+    base_df = pd.DataFrame(rows)
+
+    # ─── 4-2. 팔레트 최적화 (토글은 아래 7-2 에서 렌더, 여기는 값만 읽음) ───
+    pallet_on_key = f"rg_{brand}_pallet_on"
+    pallet_on = st.session_state.get(pallet_on_key, True)
+
+    # 팔레트 토글 변경 시 편집 잔재 cleanup
+    _prev_key = f"rg_{brand}_pallet_on_prev"
+    _prev = st.session_state.get(_prev_key)
+    if _prev is not None and _prev != pallet_on:
+        for _k in list(st.session_state.keys()):
+            if isinstance(_k, str) and _k.startswith(f"rg_{brand}_inbound_final::"):
+                st.session_state.pop(_k, None)
+    st.session_state[_prev_key] = pallet_on
+
+    if pallet_on:
+        initial_pools: dict[str, int] = {}
+        for bc, agg in wms_agg.items():
+            total_avail = sum(b.get("available") or 0 for b in (agg.get("batches") or []))
+            initial_pools[bc] = int(total_avail)
+        for _, row in base_df.iterrows():
+            pbc = row["parent_wms_barcode"]
+            if not pbc:
+                continue
+            basic_units = int(row["basic_boxes"]) * int(row["box_qty"]) * int(row["unit_qty"])
+            initial_pools[pbc] = max(0, initial_pools.get(pbc, 0) - basic_units)
+
+        pallet_items = [
+            PalletItem(
+                key=int(row["coupang_option_id"]),
+                urgency=row["urgency_key"],
+                basic_boxes=int(row["basic_boxes"] or 0),
+                box_qty=int(row["box_qty"] or 1),
+                unit_qty=int(row["unit_qty"] or 1),
+                parent_barcode=row["parent_wms_barcode"],
+                current_total_stock=int((row["orderable"] or 0) + (row["inbound_stock"] or 0)),
+                velocity=float(row["velocity"] or 0),
+                days_until_stockout=row["days_until_stockout"],
+            )
+            for _, row in base_df.iterrows()
+        ]
+        pallet_result = optimize_to_pallet(
+            pallet_items,
+            initial_pools,
+            pallet_size=cfg.pallet_size_boxes,
+            overstock_days=None,
+            rounding="up",
+            cap_per_sku=None,
+        )
+        for i, row in base_df.iterrows():
+            key = int(row["coupang_option_id"])
+            opt_boxes = int(pallet_result.optimized_boxes.get(key, row["basic_boxes"] or 0))
+            opt_qty = opt_boxes * int(row["box_qty"] or 1)
+            base_df.at[i, "pallet_boxes"] = opt_boxes
+            base_df.at[i, "inbound_pallet"] = opt_qty
+            base_df.at[i, "pallet_adjusted"] = opt_boxes != int(row["basic_boxes"] or 0)
+            base_df.at[i, "inbound_final"] = opt_qty
+    else:
+        pallet_result = None
+
+    # ─── 5. 편집 세션 (스냅샷 단위 격리) ────────────────────────
+    _session_key = (
+        f"rg_{brand}_inbound_final::{cp_snap.snapshot_date}::{wms_snap.snapshot_date}"
+    )
+    if _session_key not in st.session_state:
+        st.session_state[_session_key] = {}
+
+    for i, row in base_df.iterrows():
+        opt = int(row["coupang_option_id"])
+        if opt in st.session_state[_session_key]:
+            base_df.at[i, "inbound_final"] = st.session_state[_session_key][opt]
+
+    # ─── 6. 부모 풀 할당 ────────────────────────────────────────
+    def _allocate(df: pd.DataFrame) -> pd.DataFrame:
+        df = df.copy()
+        df["selected_batch_expiry"] = None
+        df["selected_status"] = None
+        df["pool_total_base"] = None
+        df["pool_remaining_base"] = None
+        df["max_single_batch_after"] = None
+        _wms_agg_norm = {str(k).strip().upper(): v for k, v in wms_agg.items()}
+
+        for parent_bc, group in df.groupby("parent_wms_barcode", sort=False, dropna=False):
+            if not parent_bc:
+                for idx in group.index:
+                    df.at[idx, "selected_status"] = "no_parent"
+                continue
+            agg = wms_agg.get(parent_bc) or _wms_agg_norm.get(str(parent_bc).strip().upper())
+            batches = (agg or {}).get("batches") or []
+            total_base = sum(b.get("available") or 0 for b in batches)
+
+            items = [
+                PoolAllocationItem(
+                    key=int(row["coupang_option_id"]),
+                    unit_qty=int(row["unit_qty"] or 1),
+                    requested_qty=int(row["inbound_final"] or 0),
+                )
+                for _, row in group.iterrows()
+            ]
+            results, _ = allocate_parent_pool(items, batches)
+            result_by_key = {r.key: r for r in results}
+            for idx, row in group.iterrows():
+                r = result_by_key[int(row["coupang_option_id"])]
+                df.at[idx, "selected_batch_expiry"] = r.selected_batch_expiry
+                df.at[idx, "selected_status"] = r.status
+                df.at[idx, "pool_total_base"] = total_base
+                df.at[idx, "pool_remaining_base"] = r.pool_remaining_base_after
+                df.at[idx, "max_single_batch_after"] = r.max_single_batch_after
+        return df
+
+    allocated_df = _allocate(base_df)
+
+    # ─── 6a. WMS 매칭 진단 ─────────────────────────────────────
+    _wms_keys_norm = {str(k).strip().upper() for k in wms_agg.keys()}
+    _missing_parents = []
+    for _bc in base_df["parent_wms_barcode"].dropna().unique():
+        if str(_bc).strip().upper() not in _wms_keys_norm:
+            _rows = base_df[base_df["parent_wms_barcode"] == _bc]
+            _names = _rows["product_name"].dropna().unique().tolist()
+            _missing_parents.append({
+                "parent_wms_barcode": _bc,
+                "상품명": ", ".join(_names[:2]),
+                "SKU수": len(_rows),
+            })
+    if _missing_parents:
+        with st.expander(
+            f"⚠️ WMS 파일에서 못 찾은 parent 바코드 ({len(_missing_parents)}건) — 현재고 0",
+            expanded=False,
+        ):
+            st.caption(
+                "원인: (1) WMS 파일에 해당 바코드 재고 없음 / "
+                "(2) 상품 정보 관리의 parent_wms_barcode 가 실제 WMS 와 다름 / "
+                "(3) 모든 재고가 RELEASEAREA(출고대기) LOC."
+            )
+            st.dataframe(pd.DataFrame(_missing_parents), width="stretch", hide_index=True)
+
+    def _calc_confirmed_boxes(r):
+        v = r["inbound_final"]
+        if v is None or (isinstance(v, float) and pd.isna(v)):
+            return None
+        box = max(int(r["box_qty"] or 1), 1)
+        return int(int(v) // box)
+
+    allocated_df["confirmed_boxes"] = allocated_df.apply(_calc_confirmed_boxes, axis=1)
+
+    # ─── 7. 재발주 알림 ────────────────────────────────────────
+    st.markdown("##### 1-2 입고 수량 확정")
+    section_note(
+        "재발주 필요 품목 Check 항목 및 입고 수량을 검토한 후, "
+        "'입고 수량 확정' 버튼을 눌러주세요. (저장은 C-3 단계에서 활성화)"
+    )
+
+    reproduction_lead = cfg.reproduction_lead_days
+    pool_velocity: dict[str, float] = {}
+    for _, r in allocated_df.iterrows():
+        p = r["parent_wms_barcode"]
+        if not p:
+            continue
+        pool_velocity[p] = pool_velocity.get(p, 0.0) + float(r["velocity"] or 0) * int(r["unit_qty"] or 1)
+
+    pool_stats = (
+        allocated_df[allocated_df["parent_wms_barcode"].notna()]
+        .groupby("parent_wms_barcode", sort=False)
+        .agg(
+            item_count=("coupang_option_id", "count"),
+            allocated_base=(
+                "inbound_final",
+                lambda s: int((s.fillna(0) * allocated_df.loc[s.index, "unit_qty"]).sum()),
+            ),
+            pool_total=("pool_total_base", "first"),
+            pool_remaining=("pool_remaining_base", "min"),
+            first_product=("product_name", "first"),
+        )
+        .reset_index()
+    )
+    pool_stats["pool_velocity"] = pool_stats["parent_wms_barcode"].map(pool_velocity).fillna(0)
+    pool_stats["reproduction_demand"] = pool_stats["pool_velocity"] * reproduction_lead
+    pool_stats["shortfall"] = pool_stats["reproduction_demand"] - pool_stats["pool_remaining"]
+    pool_stats["needs_reproduction"] = (
+        (pool_stats["shortfall"] > 0)
+        | (pool_stats["allocated_base"] > pool_stats["pool_total"])
+    )
+
+    single_product_per_pool = (
+        allocated_df[
+            (allocated_df["parent_wms_barcode"].notna())
+            & (allocated_df["unit_qty"].fillna(1).astype(int) == 1)
+        ]
+        .groupby("parent_wms_barcode", sort=False)["product_name"]
+        .first()
+    )
+    pool_stats["single_product"] = (
+        pool_stats["parent_wms_barcode"].map(single_product_per_pool).fillna(pool_stats["first_product"])
+    )
+
+    repro_list = pool_stats[pool_stats["needs_reproduction"]].sort_values("shortfall", ascending=False)
+
+    with st.expander(
+        "🏭 재발주 필요 품목 Check"
+        + (f" · 재생산 리드타임 {reproduction_lead}일 기준" if len(repro_list) > 0 else ""),
+        expanded=len(repro_list) > 0,
+    ):
+        if len(repro_list) == 0:
+            st.caption("✅ 단품 재고가 재생산 리드타임 동안 자력 운영 가능")
+        else:
+            display = repro_list[[
+                "parent_wms_barcode", "single_product", "pool_total", "allocated_base",
+                "pool_remaining", "pool_velocity", "reproduction_demand", "shortfall",
+            ]].copy()
+            for _c in ["pool_velocity", "reproduction_demand", "shortfall"]:
+                display[_c] = pd.to_numeric(display[_c], errors="coerce").fillna(0)
+            display["pool_velocity"] = display["pool_velocity"].round(0).astype(int)
+            display["reproduction_demand"] = display["reproduction_demand"].round(0).astype(int)
+            display["shortfall"] = (-display["shortfall"]).round(0).astype(int)
+            display = display.rename(columns={
+                "parent_wms_barcode": "WMS바코드",
+                "single_product": "상품명",
+                "pool_total": "현재고",
+                "allocated_base": "이번출고",
+                "pool_remaining": "출고후잔여",
+                "pool_velocity": "일소요",
+                "reproduction_demand": f"{reproduction_lead}일소요",
+                "shortfall": f"{reproduction_lead}일후부족",
+            })
+            st.dataframe(display, width="stretch", hide_index=True)
+            st.warning(
+                f"⚠️ {len(repro_list)}개 품목이 재생산 리드타임({reproduction_lead}일) 동안 버티지 못함. "
+                "생산/발주 담당자에게 재발주 검토 요청."
+            )
+
+    # ─── 7-2. 팔레트 토글 ──────────────────────────────────────
+    st.checkbox(
+        f"🚛 팔레트 단위 최적화 (1팔레트 = {cfg.pallet_size_boxes}박스)",
+        value=pallet_on,
+        key=pallet_on_key,
+        help=(
+            f"체크 시: 총 박스수가 {cfg.pallet_size_boxes}의 배수가 되도록 올림 → 팔레트 꽉 채움. "
+            "체크 해제 시: 엔진 기본 추천 그대로."
+        ),
+    )
+
+    # ─── 8. 편집 테이블 ────────────────────────────────────────
+    allocated_df["pool_remaining_bundle"] = allocated_df.apply(
+        lambda r: (
+            int(int(r["pool_remaining_base"]) // max(int(r["unit_qty"] or 1), 1))
+            if r["pool_remaining_base"] is not None
+               and not (isinstance(r["pool_remaining_base"], float) and pd.isna(r["pool_remaining_base"]))
+            else None
+        ),
+        axis=1,
+    )
+
+    col_f1, col_f2 = st.columns([2, 1])
+    with col_f1:
+        search = st.text_input(
+            "🔍 상품명 / 옵션ID 검색",
+            key=f"rg_{brand}_search",
+            help="여러 개 쉼표/공백 구분. 예: '비타민, 94917143993'",
+        )
+    with col_f2:
+        status_options = ["🚨 긴급", "⚠️ 보충", "✅ 안정", "❄️ 과잉", "⏸ 무판매"]
+        status_filter = st.multiselect(
+            "상태 필터",
+            options=status_options,
+            default=["🚨 긴급", "⚠️ 보충"],
+            key=f"rg_{brand}_status_filter",
+        )
+
+    view = allocated_df.copy()
+    if search:
+        import re as _re
+        terms = [t.strip() for t in _re.split(r"[,\s]+", search) if t.strip()]
+        if terms:
+            name_series = view["product_name"].fillna("").astype(str)
+            opt_series = view["coupang_option_id"].fillna("").astype(str)
+            mask = pd.Series(False, index=view.index)
+            for t in terms:
+                tl = t.lower()
+                mask = mask | name_series.str.lower().str.contains(tl, regex=False) \
+                            | opt_series.str.contains(t, regex=False)
+            view = view[mask]
+    if status_filter:
+        view = view[view["urgency"].isin(status_filter)]
+
+    display_cols = [
+        "coupang_option_id", "urgency", "product_name",
+        "orderable", "sales_7d", "sales_30d", "velocity", "days_until_stockout",
+        "box_qty", "inbound_basic", "basic_boxes",
+        "pool_remaining_base", "pool_remaining_bundle",
+        "inbound_final", "confirmed_boxes",
+        "selected_batch_expiry", "selected_status",
+    ]
+
+    DEFAULT_CONFIRM_BG = "#fff8d6"
+    OVER_CONFIRM_BG = "background-color: #ff6b6b; color: white; font-weight: bold;"
+    OVER_STOCK_BG = "background-color: #ffe5e5;"
+    PALLET_ADJUSTED_BG = "background-color: #cceeff; font-weight: bold;"
+
+    def _highlight_over(row):
+        styles = [""] * len(row)
+        pool_rem = row.get("pool_remaining_base")
+        status = row.get("selected_status")
+        is_over = (
+            (pool_rem is not None
+             and not (isinstance(pool_rem, float) and pd.isna(pool_rem))
+             and pool_rem < 0)
+            or status == "insufficient"
+        )
+        cols = list(row.index)
+        if is_over:
+            if "inbound_final" in cols:
+                styles[cols.index("inbound_final")] = OVER_CONFIRM_BG
+            for col in ("pool_remaining_base", "pool_remaining_bundle"):
+                if col in cols:
+                    styles[cols.index(col)] = OVER_STOCK_BG
+        else:
+            try:
+                inbound_final = row.get("inbound_final")
+                basic_boxes = row.get("basic_boxes")
+                box_qty = row.get("box_qty")
+                if (inbound_final is not None
+                    and not (isinstance(inbound_final, float) and pd.isna(inbound_final))
+                    and basic_boxes is not None
+                    and not (isinstance(basic_boxes, float) and pd.isna(basic_boxes))
+                    and box_qty
+                    and int(inbound_final) != int(basic_boxes) * int(box_qty)):
+                    if "inbound_final" in cols:
+                        styles[cols.index("inbound_final")] = PALLET_ADJUSTED_BG
+                    if "confirmed_boxes" in cols:
+                        styles[cols.index("confirmed_boxes")] = PALLET_ADJUSTED_BG
+            except (ValueError, TypeError):
+                pass
+        return styles
+
+    view_styled = (
+        view[display_cols]
+        .style.set_properties(subset=["inbound_final"], **{"background-color": DEFAULT_CONFIRM_BG})
+        .apply(_highlight_over, axis=1)
+    )
+
+    editor_key = f"rg_{brand}_editor_{cp_snap.snapshot_date}_{wms_snap.snapshot_date}"
+    edited = st.data_editor(
+        view_styled,
+        key=editor_key,
+        width="stretch",
+        height=500,
+        hide_index=True,
+        disabled=[c for c in display_cols if c != "inbound_final"],
+        column_config={
+            "urgency": st.column_config.TextColumn(
+                "상태", width="small", pinned=True,
+                help="🚨 긴급 · ⚠️ 보충 · ✅ 안정 · ❄️ 과잉 · ⏸ 무판매",
+            ),
+            "coupang_option_id": st.column_config.NumberColumn(
+                "옵션ID", format="%d", width="small", pinned=True,
+                help="쿠팡 옵션 ID",
+            ),
+            "product_name": st.column_config.TextColumn("상품명", width="large", pinned=True),
+            "orderable": st.column_config.NumberColumn("쿠팡가용", format="%d"),
+            "sales_7d": st.column_config.NumberColumn("7일", format="%d"),
+            "sales_30d": st.column_config.NumberColumn("30일", format="%d"),
+            "velocity": st.column_config.NumberColumn(
+                "속도/일", format="%.2f",
+                help=f"판매 속도 = α×(7일/7) + (1-α)×(30일/30), α={plan_params.velocity_alpha}",
+            ),
+            "days_until_stockout": st.column_config.NumberColumn(
+                "소진예상(일)", format="%.1f",
+            ),
+            "box_qty": st.column_config.NumberColumn("box입인", format="%d"),
+            "inbound_basic": st.column_config.NumberColumn(
+                "입고권장(낱개)", format="%d",
+                help="엔진 기본 추천 — 팔레트 꽉 채움 적용 전",
+            ),
+            "basic_boxes": st.column_config.NumberColumn(
+                "입고권장(box)", format="%d",
+            ),
+            "inbound_final": st.column_config.NumberColumn(
+                "확정", format="%d", required=False,
+                help="사용자가 직접 입력. 권장입고수 참고하여 결정",
+            ),
+            "confirmed_boxes": st.column_config.NumberColumn("확정(box)", format="%d"),
+            "selected_batch_expiry": st.column_config.DateColumn("소비기한"),
+            "selected_status": None,
+            "pool_remaining_base": st.column_config.NumberColumn("재고(낱개)", format="%d"),
+            "pool_remaining_bundle": st.column_config.NumberColumn("재고(번들)", format="%d"),
+        },
+    )
+
+    # 편집본 → session_state 반영
+    changed = False
+    for _, erow in edited.iterrows():
+        opt = int(erow["coupang_option_id"])
+        raw_val = erow.get("inbound_final")
+        if raw_val is None or (isinstance(raw_val, float) and pd.isna(raw_val)):
+            if opt in st.session_state[_session_key]:
+                del st.session_state[_session_key][opt]
+                changed = True
+        else:
+            new_val = ni(raw_val) or 0
+            if st.session_state[_session_key].get(opt) != new_val:
+                st.session_state[_session_key][opt] = new_val
+                changed = True
+    if changed:
+        st.rerun()
+
+    # 경고 배너
+    insufficient = allocated_df[allocated_df["selected_status"] == "insufficient"]
+    no_parent = allocated_df[allocated_df["selected_status"] == "no_parent"]
+    if len(insufficient) > 0:
+        st.warning(
+            f"⚠️ {len(insufficient)}개 SKU: 단일 배치로 확정수량 커버 불가."
+        )
+    if len(no_parent) > 0:
+        st.info(f"ℹ️ {len(no_parent)}개 SKU: 부모 WMS 바코드 매핑 없음.")
+
+    # ─── 9. 요약 메트릭 ────────────────────────────────────────
+    _edited_qty_by_opt = {
+        int(r["coupang_option_id"]): (
+            None if pd.isna(r.get("inbound_final")) else int(r["inbound_final"])
+        )
+        for _, r in edited.iterrows()
+    }
+    confirmed_qty = 0
+    confirmed_boxes_sum = 0
+    active_cnt = 0
+    total_weight_g = 0
+    for _, r in allocated_df.iterrows():
+        opt_id = int(r["coupang_option_id"])
+        if opt_id in _edited_qty_by_opt:
+            qty = _edited_qty_by_opt[opt_id] or 0
+        else:
+            raw = r.get("inbound_final")
+            qty = int(raw) if raw is not None and not (isinstance(raw, float) and pd.isna(raw)) else 0
+        if qty > 0:
+            active_cnt += 1
+            box = int(r.get("box_qty") or 1)
+            boxes = qty // max(box, 1)
+            confirmed_qty += qty
+            confirmed_boxes_sum += boxes
+            unit_w = int(r.get("weight_g") or 0)
+            total_weight_g += unit_w * qty + 500 * boxes
+
+    total_weight_kg = total_weight_g / 1000
+    _pallet_sz = cfg.pallet_size_boxes
+
+    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
+    col_s1.metric("확정 수량 (낱개)", f"{confirmed_qty:,}")
+    col_s2.metric("확정 박스수", f"{confirmed_boxes_sum:,}")
+    pallet_full = confirmed_boxes_sum // _pallet_sz if _pallet_sz else 0
+    pallet_remainder = confirmed_boxes_sum % _pallet_sz if _pallet_sz else confirmed_boxes_sum
+    col_s3.metric(
+        "팔레트",
+        f"{pallet_full}" + (f" + {pallet_remainder}박스" if pallet_remainder else " (꽉참)"),
+    )
+    col_s4.metric(
+        "총중량 (kg)",
+        f"{total_weight_kg:,.1f}",
+        help="(WMS 단위중량 × 확정수량 + 500g × 박스수) ÷ 1000",
+    )
+    col_s5.metric("대상 SKU", f"{active_cnt}")
+
+    # 팔레트 최적화 상세
+    _pallets_already_full = confirmed_boxes_sum > 0 and confirmed_boxes_sum % _pallet_sz == 0
+    if pallet_on and pallet_result is not None and pallet_result.mode != "noop" and not _pallets_already_full:
+        with st.expander(
+            f"🎯 팔레트 최적화 ({pallet_result.mode}, "
+            f"{pallet_result.applied_delta:+d}박스, "
+            f"{pallet_result.total_boxes_before}→{pallet_result.total_boxes_after})",
+            expanded=False,
+        ):
+            if pallet_result.unfilled > 0:
+                st.warning(
+                    f"⚠️ 제약(부모 풀 여유)으로 {pallet_result.unfilled} 박스 추가 충진 불가."
+                )
+            if pallet_result.adjustments:
+                adj_map: dict[int, int] = {}
+                for k, d in pallet_result.adjustments:
+                    adj_map[k] = adj_map.get(k, 0) + d
+                adj_df = pd.DataFrame([{"옵션ID": k, "박스 조정": v} for k, v in adj_map.items()])
+                adj_df = adj_df.merge(
+                    allocated_df[["coupang_option_id", "product_name"]],
+                    left_on="옵션ID", right_on="coupang_option_id", how="left",
+                )[["옵션ID", "product_name", "박스 조정"]]
+                adj_df.columns = ["옵션ID", "상품명", "박스 조정"]
+                st.dataframe(adj_df, width="stretch", hide_index=True)
+            else:
+                st.caption("조정 없음")
+
+    # session 에 결과 저장 — C-3 의 저장 단계 + 탭 2/3 재사용
     st.session_state[f'rg_{brand}_cp_snap'] = cp_snap
     st.session_state[f'rg_{brand}_wms_snap'] = wms_snap
     st.session_state[f'rg_{brand}_wms_agg'] = wms_agg
     st.session_state[f'rg_{brand}_movement_file'] = movement_file
+    st.session_state[f'rg_{brand}_allocated_df'] = allocated_df
+    st.session_state[f'rg_{brand}_edited_df'] = edited
+    st.session_state[f'rg_{brand}_total_weight_kg'] = total_weight_kg
+    st.session_state[f'rg_{brand}_files_for_save'] = {
+        'coupang_file': coupang_file,
+        'wms_file': wms_file,
+        'template_file': template_file,
+        'movement_file': movement_file,
+    }
 
-    st.info(
-        "🚧 **C-1 완료**: 파일 업로드/파싱/마스터 로드 OK.  \n"
-        "**C-2 (다음 단계)**: 발주 계획 산출 + 사용자 편집 UI 이전 예정.  \n"
-        "**C-3**: 저장 + 쿠팡 업로드 양식 다운로드 이전 예정."
-    )
+    st.divider()
+    if confirmed_qty == 0:
+        st.button(
+            "입고 수량 확정",
+            disabled=True, width="stretch",
+            help="확정 수량 1개 이상 입력 필요.",
+            key=f"rg_{brand}_confirm_disabled",
+        )
+        st.caption("확정 수량 입력 후 이 버튼 → C-3 단계에서 저장 + 쿠팡 양식 다운로드.")
+    else:
+        st.info(
+            f"🚧 **C-2 완료** — 확정수량 {confirmed_qty:,}개 산출됨. "
+            f"**C-3 (다음 단계)**: 저장 버튼 + 쿠팡 입고생성 양식.xlsx 다운로드 이전 예정."
+        )
