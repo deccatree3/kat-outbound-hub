@@ -66,42 +66,48 @@ def _render_classify_result(jp, kr, unknown, conflicts):
               help="양쪽 채널 모두 활성 매핑 — 한쪽만 활성으로 토글 필요")
 
     if conflicts:
-        st.error(
-            f"⚠️ **양쪽 채널 모두 활성 매핑인 주문 {len(conflicts)}건** — 운영 오류. "
-            "어드민 → 🔧 상품 매핑에서 한쪽만 활성으로 토글 후 재가져오기. "
-            "이 행들은 분류되지 않음 (KR/JP 어디로도 보내지 않음)."
-        )
-        seen = set()
-        rows = []
+        # 키별 주문 카운트
+        from collections import defaultdict
+        by_key = defaultdict(list)
         for q in conflicts:
             k = ((q.get('상품명') or '').strip(), (q.get('옵션정보') or '').strip())
-            if k in seen:
-                continue
-            seen.add(k)
+            by_key[k].append(q)
+        st.error(
+            f"⚠️ **양쪽 채널 모두 활성 매핑** — 주문 {len(conflicts)}건 / 충돌 키 {len(by_key)}개. "
+            "운영 오류. 어드민 → 🔧 상품 매핑에서 한쪽만 활성으로 토글 후 재가져오기. "
+            "이 행들은 분류되지 않음 (KR/JP 어디로도 보내지 않음)."
+        )
+        rows = []
+        for k, qs in by_key.items():
             rows.append({
                 '상품명': k[0],
                 '옵션': k[1] or '(없음)',
-                '대표 주문번호': q.get('주문번호', ''),
+                '영향 주문수': len(qs),
+                '대표 주문번호': qs[0].get('주문번호', ''),
             })
-        with st.expander(f"⚠️ 충돌 키 목록 ({len(rows)}개)", expanded=True):
+        with st.expander(
+            f"⚠️ 충돌 키 목록 ({len(rows)}개 키 / 주문 {len(conflicts)}건)", expanded=True
+        ):
             st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
     if unknown:
-        st.error(
-            f"🆕 미매핑 {len(unknown)}건 — 어드민 → 🔧 상품 매핑에서 등록 후 다시 가져오기. "
-            "JP 출고일 경우 채널 = 'Qoo10 일본 출고' / KR 출고일 경우 채널 = 'Qoo10 국내 출고'."
-        )
-        seen = set()
-        rows = []
+        from collections import defaultdict
+        by_key = defaultdict(list)
         for q in unknown:
             k = ((q.get('상품명') or '').strip(), (q.get('옵션정보') or '').strip())
-            if k in seen:
-                continue
-            seen.add(k)
+            by_key[k].append(q)
+        st.error(
+            f"🆕 미매핑 — 주문 {len(unknown)}건 / 키 {len(by_key)}개. "
+            "어드민 → 🔧 상품 매핑에서 등록 후 다시 가져오기. "
+            "JP 출고일 경우 채널 = 'Qoo10 일본 출고' / KR 출고일 경우 채널 = 'Qoo10 국내 출고'."
+        )
+        rows = []
+        for k, qs in by_key.items():
             rows.append({
                 '상품명': k[0],
                 '옵션': k[1] or '(없음)',
-                '대표 주문번호': q.get('주문번호', ''),
+                '영향 주문수': len(qs),
+                '대표 주문번호': qs[0].get('주문번호', ''),
             })
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
