@@ -1,0 +1,699 @@
+"""탭 2: 결과물 패키지 (자매 페이지 lines 1375-1990 의 기존 계획 관리 모드 일부 이전).
+
+흐름:
+  1. plan 로드 (방금 탭 1 에서 저장한 plan 또는 dropdown 으로 선택)
+  2. 회차 컨텍스트 표시
+  3. 메타 입력 (FC, 작업자, 입고예정일, 밀크런ID)
+  4. 쿠팡 입고생성 양식 재생성/다운로드
+  5. 쿠팡 결과물 PDF 3종 업로드 (부착/동봉/바코드)
+  6. 검수 (verify)
+  7. SKU별 검수 결과
+  8. 발주 확정 버튼 → status=verified
+  9. 물류센터 전달 4종 파일 다운로드 (취합리스트/팔레트적재/재고이동/PDF리네임)
+
+운송방식 분기 (밀크런/택배) 와 화주 분기 (네뉴/캐처스) 는 다음 단계.
+"""
+from __future__ import annotations
+
+import io
+from datetime import date as _date, timedelta
+from typing import Any
+
+import pandas as pd
+import streamlit as st
+from sqlalchemy import desc, select
+
+from rocketgrowth.config import load_config
+from rocketgrowth.coupang_result import (
+    parse_attachment_doc, parse_barcode_labels, parse_invoice_doc,
+)
+from rocketgrowth.db import get_session
+from rocketgrowth.export import (
+    ExportItem, dates_from_batch, default_expiry_dates, fill_coupang_template,
+)
+from rocketgrowth.models import (
+    CoupangProduct, CoupangResultLog, InboundPlan, InboundPlanItem, WmsProduct,
+)
+from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
+from rocketgrowth.pallet_assign import (
+    PalletAssignment, PalletEntry, PalletItem as PA_PalletItem, assign_pallets as pa_assign_pallets,
+)
+from rocketgrowth.secondary_export import (
+    SecondaryItem, build_consolidation_list, build_pallet_loading_list,
+    update_inventory_movement,
+)
+from rocketgrowth.verification import (
+    PlannedSku, derive_attached_barcode, is_label_expected, verify,
+)
+
+from channels.rocketgrowth._helpers import (
+    STATUS_LABELS, load_plan_files, resolve_parent_barcode, save_plan_files, section_note,
+)
+
+
+_BRAND_TO_COMPANY = {
+    'nenu':    '서현',
+    'cachers': '캐처스',
+}
+
+
+def _render_context_bar(plan: InboundPlan) -> str:
+    """회차 컨텍스트 바 — plan 메타 한 줄 표시."""
+    sid = f"#{plan.id}"
+    status_label = STATUS_LABELS.get(plan.status or "draft", plan.status or "?")
+    company = plan.company_name or "—"
+    fc = plan.fc_name or "미정"
+    arr = plan.arrival_date or plan.plan_date or "미정"
+    worker = plan.worker or "미정"
+    milkrun = plan.milkrun_id or "미정"
+    parts = [
+        f'<span style="background:#fef3c7; color:#92400e; padding:3px 8px; '
+        f'border-radius:4px; font-weight:700;">{sid}</span>',
+        f'<span>{status_label}</span>',
+        f'<span><b>업체</b> {company}</span>',
+        f'<span><b>FC</b> {fc}</span>',
+        f'<span><b>입고일</b> {arr}</span>',
+        f'<span><b>작업자</b> {worker}</span>',
+        f'<span><b>milkrun_id</b> {milkrun}</span>',
+    ]
+    return (
+        '<div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; '
+        'padding:8px 12px; background:#f9fafb; border:1px solid #e5e7eb; '
+        'border-radius:6px; margin:0 0 10px 0; font-size:0.92em;">'
+        + "".join(parts) + "</div>"
+    )
+
+
+def _select_plan(brand_company: str) -> InboundPlan | None:
+    """업체별 plan dropdown — 방금 저장한 plan_id (session) 우선 자동 선택."""
+    with get_session() as s:
+        plans = s.execute(
+            select(InboundPlan)
+            .where(InboundPlan.company_name == brand_company)
+            .order_by(desc(InboundPlan.created_at))
+        ).scalars().all()
+
+    if not plans:
+        st.info(f"📭 **{brand_company}** 의 저장된 plan 이 없습니다. 탭 1 에서 먼저 발주 계획 저장 필요.")
+        return None
+
+    options = [
+        f"#{p.id} {STATUS_LABELS.get(p.status, p.status)} · {p.company_name} · "
+        f"{p.arrival_date or p.plan_date or ''}"
+        + (f" · {p.fc_name}" if p.fc_name else "")
+        for p in plans
+    ]
+
+    # 방금 저장한 plan 자동 선택
+    auto_plan_id = None
+    for k in (f'rg_nenu_last_saved_plan_id', f'rg_cachers_last_saved_plan_id'):
+        if st.session_state.get(k):
+            cand_id = st.session_state[k]
+            if any(p.id == cand_id for p in plans):
+                auto_plan_id = cand_id
+                break
+
+    default_idx = 0
+    if auto_plan_id is not None:
+        for i, p in enumerate(plans):
+            if p.id == auto_plan_id:
+                default_idx = i
+                break
+
+    sel = st.selectbox(
+        "발주 계획 선택",
+        options=range(len(plans)),
+        format_func=lambda i: options[i],
+        index=default_idx,
+        key=f"pkg_{brand_company}_plan_select",
+    )
+    return plans[sel]
+
+
+def _render_meta_inputs(plan: InboundPlan, brand: str) -> dict[str, Any]:
+    """검수 메타 입력 — FC, 작업자, 입고예정일, 밀크런 ID."""
+    cols = st.columns(4)
+    cfg = load_config()
+    with cols[0]:
+        fc = st.text_input(
+            "FC명", value=plan.fc_name or "동탄1",
+            key=f"pkg_{brand}_fc_{plan.id}",
+        )
+    with cols[1]:
+        worker = st.text_input(
+            "작업자", value=plan.worker or cfg.default_company_name,
+            key=f"pkg_{brand}_worker_{plan.id}",
+        )
+    with cols[2]:
+        arrival_default = plan.arrival_date or plan.plan_date or _date.today()
+        arr = st.date_input(
+            "입고예정일", value=arrival_default,
+            key=f"pkg_{brand}_arr_{plan.id}",
+        )
+    with cols[3]:
+        milkrun_id = st.text_input(
+            "밀크런 ID (선택)", value=plan.milkrun_id or "",
+            key=f"pkg_{brand}_mr_{plan.id}",
+            help="쿠팡 부착문서의 밀크런 ID. 검수 시 중복 체크.",
+        )
+    return {
+        'fc_name': fc.strip() if fc else None,
+        'worker': worker.strip() if worker else None,
+        'arrival_date': arr,
+        'milkrun_id': milkrun_id.strip() if milkrun_id else None,
+    }
+
+
+def render(brand: str):
+    """탭 2 메인."""
+    cfg = load_config()
+    brand_company = _BRAND_TO_COMPANY[brand]
+
+    plan = _select_plan(brand_company)
+    if plan is None:
+        return
+
+    st.markdown(_render_context_bar(plan), unsafe_allow_html=True)
+
+    # ─── 공통 데이터 로드 ──────────────────────────────────
+    with get_session() as ms:
+        items = ms.execute(
+            select(InboundPlanItem).where(
+                InboundPlanItem.plan_id == plan.id,
+                InboundPlanItem.inbound_qty_final > 0,
+            )
+        ).scalars().all()
+        cp_masters_list = ms.execute(
+            select(CoupangProduct).where(CoupangProduct.company_name == brand_company)
+        ).scalars().all()
+        wms_masters_list = ms.execute(
+            select(WmsProduct).where(WmsProduct.company_name == brand_company)
+        ).scalars().all()
+
+    cp_master_by_opt = {m.coupang_option_id: m for m in cp_masters_list}
+    wms_master_by_bc = {m.wms_barcode: m for m in wms_masters_list}
+    wms_master_by_opt = {m.coupang_option_id: m for m in wms_masters_list if m.coupang_option_id}
+
+    plan_files = load_plan_files(plan.id)
+
+    if not items:
+        st.warning("이 계획에 확정 수량(>0) SKU가 없습니다. 탭 1 로 돌아가서 확정 수량 입력 후 저장.")
+        return
+
+    is_completed = plan.status == "completed"
+
+    # ─── 메타 입력 ────────────────────────────────────────
+    meta = _render_meta_inputs(plan, brand)
+
+    # ─── ② 계획 요약 + 쿠팡 양식 재생성 ───────────────────
+    st.subheader("② 쿠팡 입고생성 파일 (계획 요약)")
+    section_note("탭 1 에서 저장한 발주 계획 요약. 필요 시 양식 재생성 가능.")
+
+    plan_df = pd.DataFrame([{
+        "상품명": i.product_name,
+        "7일판매": i.sales_7d,
+        "30일판매": i.sales_30d,
+        "현재재고": i.current_total_stock,
+        "박스낱수": i.box_qty,
+        "추천입고": i.inbound_qty_suggested,
+        "확정입고": i.inbound_qty_final,
+        "확정박스": i.inbound_boxes,
+        "팔레트": i.pallet_no,
+    } for i in items])
+
+    total_qty = int(plan_df["확정입고"].sum())
+    total_boxes = int(plan_df["확정박스"].sum())
+    psz = cfg.pallet_size_boxes
+    pallet_cnt = plan.total_pallets or ((total_boxes + psz - 1) // psz if total_boxes else 0)
+    pallet_disp = f"{pallet_cnt}" + (" (꽉참)" if total_boxes and total_boxes % psz == 0 else "")
+    weight_kg = float(plan.total_weight_kg) if plan.total_weight_kg else 0.0
+
+    mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+    mc1.metric("SKU", f"{len(items)}")
+    mc2.metric("확정수량", f"{total_qty:,}")
+    mc3.metric("박스수", f"{total_boxes:,}")
+    mc4.metric("팔레트", pallet_disp)
+    mc5.metric("총중량 (kg)", f"{weight_kg:,.1f}")
+
+    with st.expander("계획 상세 (행별)", expanded=False):
+        st.dataframe(plan_df, width="stretch", hide_index=True, height=300)
+
+    # 쿠팡 양식 재생성 (template 파일 있는 경우만)
+    if "template" in plan_files and not is_completed:
+        with st.expander("📥 쿠팡 입고생성 양식 재생성 (탭 1 에서 다운로드한 것 손실 시)", expanded=False):
+            tpl_name, tpl_bytes = plan_files["template"]
+            re_export = []
+            for it in items:
+                cm = cp_master_by_opt.get(it.coupang_option_id)
+                own_bc = cm.wms_barcode if cm else None
+                wp = wms_master_by_bc.get(own_bc) if own_bc else None
+                shl = wp.shelf_life_days if wp else None
+                if it.wms_short_expiry:
+                    exp_d, man_d = dates_from_batch(it.wms_short_expiry, shl)
+                else:
+                    exp_d, man_d = default_expiry_dates(shl)
+                re_export.append(ExportItem(
+                    coupang_option_id=it.coupang_option_id,
+                    inbound_qty=it.inbound_qty_final,
+                    shelf_life_days=shl, expiry_date=exp_d,
+                    manufacture_date=man_d, wms_barcode=own_bc,
+                    product_name=it.product_name,
+                ))
+            try:
+                xlsx_bytes, missing = fill_coupang_template(
+                    io.BytesIO(tpl_bytes), re_export, delete_non_target=True
+                )
+                st.download_button(
+                    "📥 쿠팡 입고생성 파일 다운로드",
+                    data=xlsx_bytes,
+                    file_name=f"generated_excel_{_date.today().isoformat()}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    type="primary",
+                    key=f"pkg_{brand}_recoupang_{plan.id}",
+                )
+                if missing:
+                    st.warning(f"⚠️ {len(missing)}건 누락 (옵션 ID 양식에 없음)")
+            except Exception as ex:
+                st.error(f"양식 생성 실패: {ex}")
+
+    # ─── SecondaryItem + PalletAssignment 빌드 ─────────────
+    sec_items: list[SecondaryItem] = []
+    for it in items:
+        cm = cp_master_by_opt.get(it.coupang_option_id)
+        own = cm.wms_barcode if cm else None
+        wp = wms_master_by_bc.get(own) if own else None
+        pbc, uq = resolve_parent_barcode(cm, wms_master_by_bc, wms_master_by_opt) if cm else (None, 1)
+        pwp = wms_master_by_bc.get(pbc) if pbc else None
+        wg = (wp.weight_g if wp and wp.weight_g else 0) or (pwp.weight_g if pwp and pwp.weight_g else 0)
+        shl = (wp.shelf_life_days if wp else None) or (pwp.shelf_life_days if pwp else None)
+        mfg = None
+        exp_d = it.wms_short_expiry
+        if exp_d and shl:
+            mfg = exp_d - timedelta(days=int(shl) - 1)
+        cpn = cm.product_name if cm else (it.product_name or "")
+        cpo = cm.option_name if cm else it.option_name
+        wmsn = (wp.product_name if wp and wp.product_name else None) or (pwp.product_name if pwp and pwp.product_name else None)
+        bq = it.box_qty or 1
+        boxes = (it.inbound_qty_final or 0) // max(bq, 1)
+        sec_items.append(SecondaryItem(
+            coupang_option_id=it.coupang_option_id,
+            sku_id=cm.sku_id if cm else None,
+            coupang_product_id=cm.coupang_product_id if cm else None,
+            product_name=cpn, option_name=cpo, wms_product_name=wmsn,
+            own_wms_barcode=own,
+            coupang_barcode=cm.coupang_barcode if cm else None,
+            parent_wms_barcode=pbc, unit_qty=uq,
+            inbound_qty=it.inbound_qty_final or 0,
+            box_qty=bq, boxes=boxes,
+            weight_g=int(wg or 0), expiry_date=exp_d,
+            manufacture_date=mfg, shelf_life_days=int(shl) if shl else None,
+        ))
+
+    # PalletAssignment — 저장된 pallet_no 가 있으면 그대로, 없으면 재할당
+    has_pallet_no = any(it.pallet_no for it in items)
+    if has_pallet_no:
+        pallet_map: dict[int, list[PalletEntry]] = {}
+        for it in items:
+            pn = it.pallet_no or 1
+            boxes_it = (it.inbound_qty_final or 0) // max(it.box_qty or 1, 1)
+            if boxes_it <= 0:
+                continue
+            pallet_map.setdefault(pn, []).append(
+                PalletEntry(key=it.coupang_option_id, name=it.product_name or "", boxes=boxes_it)
+            )
+        pa = PalletAssignment(
+            pallets=[pallet_map[k] for k in sorted(pallet_map.keys())],
+            total_boxes=sum(e.boxes for p in pallet_map.values() for e in p),
+            pallet_count=len(pallet_map),
+        )
+    else:
+        pa_items = [
+            PA_PalletItem(
+                key=it.coupang_option_id,
+                name=it.product_name or "",
+                boxes=(it.inbound_qty_final or 0) // max(it.box_qty or 1, 1),
+            )
+            for it in items
+            if (it.inbound_qty_final or 0) // max(it.box_qty or 1, 1) > 0
+        ]
+        pa = pa_assign_pallets(pa_items, pallet_size=cfg.pallet_size_boxes)
+
+    # ─── ③ 쿠팡 결과물 PDF 업로드 + 검수 ──────────────────
+    st.subheader("③ 쿠팡 입고생성 결과물 검수")
+    section_note(
+        "쿠팡 결과물 PDF 3종을 업로드하세요. "
+        "바코드 라벨 다운로드 시 소비기한 표기 체크 필수 (번들 상품만 적용)."
+    )
+
+    pdf_up = st.file_uploader(
+        "쿠팡 입고생성 결과물 PDF (3개 이내)",
+        type=["pdf"], accept_multiple_files=True,
+        key=f"pkg_{brand}_pdf_{plan.id}",
+    )
+
+    label_pdf = attach_pdf = invoice_pdf = None
+    for f in (pdf_up or []):
+        nm = f.name.lower()
+        if "label" in nm or "barcode" in nm:
+            label_pdf = f
+        elif "물류부착" in f.name or "부착문서" in f.name:
+            attach_pdf = f
+        elif "물류동봉" in f.name or "동봉문서" in f.name:
+            invoice_pdf = f
+
+    # DB fallback
+    if not label_pdf and "label_pdf" in plan_files:
+        n, b = plan_files["label_pdf"]
+        label_pdf = io.BytesIO(b)
+        label_pdf.name = n
+    if not attach_pdf and "attach_pdf" in plan_files:
+        n, b = plan_files["attach_pdf"]
+        attach_pdf = io.BytesIO(b)
+        attach_pdf.name = n
+    if not invoice_pdf and "invoice_pdf" in plan_files:
+        n, b = plan_files["invoice_pdf"]
+        invoice_pdf = io.BytesIO(b)
+        invoice_pdf.name = n
+
+    pdf_status = (
+        f"바코드 라벨: {'✅' if label_pdf else '❌'} · "
+        f"부착 문서: {'✅' if attach_pdf else '❌'} · "
+        f"동봉 문서: {'✅' if invoice_pdf else '⚪'}"
+    )
+    st.caption(pdf_status)
+
+    if not (label_pdf and attach_pdf):
+        st.info("바코드 라벨 PDF + 부착 문서 PDF 업로드 필요. 동봉 문서는 혼적 박스 있을 때만.")
+        return
+
+    lb = label_pdf.getvalue() if hasattr(label_pdf, 'getvalue') else label_pdf.read()
+    ab = attach_pdf.getvalue() if hasattr(attach_pdf, 'getvalue') else attach_pdf.read()
+    lname = getattr(label_pdf, 'name', 'label.pdf')
+    aname = getattr(attach_pdf, 'name', 'attach.pdf')
+    ib = None
+    iname = None
+    if invoice_pdf:
+        ib = invoice_pdf.getvalue() if hasattr(invoice_pdf, 'getvalue') else invoice_pdf.read()
+        iname = getattr(invoice_pdf, 'name', 'invoice.pdf')
+
+    # PDF 신규 → DB 저장
+    new_pdfs: dict[str, tuple[str, bytes]] = {}
+    if "label_pdf" not in plan_files:
+        new_pdfs["label_pdf"] = (lname, lb)
+    if "attach_pdf" not in plan_files:
+        new_pdfs["attach_pdf"] = (aname, ab)
+    if ib and "invoice_pdf" not in plan_files:
+        new_pdfs["invoice_pdf"] = (iname, ib)
+    if new_pdfs:
+        save_plan_files(plan.id, new_pdfs)
+
+    labels_parsed = parse_barcode_labels(lb)
+    attachment = parse_attachment_doc(ab)
+    invoice = parse_invoice_doc(ib) if ib else None
+
+    # PlannedSku 빌드
+    planned: list[PlannedSku] = []
+    for it in items:
+        cm = cp_master_by_opt.get(it.coupang_option_id)
+        own = cm.wms_barcode if cm else None
+        cbc = cm.coupang_barcode if cm else None
+        pbc, uq = resolve_parent_barcode(cm, wms_master_by_bc, wms_master_by_opt) if cm else (None, 1)
+        wp = wms_master_by_bc.get(own) if own else None
+        pwp = wms_master_by_bc.get(pbc) if pbc else None
+        shl = (wp.shelf_life_days if wp else None) or (pwp.shelf_life_days if pwp else None)
+        bq = it.box_qty or 1
+        boxes = (it.inbound_qty_final or 0) // max(bq, 1)
+        emfg = None
+        if it.wms_short_expiry and shl:
+            emfg = it.wms_short_expiry - timedelta(days=int(shl) - 1)
+        planned.append(PlannedSku(
+            coupang_option_id=it.coupang_option_id,
+            sku_id=cm.sku_id if cm else None,
+            product_name=cm.product_name if cm else it.product_name,
+            option_name=cm.option_name if cm else it.option_name,
+            own_wms_barcode=own,
+            parent_wms_barcode=pbc, unit_qty=uq,
+            coupang_barcode=cbc,
+            inbound_qty=it.inbound_qty_final or 0,
+            box_qty=bq, boxes=boxes,
+            expects_label=False,
+            expected_attached_barcode=None,
+            expected_expiry=it.wms_short_expiry,
+            expected_manufacture=emfg,
+        ))
+
+    # 중복 체크 (밀크런 ID 기준)
+    duplicate = False
+    if attachment.milkrun_id:
+        with get_session() as ds:
+            dups = ds.execute(select(CoupangResultLog).where(
+                CoupangResultLog.milkrun_id == attachment.milkrun_id,
+                CoupangResultLog.company_name == brand_company,
+            )).scalars().all()
+            existing_ids = {d.plan_id for d in dups}
+            if dups and plan.id not in existing_ids:
+                duplicate = True
+                st.warning(
+                    f"⚠️ 밀크런 ID {attachment.milkrun_id} 이미 처리된 이력 있음 — 다른 plan."
+                )
+
+    # 검수 실행
+    mvt_total = None
+    if plan.movement_template_blob:
+        mvt_total = sum(
+            s.inbound_qty for s in planned
+            if s.unit_qty and s.unit_qty >= 2 and s.inbound_qty > 0
+        )
+    report = verify(
+        planned_skus=planned,
+        labels=labels_parsed,
+        attachment=attachment,
+        pallet_assignment=pa,
+        duplicate_check=duplicate,
+        movement_inbound_total=mvt_total,
+        invoice=invoice,
+    )
+    if report.overall == "ok":
+        st.success("✅ 검수 통과")
+    elif report.overall == "warning":
+        st.warning("⚠️ 일부 항목 확인 필요")
+    else:
+        st.error("❌ 검수 실패")
+
+    if report.issues:
+        with st.expander(f"검수 이슈 {len(report.issues)}건", expanded=(report.overall == "fail")):
+            for issue in report.issues:
+                st.markdown(f"- {issue}")
+
+    # SKU 별 검수 결과 — 거래명세서 매칭 인덱스
+    inv_by_bc: dict[str, Any] = {}
+    inv_by_sku: dict[str, Any] = {}
+    if invoice and invoice.items:
+        inv_by_bc = {it.barcode: it for it in invoice.items if it.barcode}
+        inv_by_sku = {str(it.sku_id): it for it in invoice.items if it.sku_id}
+
+    def _match_invoice(sku: PlannedSku):
+        if sku.sku_id and str(sku.sku_id) in inv_by_sku:
+            return inv_by_sku[str(sku.sku_id)]
+        for bc in (sku.coupang_barcode, sku.own_wms_barcode):
+            if bc and bc in inv_by_bc:
+                return inv_by_bc[bc]
+        return None
+
+    check_rows: list[dict[str, Any]] = []
+    for sku in planned:
+        inv_match = _match_invoice(sku)
+        bc, _ = derive_attached_barcode(sku)
+        expects_label = is_label_expected(sku)
+        label_info = labels_parsed.get(bc) if bc else None
+        name_ok = (inv_match is not None) if (invoice and invoice.items) else None
+        qty_ok = (inv_match.confirmed_qty == sku.inbound_qty) if inv_match else None
+        exp_ok = None
+        if inv_match and inv_match.expiry and sku.expected_expiry:
+            exp_ok = (inv_match.expiry == sku.expected_expiry)
+        if not expects_label:
+            label_ok = "—"
+        elif label_info is None:
+            label_ok = False
+        else:
+            label_ok = (label_info.count == sku.inbound_qty)
+        if not expects_label:
+            label_exp_ok = "—"
+        elif label_info is None or label_info.expiry is None:
+            label_exp_ok = False
+        else:
+            label_exp_ok = (label_info.expiry == sku.expected_expiry)
+
+        check_rows.append({
+            "옵션ID": sku.coupang_option_id,
+            "상품명": sku.product_name or "",
+            "수량": sku.inbound_qty,
+            "라벨": "✅" if label_ok is True else ("—" if label_ok == "—" else "❌"),
+            "라벨 소비기한": "✅" if label_exp_ok is True else ("—" if label_exp_ok == "—" else "❌"),
+            "거래명세서 상품": "✅" if name_ok else ("⚪" if name_ok is None else "❌"),
+            "거래명세서 수량": "✅" if qty_ok else ("⚪" if qty_ok is None else "❌"),
+            "거래명세서 소비기한": "✅" if exp_ok else ("⚪" if exp_ok is None else "❌"),
+        })
+
+    with st.expander(f"SKU별 검수 결과 ({len(check_rows)} 건)", expanded=True):
+        st.dataframe(pd.DataFrame(check_rows), width="stretch", hide_index=True)
+
+    # ─── 발주 확정 ────────────────────────────────────────
+    st.divider()
+    if plan.status == "draft":
+        if st.button(
+            "✅ 발주 확정 (status → verified)",
+            type="primary", width="stretch",
+            disabled=(report.overall == "fail" or not meta['fc_name']),
+            key=f"pkg_{brand}_verify_{plan.id}",
+            help="검수 통과 + 메타 입력 완료 시 활성화. 클릭 시 status=verified 로 변경 + CoupangResultLog 기록.",
+        ):
+            try:
+                with get_session() as s4:
+                    pdb = s4.get(InboundPlan, plan.id)
+                    pdb.status = "verified"
+                    pdb.fc_name = meta['fc_name']
+                    pdb.worker = meta['worker']
+                    pdb.arrival_date = meta['arrival_date']
+                    pdb.milkrun_id = meta['milkrun_id'] or attachment.milkrun_id or None
+                    pdb.total_pallets = pa.pallet_count
+                    # 팔레트 번호 + 부착 바코드 db 반영
+                    items_by_opt = {it.coupang_option_id: it for it in s4.execute(
+                        select(InboundPlanItem).where(InboundPlanItem.plan_id == plan.id)
+                    ).scalars().all()}
+                    for pi, pal in enumerate(pa.pallets, start=1):
+                        for en in pal:
+                            dbi = items_by_opt.get(en.key)
+                            if dbi:
+                                sk = next((s for s in planned if s.coupang_option_id == en.key), None)
+                                if sk:
+                                    cm7 = cp_master_by_opt.get(sk.coupang_option_id)
+                                    bc7 = (
+                                        cm7.coupang_barcode if cm7 and cm7.coupang_barcode
+                                        and cm7.coupang_barcode.startswith("S0")
+                                        else sk.own_wms_barcode
+                                    )
+                                    bt7 = (
+                                        "쿠팡바코드"
+                                        if (cm7 and cm7.coupang_barcode and cm7.coupang_barcode.startswith("S0"))
+                                        else "88코드"
+                                    )
+                                    dbi.pallet_no = pi
+                                    dbi.barcode_attached = bc7
+                                    dbi.barcode_type = bt7
+                    tb = sum(s.boxes for s in planned)
+                    s4.add(CoupangResultLog(
+                        company_name=brand_company,
+                        milkrun_id=attachment.milkrun_id or "",
+                        fc_name=meta['fc_name'], arrival_date=meta['arrival_date'],
+                        total_pallets=pa.pallet_count, total_boxes=tb,
+                        total_skus=len([s for s in planned if s.boxes > 0]),
+                        plan_id=plan.id,
+                        label_filename=lname, attachment_filename=aname,
+                    ))
+                    s4.commit()
+                st.success(f"✅ 발주 #{plan.id} 확정 완료")
+                st.rerun()
+            except Exception as ex:
+                st.error(f"확정 실패: {ex}")
+    elif plan.status == "verified":
+        st.success(f"✅ 발주 확정됨 (plan_id={plan.id}). 아래 ④ 물류센터 전달 파일 다운로드.")
+    else:
+        st.info(f"plan status: {plan.status}")
+
+    # ─── ④ 물류센터 전달 파일 ──────────────────────────────
+    if plan.status not in ("verified", "completed"):
+        return
+
+    st.subheader("④ 물류센터 전달 파일")
+    section_note(
+        "아래 4종 파일 다운로드 → 메일 송부. <br>"
+        "<b>현재 운송 방식</b>: 자매 프로젝트와 동일한 밀크런 양식. "
+        "택배 분기는 다음 단계에서 추가 예정."
+    )
+
+    fc = meta['fc_name']
+    arr = meta['arrival_date']
+    yymmdd = arr.strftime("%y%m%d") if arr else _date.today().strftime("%y%m%d")
+    yyyymm = arr.strftime("%Y_%m월") if arr else _date.today().strftime("%Y_%m월")
+    datesuf = arr.strftime("%Y%m%d") if arr else _date.today().strftime("%Y%m%d")
+    order_base = (invoice.order_id if invoice and invoice.order_id else None) or (plan.milkrun_id or attachment.milkrun_id or "")
+
+    dc = st.columns(3)
+    try:
+        cons = build_consolidation_list(
+            sec_items, pa, fc, arr, brand_company,
+            invoice.order_id if invoice and invoice.order_id else attachment.milkrun_id,
+        )
+        with dc[0]:
+            st.download_button(
+                "📥 취합리스트", data=cons,
+                file_name=f"{brand_company}_밀크런_취합리스트_{yymmdd}_{fc}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch", type="primary",
+                key=f"pkg_{brand}_dl_cons_{plan.id}",
+            )
+    except Exception as ex:
+        with dc[0]:
+            st.error(f"취합리스트: {ex}")
+    try:
+        pal = build_pallet_loading_list(
+            sec_items, pa, fc, arr,
+            milkrun_request_id=order_base, pallet_size=cfg.pallet_size_boxes,
+        )
+        with dc[1]:
+            st.download_button(
+                "📥 팔레트적재리스트", data=pal,
+                file_name=f"밀크런_물류부착문서2 (팔레트적재리스트)_{fc}_{datesuf}.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch", type="primary",
+                key=f"pkg_{brand}_dl_pal_{plan.id}",
+            )
+    except Exception as ex:
+        with dc[1]:
+            st.error(f"팔레트적재: {ex}")
+    if plan.movement_template_blob:
+        try:
+            mv_out = update_inventory_movement(
+                bytes(plan.movement_template_blob), sec_items, arr, fc, brand_company,
+            )
+            with dc[2]:
+                st.download_button(
+                    "📥 재고이동건", data=mv_out,
+                    file_name=plan.movement_template_filename or f"쿠팡 재고이동건_{yyyymm}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch", type="primary",
+                    key=f"pkg_{brand}_dl_mv_{plan.id}",
+                )
+        except Exception as ex:
+            with dc[2]:
+                st.error(f"재고이동건: {ex}")
+
+    # PDF 리네임 다운로드
+    dpc = st.columns(3)
+    if ib:
+        with dpc[0]:
+            st.download_button(
+                "📥 물류동봉문서(거래명세서)", data=ib,
+                file_name=f"밀크런_물류동봉문서(거래명세서)_{fc}_{datesuf}.pdf",
+                mime="application/pdf", width="stretch", type="primary",
+                key=f"pkg_{brand}_dl_inv_{plan.id}",
+            )
+    with dpc[1]:
+        st.download_button(
+            "📥 제품 바코드라벨", data=lb,
+            file_name=f"제품 바코드라벨_{fc}_{datesuf}.pdf",
+            mime="application/pdf", width="stretch", type="primary",
+            key=f"pkg_{brand}_dl_lb_{plan.id}",
+        )
+    with dpc[2]:
+        st.download_button(
+            "📥 물류부착문서(팔레트부착)", data=ab,
+            file_name=f"밀크런_물류부착문서1 (팔레트부착문서)_{fc}_{datesuf}.pdf",
+            mime="application/pdf", width="stretch", type="primary",
+            key=f"pkg_{brand}_dl_ab_{plan.id}",
+        )
+
+    st.info(
+        "🚧 **다음 단계 (Phase E)**: 탭 3 송장 후처리 + 운송분기(밀크런/택배) + 화주분기(네뉴 이지어드민 / 캐처스 다원)."
+    )

@@ -35,30 +35,9 @@ def _tab_plan(brand: str):
 
 
 def _tab_package(brand: str):
-    """탭 2: 결과물 패키지 (운송방식 분기 + 화주 분기)."""
-    st.markdown("### 📦 결과물 패키지")
-    st.caption(
-        "운송 방식(밀크런/택배) 선택 → 쿠팡 결과물 PDF 업로드(부착/동봉/바코드) → "
-        "검수 → 물류센터 전달 패키지 생성."
-    )
-
-    # 운송 방식 선택 (placeholder)
-    shipment = st.radio(
-        "운송 방식",
-        options=["밀크런", "택배"],
-        horizontal=True,
-        key=f"rg_{brand}_shipment",
-        help="발주 수량 확정 후 결과물 양식 분기에 영향. 부착문서 양식이 다름.",
-    )
-
-    st.markdown(f"**선택**: {shipment}")
-    st.info("🚧 Phase D 에서 운송별 결과물 + 검수 로직 이전 예정.")
-
-    # 화주별 출고요청서 결과물 미리보기 자리
-    if brand == 'nenu':
-        st.caption("→ 물류센터 전달 패키지에 **이지어드민 발주서.xls** 포함 예정.")
-    else:
-        st.caption("→ 물류센터 전달 패키지에 **다원 출고요청서.xlsx** 포함 예정.")
+    """탭 2: 결과물 패키지."""
+    from channels.rocketgrowth._tab_package import render as _render_package
+    _render_package(brand)
 
 
 def _tab_invoice(brand: str):
