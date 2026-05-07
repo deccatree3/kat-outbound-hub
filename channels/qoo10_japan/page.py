@@ -264,7 +264,7 @@ def _step1_qsm_collect():
 
 
 def _step2_outbound_generate():
-    st.markdown("#### ① KSE 출고요청서 생성")
+    st.markdown("#### ① 일본 KSE 출고요청서 생성")
     st.caption("검수 지표를 확인 후 OMS 업로드용 xlsx를 다운로드하세요.")
 
     det_bytes = st.session_state.get('qoo10_detail_bytes')
@@ -487,14 +487,6 @@ def _step2_outbound_generate():
                 except Exception as ex:
                     st.error(f"작업 종료 실패: {ex}")
         elif out_rows:
-            df_out = pd.DataFrame(out_rows)
-            st.markdown("**미리보기**")
-            st.dataframe(
-                df_out[['倉庫コード', '商品コード', '予定数量', '注文番号',
-                        '仕入先名/受取人名', '郵便番号コード', '基本住所']],
-                width="stretch", hide_index=True,
-            )
-
             if not mapping_complete:
                 st.error(
                     "⚠️ **신규 상품 매핑이 남아 있어 다운로드할 수 없습니다.** "
@@ -524,12 +516,10 @@ def _step2_outbound_generate():
                     type="primary",
                 )
                 st.info(
-                    "📤 **출고요청서 다운로드 후 KSE OMS에 업로드 해주세요.**  \n"
-                    "업로드 경로: **KSE OMS > 주문관리 > 주문업로드**"
+                    "📤 **일본 KSE 출고요청서 (Outbound_ship_conf~) 다운로드 후 "
+                    "일본 KSE OMS에 업로드 해주세요.**  \n"
+                    "업로드 경로: **일본 KSE OMS > 주문관리 > 주문업로드**"
                 )
-                if st.button("다음 단계 →", key="goto_step3", type="primary"):
-                    st.session_state['qoo10_step'] = 3
-                    st.rerun()
     except Exception as e:
         st.error(f"처리 중 오류: {e}")
 
@@ -539,14 +529,10 @@ def _step3_oms_upload_guide():
     st.caption("앞 단계에서 다운로드한 출고요청서를 KSE OMS에 업로드하는 방법 안내.")
 
     st.info(
-        "📌 **KSE OMS 업로드 경로**  \n"
-        "**KSE OMS > 주문관리 > 주문업로드**"
+        "📌 **일본 KSE OMS 업로드 경로**  \n"
+        "**일본 KSE OMS > 주문관리 > 주문업로드**"
     )
     st.markdown("> _상세 안내(스크린샷)는 추후 추가 예정._")
-
-    if st.button("다음 단계 →", key="goto_step4", type="primary"):
-        st.session_state['qoo10_step'] = 4
-        st.rerun()
 
 
 def _step4_collect_waybills():
@@ -622,10 +608,7 @@ def _step4_collect_waybills():
     )
 
     if st.session_state.get('oms_bytes') and st.session_state.get('qoo10_brief_bytes'):
-        st.success("✅ KSE OMS 파일 업로드 완료. 다음 단계로 진행하세요.")
-        if st.button("다음 단계 →", key="goto_step5", type="primary"):
-            st.session_state['qoo10_step'] = 5
-            st.rerun()
+        st.success("✅ 일본 KSE OMS 파일 업로드 완료. 아래로 진행하세요.")
 
 
 def _step5_qsm_waybill_register():
@@ -805,9 +788,6 @@ def _step5_qsm_waybill_register():
                 width="stretch",
                 type="primary",
             )
-            if st.button("다음 단계 →", key="goto_step6", type="primary"):
-                st.session_state['qoo10_step'] = 6
-                st.rerun()
     except Exception as e:
         st.error(f"처리 중 오류: {e}")
 
