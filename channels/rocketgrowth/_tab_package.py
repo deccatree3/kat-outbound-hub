@@ -39,9 +39,10 @@ from rocketgrowth.pallet_assign import (
     PalletAssignment, PalletEntry, PalletItem as PA_PalletItem, assign_pallets as pa_assign_pallets,
 )
 from rocketgrowth.secondary_export import (
-    SecondaryItem, build_consolidation_list, build_pallet_loading_list,
+    SecondaryItem, build_consolidation_list, build_order_form, build_pallet_loading_list,
     update_inventory_movement,
 )
+from outputs.daone.builder import build_daone_xlsx
 from rocketgrowth.verification import (
     PlannedSku, derive_attached_barcode, is_label_expected, verify,
 )
@@ -770,6 +771,120 @@ def render(brand: str):
         except Exception as ex:
             st.error(f"공유시트 데이터 생성 실패: {ex}")
 
+    # ─── ⑥ 화주별 출고요청 (네뉴=이지어드민 / 캐처스=다원) ────
+    st.markdown(f"##### ⑥ 화주별 출고요청 — **{brand_company}**")
+    if brand == 'nenu':
+        section_note(
+            "네뉴(서현커머스): 이지어드민 발주서양식 다운로드 → 이지어드민 업로드 → "
+            "이지어드민↔다원 자동연동으로 다원에 발주 전달."
+        )
+        try:
+            order_xlsx = build_order_form(
+                sec_items, fc, str(order_base).strip(),
+                pallet_assignment=pa,
+            )
+            st.download_button(
+                "📥 이지어드민 발주서양식",
+                data=order_xlsx,
+                file_name=(
+                    f"{ship_prefix}재고차감_로켓그로스({brand_company}커머스)"
+                    f"발주서양식_{datesuf}.xlsx"
+                ),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch", type="primary",
+                key=f"pkg_{brand}_dl_eaorder_{plan.id}",
+            )
+        except Exception as ex:
+            st.error(f"이지어드민 발주서 생성 실패: {ex}")
+    else:
+        section_note(
+            "캐처스: 다원 출고요청서.xlsx 다운로드 → 다원에 직접 업로드 (수기). "
+            "이지어드민 미사용 (캐처스 ↔ 다원 자동연동 없음)."
+        )
+        try:
+            daone_rows = _sec_items_to_daone_rows(
+                sec_items, fc, brand_company,
+                milkrun_id=order_base or str(plan.id),
+                arrival_date=arr,
+            )
+            if not daone_rows:
+                st.info("출고 대상 (inbound_qty > 0) SKU 가 없습니다.")
+            else:
+                xlsx_bytes = build_daone_xlsx(daone_rows)
+                st.download_button(
+                    "📥 다원 출고요청서",
+                    data=xlsx_bytes,
+                    file_name=(
+                        f"{ship_prefix}_다원출고요청_로켓그로스(캐처스)_{fc}_{datesuf}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch", type="primary",
+                    key=f"pkg_{brand}_dl_daone_{plan.id}",
+                )
+                st.caption(
+                    "⚠️ 주문자/수취인 정보는 placeholder — 다원 업로드 전 확인 필요. "
+                    "쿠팡 FC 주소 매핑 추가 필요 시 알려주세요."
+                )
+        except Exception as ex:
+            st.error(f"다원 출고요청서 생성 실패: {ex}")
+
     st.info(
-        "🚧 **다음 단계 (Phase E)**: 탭 3 송장 후처리 + 화주별 결과물 분기 (네뉴=이지어드민 발주서 / 캐처스=다원 출고요청서)."
+        "🚧 **다음 단계 (Phase E)**: 탭 3 송장 후처리 (다원 채번 → 이지어드민 송장 양식)."
     )
+
+
+# ─── 캐처스 다원 출고요청서 생성 helper ──────────────────────
+COUPANG_FC_ADDRESS = {
+    '동탄1': '경기 화성시 동탄ㅇㅇ로 (placeholder)',
+    '화성2': '경기 화성시 화성ㅇㅇ로 (placeholder)',
+    '천안2': '충남 천안시 천안ㅇㅇ로 (placeholder)',
+    '옥천3': '충북 옥천군 옥천ㅇㅇ로 (placeholder)',
+}
+COUPANG_FC_PHONE = '02-1577-7011'  # 쿠팡 대표 (placeholder)
+CACHERS_INFO = {
+    'name': '캐처스',
+    'phone1': '02-0000-0000',  # placeholder
+    'phone2': '',
+}
+
+
+def _sec_items_to_daone_rows(
+    sec_items: list[SecondaryItem],
+    fc_name: str,
+    brand_company: str,
+    milkrun_id: str,
+    arrival_date,
+) -> list[dict]:
+    """SecondaryItem → 다원 19컬럼 dict 리스트.
+
+    캐처스 로켓그로스 → 다원 출고요청 양식.
+    주문자 = 캐처스, 수취인 = 쿠팡 FC.
+    """
+    rows = []
+    seq = 0
+    for it in sec_items:
+        if it.inbound_qty <= 0:
+            continue
+        seq += 1
+        rows.append({
+            '몰명(또는 몰코드)': '쿠팡 로켓그로스',
+            '출하의뢰번호': f"{milkrun_id}",
+            '출하의뢰항번': str(seq),
+            '고객주문번호': str(it.coupang_option_id),
+            '상품명': it.product_name or '',
+            '제품코드': it.own_wms_barcode or '',
+            '주문수량': it.inbound_qty,
+            '주문자명': CACHERS_INFO['name'],
+            '주문자연락처1': CACHERS_INFO['phone1'],
+            '주문자연락처2': CACHERS_INFO['phone2'],
+            '수취인명': f'쿠팡 {fc_name}',
+            '수취인연락처1': COUPANG_FC_PHONE,
+            '수취인연락처2': '',
+            '수취인우편번호': '',
+            '수취인주소1': COUPANG_FC_ADDRESS.get(fc_name, f'쿠팡 {fc_name} (주소 미등록)'),
+            '주소2': '',
+            '배송메시지': f'쿠팡 로켓그로스 입고 ({arrival_date})' if arrival_date else '쿠팡 로켓그로스 입고',
+            '송장번호': '',
+            '택배사명': '',
+        })
+    return rows
