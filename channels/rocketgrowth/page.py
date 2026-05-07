@@ -30,12 +30,8 @@ def _ensure_brand(brand: str) -> str:
 
 def _tab_plan(brand: str):
     """탭 1: 발주 계획 (캐처스/네뉴 공통, 밀크런/택배 무관)."""
-    st.markdown("### 📋 발주 계획")
-    st.caption(
-        "쿠팡 재고 health + WMS 재고 파일 업로드 → 발주 수량 자동 산출 → 임시저장 → "
-        "쿠팡 업로드용 양식 생성."
-    )
-    st.info("🚧 Phase C 에서 자매 프로젝트의 발주 계획 로직 이전 예정.")
+    from channels.rocketgrowth._tab_plan import render as _render_plan
+    _render_plan(brand)
 
 
 def _tab_package(brand: str):
