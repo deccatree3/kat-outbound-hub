@@ -122,8 +122,8 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info)
 def _section_bundle(eza_bytes_list, work_date, sequence):
     st.markdown("### 📦 [네뉴]번들작업요청")
     st.caption(
-        "이지어드민에서 판매처그룹='캐처스' 행은 자동 제외. 마스터 양식의 세트 행 D셀에 이지어드민 합계 정수 입력. "
-        "단품 출고수량(C)은 Excel SUMIFS로 자동 계산."
+        "이지어드민에서 판매처그룹='캐처스' 행 + 상품명에 **'선물세트'** 미포함 행은 자동 제외. "
+        "마스터 양식의 세트 행 D셀에 이지어드민 합계 정수 입력. 단품 출고수량(C)은 Excel SUMIFS로 자동 계산."
     )
 
     try:

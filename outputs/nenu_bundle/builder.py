@@ -42,9 +42,15 @@ def _normalize_barcode(value) -> str:
     return s
 
 
+GIFT_KEYWORD = '선물세트'
+
+
 def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> Dict[str, int]:
-    """EZA 확장주문검색.xls bytes → {바코드: 상품수량 합계}.
-    번들작업파일은 네뉴(네이처뉴트리션 등) 전용이므로 판매처그룹='캐처스' 행은 기본 제외.
+    """이지어드민 확장주문검색.xls bytes → {바코드: 상품수량 합계}.
+
+    필터 (둘 다 적용):
+      - 판매처그룹 ∈ exclude_groups (기본 '캐처스') 제외 — 번들은 네뉴 전용
+      - 상품명에 '선물세트' 미포함 행 제외 — 번들작업은 선물세트 건만 해당
     """
     wb = xlrd.open_workbook(file_contents=data)
     ws = wb.sheet_by_index(0)
@@ -55,7 +61,11 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> Dict[str
         bar_idx = headers.index('바코드')
         qty_idx = headers.index('상품수량')
     except ValueError as e:
-        raise RuntimeError(f"EZA 헤더에서 '바코드' 또는 '상품수량' 컬럼을 찾지 못했습니다 ({e})")
+        raise RuntimeError(f"이지어드민 헤더에서 '바코드' 또는 '상품수량' 컬럼을 찾지 못했습니다 ({e})")
+    try:
+        name_idx = headers.index('상품명')
+    except ValueError as e:
+        raise RuntimeError(f"이지어드민 헤더에서 '상품명' 컬럼을 찾지 못했습니다 ({e})")
     grp_idx = headers.index('판매처그룹') if '판매처그룹' in headers else None
     excluded = set(exclude_groups or ())
 
@@ -65,6 +75,9 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> Dict[str
             g = str(ws.cell_value(r, grp_idx)).strip()
             if g in excluded:
                 continue
+        name = str(ws.cell_value(r, name_idx) or '')
+        if GIFT_KEYWORD not in name:
+            continue
         bar = _normalize_barcode(ws.cell_value(r, bar_idx))
         qty_raw = ws.cell_value(r, qty_idx)
         try:
