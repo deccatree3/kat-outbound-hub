@@ -17,10 +17,24 @@ from db import mapping as _m
 from qoo10 import api_client as qapi
 from qoo10 import generator as qgen
 from utils.timezone import kst_today
+from channels._session_selector import (
+    WorkSessionAdapter,
+    render_work_session_selector,
+    is_session_blocked,
+)
 
 
 CHANNEL_JP = 'qoo10_japan'
 CHANNEL_KR = 'cachers_qoo10_kr'
+
+
+def _qoo10_brief_adapter() -> WorkSessionAdapter:
+    """Qoo10 일본 brief 용 adapter (qoo10_pending_brief)."""
+    return WorkSessionAdapter(
+        list_history=lambda ch: qgen.list_brief_keys(limit=50),
+        next_sequence=lambda ch, wd: qgen.next_brief_sequence(wd),
+        delete_one=lambda wd, sq, ch: qgen.delete_brief_by_key(wd, sq),
+    )
 
 
 def _classify(qsm_rows, jp_map, kr_map):
@@ -237,35 +251,6 @@ def _render_product_summary(jp_orders, kr_orders, unknown_orders, conflicts):
     st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
-def _render_session_selector():
-    """탭 1 상단 — Qoo10 작업일/차수 selector. brief 저장 시 PK 역할."""
-    today = kst_today()
-    wd_key = "cu_work_date"
-    seq_key = "cu_sequence"
-
-    def _refresh_seq():
-        wd = st.session_state.get(wd_key, today)
-        try:
-            st.session_state[seq_key] = qgen.next_brief_sequence(wd)
-        except Exception:
-            st.session_state[seq_key] = 1
-
-    if seq_key not in st.session_state:
-        try:
-            st.session_state[seq_key] = qgen.next_brief_sequence(today)
-        except Exception:
-            st.session_state[seq_key] = 1
-
-    c_d, c_s = st.columns([1, 1])
-    work_date = c_d.date_input(
-        "작업일", value=today, key=wd_key, on_change=_refresh_seq,
-        help="기본값 = KST 오늘. 다른 날짜로 바꾸면 차수도 그 날짜 기준으로 재계산.",
-    )
-    sequence = c_s.number_input(
-        "차수", min_value=1, step=1, key=seq_key,
-        help="해당 작업일의 N차. 같은 (작업일, 차수) 로 재수집 시 덮어쓰기.",
-    )
-    return work_date, int(sequence)
 
 
 def _collect_via_api(work_date=None, sequence=None):
@@ -400,8 +385,12 @@ def render():
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
 
     if not qsm_rows:
-        # 작업일/차수 → brief 임시저장 PK
-        work_date, sequence = _render_session_selector()
+        # 작업일/차수 selector (다른 채널과 동일 UI)
+        session_info = render_work_session_selector(
+            CHANNEL_JP, key_prefix='qoo10_brief',
+            adapter=_qoo10_brief_adapter(),
+        )
+        blocked = is_session_blocked(session_info)
 
         # 수집 모드 선택
         mode_options = (["자동 (QSM API)", "수동 (CSV 2개 업로드)"]
@@ -412,10 +401,18 @@ def render():
             help=None if api_available else
                  "Qoo10 API 자격증명이 등록되지 않아 자동 수집 비활성화됨",
         )
+        if blocked:
+            st.button(
+                "🔄 수집 — 같은 작업일/차수 이미 존재 (삭제 후 재시도)",
+                disabled=True, width="stretch", key="cu_collect_blocked",
+            )
+            return
         if mode.startswith("자동"):
-            _collect_via_api(work_date=work_date, sequence=sequence)
+            _collect_via_api(work_date=session_info['work_date'],
+                             sequence=session_info['sequence'])
         else:
-            _collect_via_csv(work_date=work_date, sequence=sequence)
+            _collect_via_csv(work_date=session_info['work_date'],
+                             sequence=session_info['sequence'])
         return
 
     # 수집 완료 — 분류 결과

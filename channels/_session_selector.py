@@ -1,10 +1,14 @@
 """
-채널 페이지 공통 — 작업일/차수 selector.
+채널 페이지 공통 — 작업일/차수 selector + 삭제 UI.
+
+모든 채널이 동일한 UI/UX 사용. 데이터 백엔드 차이는 `WorkSessionAdapter` 로 추상화:
+  - 다원 발주서 채널 (domestic / cachers_qoo10_kr / cachers_makers): daone_pending_batch
+  - Qoo10 일본 채널 (qoo10_japan brief): qoo10_pending_brief
 
 드롭다운 옵션:
   ➕ 신규 작업 (today / next_seq 자동)
   ─ 기존 작업 ─
-  YYYY-MM-DD / N차 — row_count 행 (source 파일명)
+  YYYY-MM-DD / N차 - HH:MM — N행 · 파일명
   ...
 
 신규 선택 시: 작업일/차수 편집 가능 (default = today / next_seq)
@@ -13,25 +17,53 @@
 반환: dict {'work_date', 'sequence', 'is_new', 'existing_meta'}
 """
 import datetime
-from typing import Dict, List
+from dataclasses import dataclass
+from typing import Callable, Dict, List, Optional
 
 import streamlit as st
 
-from db import daone_batch as _b
 from utils.timezone import kst_today
 
 
 NEW_OPTION_KEY = '__new__'
 
 
-def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
+@dataclass
+class WorkSessionAdapter:
+    """데이터 백엔드 추상화. 채널이 다른 테이블 쓰면 다른 adapter 주입.
+
+    list_history(channel) → [{'work_date', 'sequence', 'row_count',
+                              'source_filename', 'work_time'}]
+    next_sequence(channel, work_date) → int
+    delete_one(work_date, sequence, channel) → bool
+    """
+    list_history: Callable[[str], List[Dict]]
+    next_sequence: Callable[[str, datetime.date], int]
+    delete_one: Callable[[datetime.date, int, str], bool]
+
+
+def _default_daone_adapter() -> WorkSessionAdapter:
+    """다원 발주서 채널용 default adapter (daone_pending_batch)."""
+    from db import daone_batch as _b
+    return WorkSessionAdapter(
+        list_history=lambda ch: _b.list_keys_for_channel(ch, limit=50),
+        next_sequence=lambda ch, wd: _b.next_sequence_for_channel(ch, work_date=wd),
+        delete_one=lambda wd, sq, ch: _b.delete(wd, sq, ch),
+    )
+
+
+def render_work_session_selector(channel: str, key_prefix: str,
+                                  adapter: Optional[WorkSessionAdapter] = None) -> Dict:
     """채널 페이지 상단에 표시. 반환: {work_date, sequence, is_new, existing_meta}.
 
     key_prefix: 채널 페이지 안에서 위젯 key 충돌 방지용.
+    adapter: 데이터 백엔드. None 이면 daone_pending_batch (다원 발주서 채널).
     """
-    history = _b.list_keys_for_channel(channel, limit=50)
+    if adapter is None:
+        adapter = _default_daone_adapter()
+    history = adapter.list_history(channel)
     today = kst_today()
-    next_seq = _b.next_sequence_for_channel(channel, work_date=today)
+    next_seq = adapter.next_sequence(channel, today)
 
     options: List = [NEW_OPTION_KEY] + [(h['work_date'], h['sequence']) for h in history]
     history_by_key = {(h['work_date'], h['sequence']): h for h in history}
@@ -69,7 +101,7 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
 
         def _refresh_seq():
             wd = st.session_state.get(wd_key, today)
-            st.session_state[seq_key] = _b.next_sequence_for_channel(channel, work_date=wd)
+            st.session_state[seq_key] = adapter.next_sequence(channel, wd)
 
         work_date = c_d.date_input(
             "작업일", value=today, key=wd_key, on_change=_refresh_seq,
@@ -91,7 +123,7 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
                 + "). 저장 시 **덮어쓰기** 됩니다."
             )
             _render_delete_action(channel, work_date, int(sequence),
-                                  key_prefix, suffix="new_collide")
+                                  key_prefix, suffix="new_collide", adapter=adapter)
         return {
             'work_date': work_date,
             'sequence': int(sequence),
@@ -109,7 +141,8 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
             + (f" · {meta['source_filename']}" if meta and meta.get('source_filename') else '')
             + ") — 저장 시 덮어쓰기."
         )
-        _render_delete_action(channel, wd, int(seq), key_prefix, suffix="existing")
+        _render_delete_action(channel, wd, int(seq), key_prefix,
+                              suffix="existing", adapter=adapter)
         return {
             'work_date': wd,
             'sequence': int(seq),
@@ -119,7 +152,8 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
 
 
 def _render_delete_action(channel: str, work_date: datetime.date, sequence: int,
-                          key_prefix: str, suffix: str) -> None:
+                          key_prefix: str, suffix: str,
+                          adapter: WorkSessionAdapter) -> None:
     """기존 batch 삭제 — 2단계 확인 (체크박스 + 삭제 버튼)."""
     confirm_key = f"{key_prefix}_del_confirm_{suffix}"
     btn_key = f"{key_prefix}_del_btn_{suffix}"
@@ -133,7 +167,7 @@ def _render_delete_action(channel: str, work_date: datetime.date, sequence: int,
     with c_btn:
         if st.button("🗑 삭제", key=btn_key, disabled=not confirmed,
                      width="stretch"):
-            if _b.delete(work_date, sequence, channel):
+            if adapter.delete_one(work_date, sequence, channel):
                 st.success(
                     f"삭제됨 — {work_date.strftime('%Y-%m-%d')} / {sequence}차 / {channel}"
                 )
@@ -146,20 +180,35 @@ def _render_delete_action(channel: str, work_date: datetime.date, sequence: int,
                 st.error("삭제 실패 (DB 연결 확인)")
 
 
+def is_session_blocked(session_info: Dict) -> bool:
+    """세션 정보 → 저장/수집 차단 필요 여부.
+    동일 (작업일, 차수) 가 이미 DB 에 있으면 차단. 사용자가 삭제 후 재등록해야 함.
+    """
+    if not session_info:
+        return False
+    # 기존 작업 선택 (is_new=False) 또는 신규에서 충돌 감지 (existing_meta truthy)
+    return (not session_info.get('is_new')) or bool(session_info.get('existing_meta'))
+
+
 def render_save_button(channel: str,
                        session_info: Dict,
                        daone_rows: List[Dict],
                        source_filename: str,
                        key_prefix: str) -> None:
-    """저장 버튼. 클릭 시 daone_batch.upsert."""
+    """저장 버튼 (다원 발주서 채널 전용 — daone_batch.upsert 호출)."""
+    from db import daone_batch as _b
     if not daone_rows:
         st.button("💾 저장 (행 없음)", disabled=True, key=f"{key_prefix}_save_disabled")
         return
+    if is_session_blocked(session_info):
+        st.button(
+            "💾 저장 — 같은 작업일/차수 이미 존재 (삭제 후 재등록)",
+            disabled=True, width="stretch",
+            key=f"{key_prefix}_save_blocked",
+        )
+        return
     label = f"💾 통합 발주서에 저장 ({len(daone_rows)}행)"
-    is_overwrite = (not session_info['is_new']) or bool(session_info.get('existing_meta'))
-    if is_overwrite:
-        label = f"💾 덮어쓰기 저장 ({len(daone_rows)}행)"
-    if st.button(label, type="secondary", width="stretch",
+    if st.button(label, type="primary", width="stretch",
                  key=f"{key_prefix}_save_btn"):
         ok = _b.upsert(
             session_info['work_date'], session_info['sequence'], channel,

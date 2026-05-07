@@ -608,6 +608,57 @@ def next_brief_sequence(work_date) -> int:
         return 1
 
 
+def list_brief_keys(limit: int = 50) -> List[Dict]:
+    """work_date/sequence 가 있는 미완료 brief 목록 — selector 의 history 용.
+    반환 각 row: {work_date, sequence, row_count(=cart_count), source_filename(=file_name),
+                  work_time(=created_at::time)}
+    """
+    _ensure_brief_schema()
+    try:
+        conn = pg.connect(autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute("""
+                SELECT work_date, sequence, cart_count, file_name, created_at
+                FROM qoo10_pending_brief
+                WHERE consumed_at IS NULL
+                  AND work_date IS NOT NULL AND sequence IS NOT NULL
+                ORDER BY work_date DESC, sequence DESC
+                LIMIT %s
+            """, (int(limit),))
+            rows = cur.fetchall()
+        conn.close()
+    except Exception:
+        return []
+    out = []
+    for r in rows:
+        wt = r[4].time() if r[4] else None
+        out.append({
+            'work_date': r[0],
+            'sequence': r[1],
+            'row_count': r[2],
+            'source_filename': r[3],
+            'work_time': wt,
+        })
+    return out
+
+
+def delete_brief_by_key(work_date, sequence) -> bool:
+    """(work_date, sequence) 로 미완료 brief 삭제. 성공 시 True."""
+    _ensure_brief_schema()
+    try:
+        conn = pg.connect()
+        with conn.cursor() as cur:
+            cur.execute("""
+                DELETE FROM qoo10_pending_brief
+                WHERE work_date = %s AND sequence = %s AND consumed_at IS NULL
+            """, (work_date, int(sequence)))
+        conn.commit()
+        conn.close()
+        return True
+    except Exception:
+        return False
+
+
 def save_pending_brief(content: bytes, file_name: str, cart_count: int,
                         disabled_count: int = 0,
                         work_date=None, sequence: int = None) -> int:
