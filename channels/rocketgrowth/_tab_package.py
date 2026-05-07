@@ -130,9 +130,12 @@ def _select_plan(brand_company: str) -> InboundPlan | None:
     return plans[sel]
 
 
+SHIPMENT_LABELS = {'milkrun': '밀크런', 'parcel': '택배'}
+
+
 def _render_meta_inputs(plan: InboundPlan, brand: str) -> dict[str, Any]:
-    """검수 메타 입력 — FC, 작업자, 입고예정일, 밀크런 ID."""
-    cols = st.columns(4)
+    """검수 메타 입력 — FC, 작업자, 입고예정일, 밀크런 ID, 운송방식."""
+    cols = st.columns(5)
     cfg = load_config()
     with cols[0]:
         fc = st.text_input(
@@ -152,15 +155,29 @@ def _render_meta_inputs(plan: InboundPlan, brand: str) -> dict[str, Any]:
         )
     with cols[3]:
         milkrun_id = st.text_input(
-            "밀크런 ID (선택)", value=plan.milkrun_id or "",
+            "밀크런/송장 ID", value=plan.milkrun_id or "",
             key=f"pkg_{brand}_mr_{plan.id}",
-            help="쿠팡 부착문서의 밀크런 ID. 검수 시 중복 체크.",
+            help="밀크런: 쿠팡 부착문서 ID. 택배: 운송 식별자.",
+        )
+    with cols[4]:
+        cur_ship = plan.shipment_type or 'milkrun'
+        ship_options = ['milkrun', 'parcel']
+        ship_idx = ship_options.index(cur_ship) if cur_ship in ship_options else 0
+        shipment = st.radio(
+            "운송방식",
+            options=ship_options,
+            format_func=lambda v: SHIPMENT_LABELS.get(v, v),
+            index=ship_idx,
+            key=f"pkg_{brand}_ship_{plan.id}",
+            horizontal=True,
+            help="밀크런: 팔레트 단위 트럭. 택배: 박스 단위 (CJ 등).",
         )
     return {
         'fc_name': fc.strip() if fc else None,
         'worker': worker.strip() if worker else None,
         'arrival_date': arr,
         'milkrun_id': milkrun_id.strip() if milkrun_id else None,
+        'shipment_type': shipment,
     }
 
 
@@ -556,7 +573,8 @@ def render(brand: str):
                     pdb.worker = meta['worker']
                     pdb.arrival_date = meta['arrival_date']
                     pdb.milkrun_id = meta['milkrun_id'] or attachment.milkrun_id or None
-                    pdb.total_pallets = pa.pallet_count
+                    pdb.shipment_type = meta['shipment_type']
+                    pdb.total_pallets = pa.pallet_count if meta['shipment_type'] == 'milkrun' else None
                     # 팔레트 번호 + 부착 바코드 db 반영
                     items_by_opt = {it.coupang_option_id: it for it in s4.execute(
                         select(InboundPlanItem).where(InboundPlanItem.plan_id == plan.id)
@@ -605,12 +623,21 @@ def render(brand: str):
     if plan.status not in ("verified", "completed"):
         return
 
-    st.subheader("④ 물류센터 전달 파일")
-    section_note(
-        "아래 4종 파일 다운로드 → 메일 송부. <br>"
-        "<b>현재 운송 방식</b>: 자매 프로젝트와 동일한 밀크런 양식. "
-        "택배 분기는 다음 단계에서 추가 예정."
-    )
+    shipment_type = plan.shipment_type or 'milkrun'
+    is_milkrun = shipment_type == 'milkrun'
+    ship_label = SHIPMENT_LABELS.get(shipment_type, shipment_type)
+
+    st.subheader(f"④ 물류센터 전달 파일 ({ship_label})")
+    if is_milkrun:
+        section_note(
+            "아래 파일 다운로드 → 메일 송부.<br>"
+            "<b>밀크런</b>: 팔레트 단위 → 팔레트적재리스트 포함."
+        )
+    else:
+        section_note(
+            "아래 파일 다운로드 → 메일 송부.<br>"
+            "<b>택배</b>: 박스 단위 → 팔레트적재리스트 제외 (택배 박스 라벨은 후속 단계에서 추가)."
+        )
 
     fc = meta['fc_name']
     arr = meta['arrival_date']
@@ -618,8 +645,13 @@ def render(brand: str):
     yyyymm = arr.strftime("%Y_%m월") if arr else _date.today().strftime("%Y_%m월")
     datesuf = arr.strftime("%Y%m%d") if arr else _date.today().strftime("%Y%m%d")
     order_base = (invoice.order_id if invoice and invoice.order_id else None) or (plan.milkrun_id or attachment.milkrun_id or "")
+    ship_prefix = "밀크런" if is_milkrun else "택배"
 
-    dc = st.columns(3)
+    # 취합리스트 + (밀크런만) 팔레트적재 + 재고이동건
+    if is_milkrun:
+        dc = st.columns(3)
+    else:
+        dc = st.columns(2)
     try:
         cons = build_consolidation_list(
             sec_items, pa, fc, arr, brand_company,
@@ -628,7 +660,7 @@ def render(brand: str):
         with dc[0]:
             st.download_button(
                 "📥 취합리스트", data=cons,
-                file_name=f"{brand_company}_밀크런_취합리스트_{yymmdd}_{fc}.xlsx",
+                file_name=f"{brand_company}_{ship_prefix}_취합리스트_{yymmdd}_{fc}.xlsx",
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 width="stretch", type="primary",
                 key=f"pkg_{brand}_dl_cons_{plan.id}",
@@ -636,28 +668,34 @@ def render(brand: str):
     except Exception as ex:
         with dc[0]:
             st.error(f"취합리스트: {ex}")
-    try:
-        pal = build_pallet_loading_list(
-            sec_items, pa, fc, arr,
-            milkrun_request_id=order_base, pallet_size=cfg.pallet_size_boxes,
-        )
-        with dc[1]:
-            st.download_button(
-                "📥 팔레트적재리스트", data=pal,
-                file_name=f"밀크런_물류부착문서2 (팔레트적재리스트)_{fc}_{datesuf}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch", type="primary",
-                key=f"pkg_{brand}_dl_pal_{plan.id}",
+
+    if is_milkrun:
+        try:
+            pal = build_pallet_loading_list(
+                sec_items, pa, fc, arr,
+                milkrun_request_id=order_base, pallet_size=cfg.pallet_size_boxes,
             )
-    except Exception as ex:
-        with dc[1]:
-            st.error(f"팔레트적재: {ex}")
+            with dc[1]:
+                st.download_button(
+                    "📥 팔레트적재리스트", data=pal,
+                    file_name=f"밀크런_물류부착문서2 (팔레트적재리스트)_{fc}_{datesuf}.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch", type="primary",
+                    key=f"pkg_{brand}_dl_pal_{plan.id}",
+                )
+        except Exception as ex:
+            with dc[1]:
+                st.error(f"팔레트적재: {ex}")
+        mv_col = dc[2]
+    else:
+        mv_col = dc[1]
+
     if plan.movement_template_blob:
         try:
             mv_out = update_inventory_movement(
                 bytes(plan.movement_template_blob), sec_items, arr, fc, brand_company,
             )
-            with dc[2]:
+            with mv_col:
                 st.download_button(
                     "📥 재고이동건", data=mv_out,
                     file_name=plan.movement_template_filename or f"쿠팡 재고이동건_{yyyymm}.xlsx",
@@ -666,19 +704,25 @@ def render(brand: str):
                     key=f"pkg_{brand}_dl_mv_{plan.id}",
                 )
         except Exception as ex:
-            with dc[2]:
+            with mv_col:
                 st.error(f"재고이동건: {ex}")
+    else:
+        with mv_col:
+            st.caption("재고이동건 템플릿 미저장 — 탭 1 에서 업로드 시 활성화")
 
-    # PDF 리네임 다운로드
+    # PDF 리네임 다운로드 (운송별 명칭 차이)
     dpc = st.columns(3)
     if ib:
         with dpc[0]:
             st.download_button(
                 "📥 물류동봉문서(거래명세서)", data=ib,
-                file_name=f"밀크런_물류동봉문서(거래명세서)_{fc}_{datesuf}.pdf",
+                file_name=f"{ship_prefix}_물류동봉문서(거래명세서)_{fc}_{datesuf}.pdf",
                 mime="application/pdf", width="stretch", type="primary",
                 key=f"pkg_{brand}_dl_inv_{plan.id}",
             )
+    else:
+        with dpc[0]:
+            st.caption("동봉문서 미업로드 (혼적 박스 없는 경우)")
     with dpc[1]:
         st.download_button(
             "📥 제품 바코드라벨", data=lb,
@@ -687,13 +731,45 @@ def render(brand: str):
             key=f"pkg_{brand}_dl_lb_{plan.id}",
         )
     with dpc[2]:
+        attach_label = "팔레트부착" if is_milkrun else "박스부착"
         st.download_button(
-            "📥 물류부착문서(팔레트부착)", data=ab,
-            file_name=f"밀크런_물류부착문서1 (팔레트부착문서)_{fc}_{datesuf}.pdf",
+            f"📥 물류부착문서({attach_label})", data=ab,
+            file_name=f"{ship_prefix}_물류부착문서1 ({attach_label}문서)_{fc}_{datesuf}.pdf",
             mime="application/pdf", width="stretch", type="primary",
             key=f"pkg_{brand}_dl_ab_{plan.id}",
         )
 
+    if not is_milkrun:
+        st.info("📦 택배 박스 라벨 출력 양식은 후속 단계에서 추가 예정.")
+
+    # ─── ⑤ 공유시트 기록 (선택) ──────────────────────────────
+    st.markdown("##### ⑤ 공유시트 기록 (선택)")
+    section_note(
+        "쿠팡 입고생성 후 발급된 입고ID 를 입력하면 공유시트 붙여넣기용 TSV 가 표시됩니다. "
+        "Google Sheets 마지막 행 아래에 Ctrl+V — 탭 자동 분할."
+    )
+    inbound_id = st.text_input(
+        "입고ID",
+        key=f"pkg_{brand}_inbound_id_{plan.id}",
+        help="쿠팡 입고생성 후 발급된 ID",
+    )
+    if inbound_id.strip():
+        from rocketgrowth.secondary_export import build_share_sheet_tsv
+        request_d = plan.plan_date or arr
+        try:
+            ss_tsv = build_share_sheet_tsv(
+                sec_items,
+                request_date=request_d,
+                arrival_date=arr,
+                company_short=brand_company,
+                inbound_id=inbound_id.strip(),
+                pallet_assignment=pa,
+            )
+            st.caption("아래 박스 우상단 📋 클릭해 복사 → 공유시트에 붙여넣기.")
+            st.code(ss_tsv, language=None)
+        except Exception as ex:
+            st.error(f"공유시트 데이터 생성 실패: {ex}")
+
     st.info(
-        "🚧 **다음 단계 (Phase E)**: 탭 3 송장 후처리 + 운송분기(밀크런/택배) + 화주분기(네뉴 이지어드민 / 캐처스 다원)."
+        "🚧 **다음 단계 (Phase E)**: 탭 3 송장 후처리 + 화주별 결과물 분기 (네뉴=이지어드민 발주서 / 캐처스=다원 출고요청서)."
     )
