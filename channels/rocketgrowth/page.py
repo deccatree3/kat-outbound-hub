@@ -41,22 +41,9 @@ def _tab_package(brand: str):
 
 
 def _tab_invoice(brand: str):
-    """탭 3: 송장 후처리 (화주 분기)."""
-    st.markdown("### 🚚 송장 후처리")
-    st.caption(
-        "다원에서 송장 채번한 파일 업로드 → 화주별 송장 결과물 생성. "
-        "쿠팡 송장 업로드 양식은 Phase F 후속."
-    )
-
-    if brand == 'nenu':
-        st.info(
-            "🚧 Phase E — 다원 송장 채번 파일 → **이지어드민 송장 업로드 양식.xlsx** 생성."
-        )
-    else:
-        st.info(
-            "🚧 Phase E — 캐처스는 이지어드민 미사용. "
-            "쿠팡 송장 등록 양식 (Phase F) 외 결과물 없음 — 다원 송장 받으면 직접 처리."
-        )
+    """탭 3: 송장 후처리."""
+    from channels.rocketgrowth._tab_invoice import render as _render_invoice
+    _render_invoice(brand)
 
 
 def render_page(brand: str = 'nenu'):
@@ -66,7 +53,10 @@ def render_page(brand: str = 'nenu'):
     """
     brand = _ensure_brand(brand)
 
-    st.caption(f"화주: **{BRAND_LABEL[brand]}** · 자매 프로젝트(nn-rocketgrowth_inventory) 이전 중.")
+    st.caption(
+        f"화주: **{BRAND_LABEL[brand]}** · 자매 프로젝트(nn-rocketgrowth_inventory) 이전 완료. "
+        "운송 방식(밀크런/택배) 은 탭 2 의 메타 입력에서 선택."
+    )
 
     tab_plan, tab_pack, tab_inv = st.tabs([
         "📋 1. 발주 계획",

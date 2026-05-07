@@ -32,8 +32,8 @@ st.caption("캐처스/네뉴 출고 통합")
 CHANNELS = {
     "domestic":             {"label": "[네뉴+캐처스] 일반판매", "brand": "네뉴/캐처스", "status": "✅ 운영"},
     "cachers_qoo10":        {"label": "[캐처스] Qoo10",       "brand": "캐처스",      "status": "✅ 운영 (일본+국내 통합)"},
-    "nenu_rocketgrowth":    {"label": "[네뉴] 로켓그로스",     "brand": "네뉴",        "status": "🚧 골격 (Phase B)"},
-    "cachers_rocketgrowth": {"label": "[캐처스] 로켓그로스",   "brand": "캐처스",      "status": "🚧 골격 (Phase B)"},
+    "nenu_rocketgrowth":    {"label": "[네뉴] 로켓그로스",     "brand": "네뉴",        "status": "✅ 운영 (자매 이전)"},
+    "cachers_rocketgrowth": {"label": "[캐처스] 로켓그로스",   "brand": "캐처스",      "status": "✅ 운영 (자매 이전)"},
     "cachers_makers":       {"label": "[캐처스] 메이커스",     "brand": "캐처스",      "status": "✅ 운영"},
     "nenu_manual":          {"label": "[네뉴] 수기주문",       "brand": "네뉴",        "status": "메뉴만"},
     "cachers_manual":       {"label": "[캐처스] 수기주문",     "brand": "캐처스",      "status": "메뉴만"},
