@@ -191,26 +191,50 @@ def _render_kr_action(kr_orders):
             )
 
 
-def _render_jp_action(jp_orders):
-    """JP 분기 — 일본 출고 탭으로 안내."""
-    if not jp_orders:
+DEST_LABEL = {
+    'jp': '일본',
+    'kr': '국내',
+    'unknown': '미매핑',
+    'conflict': '충돌',
+}
+
+
+def _render_product_summary(jp_orders, kr_orders, unknown_orders, conflicts):
+    """수집된 주문을 (상품명, 옵션) 별로 묶고 출고처 라벨과 함께 표시."""
+    from collections import defaultdict
+
+    def _qty(q) -> int:
+        try:
+            return int(q.get('수량') or 1)
+        except Exception:
+            return 1
+
+    bucket = defaultdict(lambda: {'qty': 0, 'dest': None})
+    for tag, orders in (('jp', jp_orders), ('kr', kr_orders),
+                        ('unknown', unknown_orders), ('conflict', conflicts)):
+        for q in orders:
+            key = ((q.get('상품명') or '').strip(),
+                   (q.get('옵션정보') or '').strip())
+            bucket[key]['qty'] += _qty(q)
+            bucket[key]['dest'] = tag  # 분류는 상호배타이므로 마지막 값으로 유지
+
+    if not bucket:
         return
+
     st.markdown("---")
-    st.markdown("### 🇯🇵 일본 출고 분기 (KSE 일본 직접)")
-    st.caption(
-        f"JP 활성 매핑 {len(jp_orders)} 건 — 신규 상태 그대로. "
-        "**일본 출고** 탭으로 이동해서 출고요청서 생성/송장 등록 진행."
-    )
-    df = pd.DataFrame([{
-        '주문번호': q.get('주문번호', ''),
-        '장바구니번호': q.get('장바구니번호', ''),
-        '상품명': (q.get('상품명') or '')[:40],
-        '옵션': (q.get('옵션정보') or '')[:30],
-        '수량': q.get('수량', 1),
-    } for q in jp_orders[:50]])
-    st.dataframe(df, hide_index=True, width="stretch")
-    if len(jp_orders) > 50:
-        st.caption(f"… 50/{len(jp_orders)} 행 표시")
+    st.markdown("### 📦 상품별 출고처")
+    st.caption("같은 (상품명, 옵션) 기준으로 합산. 출고처 = 활성 매핑이 있는 채널.")
+
+    rows = []
+    for (name, option), v in bucket.items():
+        rows.append({
+            '상품명': name,
+            '옵션': option or '(없음)',
+            '수량': v['qty'],
+            '출고': DEST_LABEL.get(v['dest'], v['dest'] or ''),
+        })
+    rows.sort(key=lambda r: (r['출고'], r['상품명']))
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
 def _collect_via_api():
@@ -370,8 +394,8 @@ def render():
     _render_classify_result(jp_orders, kr_orders, unknown_orders, both_active)
 
     _render_kr_action(kr_orders)
-    _render_jp_action(jp_orders)
-    # ↑ KR(국내) 먼저 처리(배송준비 전환) → JP(일본) 출고 탭으로 진행 순서
+    _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
+    # ↑ KR(국내) 먼저 처리(배송준비 전환). JP(일본) 분기는 일본 출고 탭에서 진행.
 
     st.markdown("---")
     if st.button("🗑 수집 초기화 (재수집)", key="cu_reset_btn"):
