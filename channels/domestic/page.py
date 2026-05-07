@@ -36,28 +36,28 @@ CHANNEL_KEY = 'domestic'
 
 def _eza_mapping_table():
     return pd.DataFrame([
-        {'EZA 컬럼': '판매처그룹',           '다원 컬럼': '— drop (제품코드 분기 + 출력 필터 조건) —'},
-        {'EZA 컬럼': '몰명(또는 몰코드)',    '다원 컬럼': '몰명(또는 몰코드) — 빈값이면 "000000000001"'},
-        {'EZA 컬럼': '출하의뢰번호',         '다원 컬럼': '출하의뢰번호'},
-        {'EZA 컬럼': '출하의뢰항번',         '다원 컬럼': '출하의뢰항번'},
-        {'EZA 컬럼': '주문번호',             '다원 컬럼': '고객주문번호'},
-        {'EZA 컬럼': '상품명',               '다원 컬럼': '상품명'},
-        {'EZA 컬럼': '제품코드',             '다원 컬럼': '제품코드 — 빈값이면 판매처그룹="캐처스"→상품메모, 그 외→바코드'},
-        {'EZA 컬럼': '바코드',               '다원 컬럼': '— 제품코드 fallback —'},
-        {'EZA 컬럼': '상품메모',             '다원 컬럼': '— 캐처스 제품코드 fallback —'},
-        {'EZA 컬럼': '상품수량',             '다원 컬럼': '주문수량'},
-        {'EZA 컬럼': '주문자이름',           '다원 컬럼': '주문자명'},
-        {'EZA 컬럼': '주문자연락처1',         '다원 컬럼': '주문자연락처1'},
-        {'EZA 컬럼': '주문자연락처2',         '다원 컬럼': '주문자연락처2'},
-        {'EZA 컬럼': '수취인명',             '다원 컬럼': '수취인명'},
-        {'EZA 컬럼': '수취인연락처1',         '다원 컬럼': '수취인연락처1'},
-        {'EZA 컬럼': '수취인연락처2',         '다원 컬럼': '수취인연락처2'},
-        {'EZA 컬럼': '수취인우편번호',       '다원 컬럼': '수취인우편번호'},
-        {'EZA 컬럼': '수취인주소1',           '다원 컬럼': '수취인주소1'},
-        {'EZA 컬럼': '주소2',                '다원 컬럼': '주소2 — 빈값이면 수취인주소1 복사'},
-        {'EZA 컬럼': '배송메시지',           '다원 컬럼': '배송메시지'},
-        {'EZA 컬럼': '송장번호',             '다원 컬럼': '송장번호'},
-        {'EZA 컬럼': '택배사명',             '다원 컬럼': '택배사명'},
+        {'이지어드민 컬럼': '판매처그룹',           '다원 컬럼': '— drop (제품코드 분기 + 출력 필터 조건) —'},
+        {'이지어드민 컬럼': '몰명(또는 몰코드)',    '다원 컬럼': '몰명(또는 몰코드) — 빈값이면 "000000000001"'},
+        {'이지어드민 컬럼': '출하의뢰번호',         '다원 컬럼': '출하의뢰번호'},
+        {'이지어드민 컬럼': '출하의뢰항번',         '다원 컬럼': '출하의뢰항번'},
+        {'이지어드민 컬럼': '주문번호',             '다원 컬럼': '고객주문번호'},
+        {'이지어드민 컬럼': '상품명',               '다원 컬럼': '상품명'},
+        {'이지어드민 컬럼': '제품코드',             '다원 컬럼': '제품코드 — 빈값이면 판매처그룹="캐처스"→상품메모, 그 외→바코드'},
+        {'이지어드민 컬럼': '바코드',               '다원 컬럼': '— 제품코드 fallback —'},
+        {'이지어드민 컬럼': '상품메모',             '다원 컬럼': '— 캐처스 제품코드 fallback —'},
+        {'이지어드민 컬럼': '상품수량',             '다원 컬럼': '주문수량'},
+        {'이지어드민 컬럼': '주문자이름',           '다원 컬럼': '주문자명'},
+        {'이지어드민 컬럼': '주문자연락처1',         '다원 컬럼': '주문자연락처1'},
+        {'이지어드민 컬럼': '주문자연락처2',         '다원 컬럼': '주문자연락처2'},
+        {'이지어드민 컬럼': '수취인명',             '다원 컬럼': '수취인명'},
+        {'이지어드민 컬럼': '수취인연락처1',         '다원 컬럼': '수취인연락처1'},
+        {'이지어드민 컬럼': '수취인연락처2',         '다원 컬럼': '수취인연락처2'},
+        {'이지어드민 컬럼': '수취인우편번호',       '다원 컬럼': '수취인우편번호'},
+        {'이지어드민 컬럼': '수취인주소1',           '다원 컬럼': '수취인주소1'},
+        {'이지어드민 컬럼': '주소2',                '다원 컬럼': '주소2 — 빈값이면 수취인주소1 복사'},
+        {'이지어드민 컬럼': '배송메시지',           '다원 컬럼': '배송메시지'},
+        {'이지어드민 컬럼': '송장번호',             '다원 컬럼': '송장번호'},
+        {'이지어드민 컬럼': '택배사명',             '다원 컬럼': '택배사명'},
     ])
 
 
@@ -122,7 +122,7 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info)
 def _section_bundle(eza_bytes_list, work_date, sequence):
     st.markdown("### 📦 [네뉴]번들작업요청")
     st.caption(
-        "EZA에서 판매처그룹='캐처스' 행은 자동 제외. 마스터 양식의 세트 행 D셀에 EZA 합계 정수 입력. "
+        "이지어드민에서 판매처그룹='캐처스' 행은 자동 제외. 마스터 양식의 세트 행 D셀에 이지어드민 합계 정수 입력. "
         "단품 출고수량(C)은 Excel SUMIFS로 자동 계산."
     )
 
@@ -136,12 +136,12 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     c1.metric("세트 매칭/채움", f"{len(info['set_matched_barcodes'])} / {info['set_rows_filled']}")
     c2.metric("총 세트 입고수량", info['total_qty'])
     c3.metric("단품 직접 주문 (참고)", len(info['single_matched_barcodes']))
-    c4.metric("EZA(네뉴) 종/수량", f"{info['eza_total_rows']} / {info['eza_total_qty']}")
+    c4.metric("이지어드민(네뉴) 종/수량", f"{info['eza_total_rows']} / {info['eza_total_qty']}")
     st.caption(f"마스터 = 단품 {info['master_single_count']}개 + 세트 {info['master_set_count']}개.")
 
     if info['unmatched_barcodes']:
         st.warning(
-            f"⚠️ EZA(네뉴)에 있으나 마스터에 없는 바코드 **{len(info['unmatched_barcodes'])}건** — "
+            f"⚠️ 이지어드민(네뉴)에 있으나 마스터에 없는 바코드 **{len(info['unmatched_barcodes'])}건** — "
             "신규 SKU 또는 마스터 누락 가능성. `outputs/nenu_bundle/template.xlsx` 검토 필요."
         )
         with st.expander("미매칭 바코드 목록", expanded=False):
@@ -150,7 +150,7 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     if info['single_matched_barcodes']:
         with st.expander(
             f"📦 단품 직접 주문 {len(info['single_matched_barcodes'])}건 "
-            "(양식에 자리 없음 — EZA↔다원 자동 흐름이 처리)",
+            "(양식에 자리 없음 — 이지어드민↔다원 자동 흐름이 처리)",
             expanded=False,
         ):
             st.code('\n'.join(info['single_matched_barcodes']))
@@ -170,8 +170,8 @@ def _section_3pl(eza_rows, work_date, sequence):
     """캐처스 3PL-자연미앤 출고요청서 (공급처 필터)."""
     st.markdown("### 🥡 [캐처스]3PL-자연미앤")
     st.caption(
-        f"EZA 의 공급처 = `{_3PL_SUPPLIER}` 행만 추출. 25컬럼 양식. "
-        "몰명 컬럼은 빈값 (EZA 에 없음)."
+        f"이지어드민 의 공급처 = `{_3PL_SUPPLIER}` 행만 추출. 25컬럼 양식. "
+        "몰명 컬럼은 빈값 (이지어드민 에 없음)."
     )
 
     target = _3pl_filter(eza_rows)
@@ -213,20 +213,20 @@ def _section_3pl(eza_rows, work_date, sequence):
 
 def _tab_create_order():
     st.markdown(
-        "EZA **확장주문검색.xls** 한 번 업로드 → **다원 발주서**(캐처스) + **번들작업파일**(네뉴 세트) 동시 생성. "
-        "이지오토 Y 흐름이라 EZA가 자동 수집, 우리는 변환만."
+        "이지어드민 **확장주문검색.xls** 한 번 업로드 → **다원 발주서**(캐처스) + **번들작업파일**(네뉴 세트) 동시 생성. "
+        "이지오토 Y 흐름이라 이지어드민이 자동 수집, 우리는 변환만."
     )
 
     uploaded_files = st.file_uploader(
-        "EZA 확장주문검색 파일 (.xls, 여러 개 가능)",
+        "이지어드민 확장주문검색 파일 (.xls, 여러 개 가능)",
         type=['xls'],
         accept_multiple_files=True,
         key="domestic_eza",
-        help="EZA > 주문관리 > 확장주문검색 > 엑셀다운. 여러 개 한꺼번에 끌어다 놓을 수 있음.",
+        help="이지어드민 > 주문관리 > 확장주문검색 > 엑셀다운. 여러 개 한꺼번에 끌어다 놓을 수 있음.",
     )
 
     if not uploaded_files:
-        with st.expander("📋 EZA → 다원 19컬럼 매핑 (참고)", expanded=False):
+        with st.expander("📋 이지어드민 → 다원 19컬럼 매핑 (참고)", expanded=False):
             st.dataframe(_eza_mapping_table(), hide_index=True, width="stretch")
         return
 
@@ -244,7 +244,7 @@ def _tab_create_order():
         st.caption(f"📂 {len(uploaded_files)}개 파일 합산 — 총 {len(eza_rows)} 행")
 
     if not eza_rows:
-        st.warning("📭 EZA 파일에 주문 데이터가 없습니다.")
+        st.warning("📭 이지어드민 파일에 주문 데이터가 없습니다.")
         return
 
     session_info = render_work_session_selector(CHANNEL_KEY, key_prefix='domestic')

@@ -237,7 +237,7 @@ def _render_daone_output(makers_rows, work_date, sequence, source_filename, sess
 
 
 def _render_eza_output(makers_rows, work_date, sequence):
-    """옵션 2 — 이지어드민 발주서 (8컬럼). 매핑 미사용 — EZA가 자체 매핑 보유."""
+    """옵션 2 — 이지어드민 발주서 (8컬럼). 매핑 미사용 — 이지어드민이 자체 매핑 보유."""
     c1, c2 = st.columns(2)
     c1.metric("메이커스 행수", len(makers_rows))
     total_qty = sum(int(r.get('수량', 0) or 0) for r in makers_rows)
