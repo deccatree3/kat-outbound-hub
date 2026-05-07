@@ -22,6 +22,7 @@ from channels._session_selector import (
     render_work_session_selector,
     is_session_blocked,
 )
+from channels import _db_cache as _cache
 
 
 CHANNEL_JP = 'qoo10_japan'
@@ -30,10 +31,15 @@ CHANNEL_KR = 'cachers_qoo10_kr'
 
 def _qoo10_brief_adapter() -> WorkSessionAdapter:
     """Qoo10 일본 brief 용 adapter (qoo10_pending_brief)."""
+    def _delete(wd, sq, ch):
+        ok = qgen.delete_brief_by_key(wd, sq)
+        if ok:
+            _cache.invalidate_all()
+        return ok
     return WorkSessionAdapter(
-        list_history=lambda ch: qgen.list_brief_keys(limit=50),
-        next_sequence=lambda ch, wd: qgen.next_brief_sequence(wd),
-        delete_one=lambda wd, sq, ch: qgen.delete_brief_by_key(wd, sq),
+        list_history=lambda ch: _cache.qoo10_brief_keys(),
+        next_sequence=lambda ch, wd: _cache.qoo10_next_brief_sequence(wd),
+        delete_one=_delete,
     )
 
 
@@ -303,6 +309,7 @@ def _collect_via_api(work_date=None, sequence=None):
             st.session_state['qoo10_brief_id'] = bid
             st.session_state['qoo10_brief_work_date'] = work_date
             st.session_state['qoo10_brief_sequence'] = sequence
+            _cache.invalidate_all()
         except Exception as ex:
             st.warning(f"brief 임시저장 실패 (세션 내에서는 사용 가능): {ex}")
         st.success(f"✅ {len(qsm_rows)}건 가져옴")
@@ -339,6 +346,7 @@ def _collect_via_csv(work_date=None, sequence=None):
                     st.session_state['qoo10_brief_id'] = bid
                     st.session_state['qoo10_brief_work_date'] = work_date
                     st.session_state['qoo10_brief_sequence'] = sequence
+                    _cache.invalidate_all()
                 except Exception as ex:
                     st.warning(f"brief 임시저장 실패 (세션 내에서는 사용 가능): {ex}")
 
@@ -428,8 +436,8 @@ def render():
     st.markdown("---")
     st.markdown(f"### 📊 분류 결과 (총 {len(qsm_rows)}건)")
 
-    jp_map = _m.load_for_channel(CHANNEL_JP, active_only=True)
-    kr_map = _m.load_for_channel(CHANNEL_KR, active_only=True)
+    jp_map = _cache.load_mapping(CHANNEL_JP, active_only=True)
+    kr_map = _cache.load_mapping(CHANNEL_KR, active_only=True)
 
     jp_orders, kr_orders, unknown_orders, both_active = _classify(qsm_rows, jp_map, kr_map)
     _render_classify_result(jp_orders, kr_orders, unknown_orders, both_active)

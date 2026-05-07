@@ -45,10 +45,16 @@ class WorkSessionAdapter:
 def _default_daone_adapter() -> WorkSessionAdapter:
     """다원 발주서 채널용 default adapter (daone_pending_batch)."""
     from db import daone_batch as _b
+    from channels import _db_cache as _cache
+    def _delete(wd, sq, ch):
+        ok = _b.delete(wd, sq, ch)
+        if ok:
+            _cache.invalidate_all()
+        return ok
     return WorkSessionAdapter(
-        list_history=lambda ch: _b.list_keys_for_channel(ch, limit=50),
-        next_sequence=lambda ch, wd: _b.next_sequence_for_channel(ch, work_date=wd),
-        delete_one=lambda wd, sq, ch: _b.delete(wd, sq, ch),
+        list_history=lambda ch: _cache.list_keys_for_channel(ch),
+        next_sequence=lambda ch, wd: _cache.next_sequence_for_channel(ch, wd),
+        delete_one=_delete,
     )
 
 
@@ -215,6 +221,8 @@ def render_save_button(channel: str,
             daone_rows, source_filename=source_filename,
         )
         if ok:
+            from channels import _db_cache as _cache
+            _cache.invalidate_all()
             st.success(
                 f"✅ 저장 완료 — {session_info['work_date'].strftime('%Y-%m-%d')} / "
                 f"{session_info['sequence']}차 / {channel} ({len(daone_rows)}행)"

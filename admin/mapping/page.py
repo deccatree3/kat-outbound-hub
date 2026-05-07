@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 from db import mapping as _map
+from channels import _db_cache as _cache
 
 
 CHANNEL_LABELS = {
@@ -31,7 +32,7 @@ def _summary_cell(item_codes: str, quantities: str) -> str:
 
 def render_page():
     _map.ensure_schema()
-    counts = _map.count_by_channel()
+    counts = _cache.count_mappings_by_channel()
 
     st.markdown(
         "모든 채널의 **상품/옵션 ↔ SKU 매핑** 을 한 곳에서 관리합니다. "
@@ -61,7 +62,7 @@ def render_page():
         )
 
     chan = None if sel_ch == '(전체)' else sel_ch
-    rows = _map.list_all(channel=chan, search=search)
+    rows = _cache.list_all_mappings(channel=chan, search=search)
 
     # 요약 테이블
     summary = pd.DataFrame([{
@@ -206,6 +207,7 @@ def render_page():
                 if orig_key and (edit_ch, pn, po) != orig_key:
                     _map.delete(*orig_key)
                 if _map.upsert(edit_ch, pn, po, payload, is_active=bool(edit_active)):
+                    _cache.invalidate_all()
                     st.success("저장됨")
                     st.rerun()
                 else:
@@ -213,6 +215,7 @@ def render_page():
 
     if do_delete and orig_key:
         if _map.delete(*orig_key):
+            _cache.invalidate_all()
             st.success("삭제됨")
             st.rerun()
         else:

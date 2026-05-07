@@ -14,6 +14,7 @@ import streamlit as st
 from db import daone_batch as _b
 from outputs.daone.builder import build_daone_xlsx
 from utils.timezone import kst_today
+from channels import _db_cache as _cache
 
 
 CHANNEL_LABELS = {
@@ -36,7 +37,7 @@ def render_page():
         "**채널/작업일/차수 자유 조합**."
     )
 
-    rows = _b.list_all(limit=200)
+    rows = _cache.list_all_batches(limit=200)
     if not rows:
         st.info("저장된 batch 가 아직 없습니다. 채널 페이지에서 '💾 저장' 누르면 여기 표시됩니다.")
         return
@@ -176,6 +177,8 @@ def render_page():
                     if _b.delete(sel_row['_work_date'], int(sel_row['_sequence']),
                                  sel_row['_channel_key']):
                         deleted += 1
+                if deleted:
+                    _cache.invalidate_all()
                 st.success(f"{deleted}건 삭제됨")
                 st.rerun()
 
