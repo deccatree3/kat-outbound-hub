@@ -30,27 +30,42 @@ def _tab_kr_outbound():
 
 
 def _tab_jp_outbound():
-    """일본 출고 — qoo10_japan step1~6 함수를 단일 페이지 스크롤로 호출 (C-3b).
+    """일본 출고 — 탭 1 신규주문 처리에서 수집된 데이터로 step2~6 진행.
 
-    UI: stepper 제거 + 섹션별 마크다운 헤더 + 스크롤.
-    데이터 흐름은 qoo10_japan session_state 키 (qoo10_detail_bytes 등) 그대로 — 신규주문 처리 탭과 별개 (다음 단계에서 통합).
+    탭 1 에서 cu_qsm_rows / qoo10_detail_bytes / qoo10_brief_bytes 를 미리 채워둠 →
+    여기서는 수집(step1) 생략하고 출고요청서 생성부터 시작.
     """
     from channels.qoo10_japan.page import (
         render_credentials_sidebar,
-        _step1_qsm_collect, _step2_outbound_generate,
-        _step3_oms_upload_guide, _step4_collect_waybills,
-        _step5_qsm_waybill_register, _step6_qsm_register_guide,
+        _step2_outbound_generate, _step3_oms_upload_guide,
+        _step4_collect_waybills, _step5_qsm_waybill_register,
+        _step6_qsm_register_guide,
     )
-    # 사이드바 인증키
     render_credentials_sidebar()
 
-    st.caption(
-        "📜 단일 페이지 스크롤 — 위에서 아래로 순차 작업. "
-        "신규주문 처리 탭과 별개 흐름 (자동 데이터 전달은 다음 단계 예정)."
-    )
+    det_ok = bool(st.session_state.get('qoo10_detail_bytes'))
+    brief_ok = bool(st.session_state.get('qoo10_brief_bytes'))
 
-    st.markdown("---")
-    _step1_qsm_collect()
+    if not (det_ok and brief_ok):
+        st.warning(
+            "⚠️ **신규주문 데이터가 없습니다.** 먼저 **📤 신규주문 처리** 탭에서 "
+            "QSM API 자동 또는 CSV 수동으로 주문을 수집하세요. "
+            "수집된 데이터를 여기서 그대로 사용합니다 (재수집 불필요)."
+        )
+        return
+
+    qsm_rows = st.session_state.get('cu_qsm_rows', [])
+    detail_name = st.session_state.get('qoo10_detail_name', '')
+    brief_name = st.session_state.get('qoo10_brief_name', '')
+    mode_label = ('자동(API)' if st.session_state.get('cu_collect_mode') == 'api'
+                  else '수동(CSV)')
+    st.success(
+        f"✅ 신규주문 처리 탭에서 수집됨 — 총 {len(qsm_rows)}건 ({mode_label}) · "
+        f"`{detail_name}` / `{brief_name}`"
+    )
+    st.caption(
+        "📜 단일 페이지 스크롤 — 출고요청서 생성 → KSE OMS 업로드(외부) → 송장 취합 → QSM 등록."
+    )
 
     st.markdown("---")
     _step2_outbound_generate()

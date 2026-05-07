@@ -213,42 +213,152 @@ def _render_jp_action(jp_orders):
         st.caption(f"… 50/{len(jp_orders)} 행 표시")
 
 
-def render():
-    st.markdown(
-        "QSM API로 신규주문(stat=2) 가져오기 → 매핑 활성여부 lookup 으로 KR/JP 자동 분류. "
-        "**KR 활성 매핑** = 한국 다원→KSE→일본 / **JP 활성 매핑** = 일본 KSE 직접 출고."
-    )
-
-    # QSM API 자격증명 확인
-    api_available = qapi.has_credentials()
-    if not api_available:
-        st.error(
-            "Qoo10 API 자격증명이 등록되지 않음. "
-            "(우선 'Qoo10 일본 출고' 채널 사이드바에서 등록 — 통합 채널 사이드바 후속 작업)"
-        )
-        return
+def _collect_via_api():
+    """QSM API → cu_qsm_rows + qoo10_detail/brief bytes (일본 출고 탭에서 재사용)."""
+    import datetime as _dt
+    api_status = qapi.get_credentials_status()
+    if api_status.get('expires_at') and api_status.get('days_remaining') is not None:
+        icon = {'green': '🟢', 'yellow': '🟡', 'red': '🔴', 'expired': '⚫'}.get(
+            api_status['level'], '🔑')
+        d = api_status['days_remaining']
+        exp_msg = (f"{icon} API 키 만료일: **{api_status['expires_at']}** "
+                   f"({'D-' + str(d) if d >= 0 else f'{abs(d)}일 경과'})")
+        if api_status['level'] in ('expired', 'red'):
+            st.error(exp_msg + " — 사이드바에서 갱신 필요")
+        elif api_status['level'] == 'yellow':
+            st.warning(exp_msg)
+        else:
+            st.caption(exp_msg)
 
     today = kst_today()
     if st.button("🔄 QSM에서 가져오기 (최근 30일 신규주문)", type="primary",
                  width="stretch", key="cu_fetch_btn"):
-        sd = (today - __import__('datetime').timedelta(days=30)).strftime('%Y%m%d')
+        sd = (today - _dt.timedelta(days=30)).strftime('%Y%m%d')
         ed = today.strftime('%Y%m%d')
         with st.spinner("QSM API 조회 중..."):
             try:
                 sak = qapi.get_sak()
-                api_orders = qapi.fetch_orders(sak, sd, ed)
+                api_orders = qapi.fetch_orders(sak, sd, ed, qapi.SHIPPING_STAT_REQUEST)
             except Exception as ex:
                 st.error(f"API 호출 실패: {ex}")
                 return
+        if not api_orders:
+            st.warning("📭 해당 기간에 신규주문이 없습니다.")
+            return
         qsm_rows = [qapi.api_response_to_qsm_dict(o) for o in api_orders]
+        # 일본 출고 탭에서 step2~ 사용할 detail/brief bytes
+        detail_bytes = qapi.build_detail_csv_bytes(api_orders)
+        brief_bytes = qapi.build_brief_csv_bytes(api_orders)
+        ts = _dt.datetime.now().strftime('%Y%m%d_%H%M')
         st.session_state['cu_qsm_rows'] = qsm_rows
+        st.session_state['cu_collect_mode'] = 'api'
+        st.session_state['qoo10_detail_bytes'] = detail_bytes
+        st.session_state['qoo10_detail_name'] = f"API_DeliveryManagement_detail_{ts}.csv"
+        st.session_state['qoo10_brief_bytes'] = brief_bytes
+        st.session_state['qoo10_brief_name'] = f"API_DeliveryManagement_brief_{ts}.csv"
+        try:
+            bid = qgen.save_pending_brief(
+                brief_bytes, st.session_state['qoo10_brief_name'], len(api_orders))
+            st.session_state['qoo10_brief_id'] = bid
+        except Exception as ex:
+            st.warning(f"brief 임시저장 실패 (세션 내에서는 사용 가능): {ex}")
         st.success(f"✅ {len(qsm_rows)}건 가져옴")
         st.rerun()
 
+
+def _collect_via_csv():
+    """QSM detail/brief CSV 2개 업로드 → cu_qsm_rows + qoo10_detail/brief bytes."""
+    st.caption(
+        "QSM > 배송관리 > 배송요청 > 신규주문에서 받은 detail / brief CSV 2개를 업로드. "
+        "파일명에 `detail` / `brief` 가 포함되면 자동 분류."
+    )
+
+    uploaded = st.file_uploader(
+        "QSM 자료 2개 업로드 (detail + brief)",
+        type=['csv'], accept_multiple_files=True,
+        key="cu_csv_upload",
+    )
+    if uploaded:
+        for f in uploaded:
+            nm = f.name.lower()
+            content = f.getvalue()
+            if 'detail' in nm:
+                st.session_state['qoo10_detail_bytes'] = content
+                st.session_state['qoo10_detail_name'] = f.name
+            elif 'brief' in nm:
+                st.session_state['qoo10_brief_bytes'] = content
+                st.session_state['qoo10_brief_name'] = f.name
+                try:
+                    cnt = len(qgen.parse_qsm_csv(content))
+                    bid = qgen.save_pending_brief(content, f.name, cnt)
+                    st.session_state['qoo10_brief_id'] = bid
+                except Exception as ex:
+                    st.warning(f"brief 임시저장 실패 (세션 내에서는 사용 가능): {ex}")
+
+    det_ok = bool(st.session_state.get('qoo10_detail_bytes'))
+    brief_ok = bool(st.session_state.get('qoo10_brief_bytes'))
+    det_check = '✅' if det_ok else ''
+    brief_check = '✅' if brief_ok else ''
+    st.markdown(
+        "<div style='font-size:0.85em'>\n\n"
+        "| 구분 | 파일명 예시 | 취합 |\n"
+        "|------|------------|:---:|\n"
+        f"| 배송요청 상세 | `DeliveryManagement_detail_*.csv` | {det_check} |\n"
+        f"| 배송요청 요약 | `DeliveryManagement_brief_*.csv` | {brief_check} |\n\n"
+        "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if det_ok and brief_ok:
+        if st.button("📥 분류 진행", key="cu_csv_classify_btn",
+                     type="primary", width="stretch"):
+            try:
+                qsm_rows = qgen.parse_qsm_csv(st.session_state['qoo10_detail_bytes'])
+            except Exception as ex:
+                st.error(f"detail CSV 파싱 실패: {ex}")
+                return
+            st.session_state['cu_qsm_rows'] = qsm_rows
+            st.session_state['cu_collect_mode'] = 'csv'
+            st.success(f"✅ {len(qsm_rows)}건 로드")
+            st.rerun()
+
+
+def _clear_collected_state():
+    for k in ('cu_qsm_rows', 'cu_collect_mode', 'cu_kr_last_result',
+              'qoo10_detail_bytes', 'qoo10_detail_name',
+              'qoo10_brief_bytes', 'qoo10_brief_name', 'qoo10_brief_id'):
+        st.session_state.pop(k, None)
+
+
+def render():
+    st.markdown(
+        "신규주문(QSM stat=2) 수집 → 매핑 활성여부 lookup 으로 KR/JP 자동 분류. "
+        "**KR 활성 매핑** = 한국 다원→KSE→일본 / **JP 활성 매핑** = 일본 KSE 직접 출고. "
+        "여기서 수집한 데이터는 **일본 출고 탭**에서도 그대로 사용됨 (재수집 불필요)."
+    )
+
+    api_available = qapi.has_credentials()
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
+
     if not qsm_rows:
-        st.info("아직 가져오지 않았습니다. 위 버튼 클릭.")
+        # 수집 모드 선택
+        mode_options = (["자동 (QSM API)", "수동 (CSV 2개 업로드)"]
+                        if api_available else ["수동 (CSV 2개 업로드)"])
+        mode = st.radio(
+            "수집 방식",
+            options=mode_options, horizontal=True, key="cu_collect_mode_radio",
+            help=None if api_available else
+                 "Qoo10 API 자격증명이 등록되지 않아 자동 수집 비활성화됨",
+        )
+        if mode.startswith("자동"):
+            _collect_via_api()
+        else:
+            _collect_via_csv()
         return
+
+    # 수집 완료 — 분류 결과
+    mode_label = '자동(API)' if st.session_state.get('cu_collect_mode') == 'api' else '수동(CSV)'
+    st.caption(f"수집 방식: **{mode_label}** · 일본 출고 탭에서 재사용 가능")
 
     st.markdown("---")
     st.markdown(f"### 📊 분류 결과 (총 {len(qsm_rows)}건)")
@@ -261,9 +371,9 @@ def render():
 
     _render_kr_action(kr_orders)
     _render_jp_action(jp_orders)
-    # ↑ 위에서 KR(국내) 먼저 처리(배송준비 전환) → JP(일본) 출고 탭으로 진행 순서
+    # ↑ KR(국내) 먼저 처리(배송준비 전환) → JP(일본) 출고 탭으로 진행 순서
 
     st.markdown("---")
-    if st.button("🗑 가져온 주문 초기화", key="cu_reset_btn"):
-        st.session_state.pop('cu_qsm_rows', None)
+    if st.button("🗑 수집 초기화 (재수집)", key="cu_reset_btn"):
+        _clear_collected_state()
         st.rerun()
