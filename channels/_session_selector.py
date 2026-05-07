@@ -42,12 +42,17 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
         wd, seq = opt
         h = history_by_key.get((wd, seq))
         n = h['row_count'] if h else '?'
+        wt = h.get('work_time') if h else None
+        time_str = wt.strftime('%H:%M') if wt else ''
         src = (h.get('source_filename') if h else '') or ''
         src_short = (src[:30] + '…') if len(src) > 30 else src
-        return f"{wd.strftime('%Y-%m-%d')} / {seq}차 — {n}행" + (f" · {src_short}" if src_short else '')
+        head = f"{wd.strftime('%Y-%m-%d')} / {seq}차"
+        if time_str:
+            head += f" - {time_str}"
+        return f"{head} — {n}행" + (f" · {src_short}" if src_short else '')
 
     sel = st.selectbox(
-        "작업일/차수",
+        "작업일/차수 - 시간",
         options=options,
         format_func=_format,
         key=f"{key_prefix}_session_sel",
@@ -96,8 +101,10 @@ def render_work_session_selector(channel: str, key_prefix: str) -> Dict:
     else:
         wd, seq = sel
         meta = history_by_key.get((wd, seq))
+        wt = meta.get('work_time') if meta else None
+        time_part = f" - {wt.strftime('%H:%M')}" if wt else ''
         st.caption(
-            f"📂 기존 작업 선택: **{wd.strftime('%Y-%m-%d')} / {seq}차** "
+            f"📂 기존 작업 선택: **{wd.strftime('%Y-%m-%d')} / {seq}차{time_part}** "
             f"(현재 {meta['row_count']}행"
             + (f" · {meta['source_filename']}" if meta and meta.get('source_filename') else '')
             + ") — 저장 시 덮어쓰기."

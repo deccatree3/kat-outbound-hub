@@ -34,10 +34,12 @@ CREATE TABLE IF NOT EXISTS daone_pending_batch (
     rows_json       JSONB NOT NULL,
     source_filename TEXT,
     note            TEXT,
+    work_time       TIME,
     created_at      TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul'),
     updated_at      TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul'),
     UNIQUE (work_date, sequence, channel)
 );
+ALTER TABLE daone_pending_batch ADD COLUMN IF NOT EXISTS work_time TIME;
 CREATE INDEX IF NOT EXISTS idx_dpb_filter
     ON daone_pending_batch (work_date DESC, sequence DESC, channel);
 """
@@ -78,13 +80,16 @@ def upsert(work_date: datetime.date, sequence: int, channel: str,
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO daone_pending_batch
-                (work_date, sequence, channel, row_count, rows_json, source_filename, note)
-                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s)
+                (work_date, sequence, channel, row_count, rows_json,
+                 source_filename, note, work_time)
+                VALUES (%s, %s, %s, %s, %s::jsonb, %s, %s,
+                        (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::time)
                 ON CONFLICT (work_date, sequence, channel) DO UPDATE SET
                     row_count       = EXCLUDED.row_count,
                     rows_json       = EXCLUDED.rows_json,
                     source_filename = COALESCE(EXCLUDED.source_filename, daone_pending_batch.source_filename),
                     note            = COALESCE(EXCLUDED.note, daone_pending_batch.note),
+                    work_time       = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')::time,
                     updated_at      = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
             """, (work_date, int(sequence), channel, len(rows), payload,
                   source_filename, note))
@@ -157,7 +162,7 @@ def list_keys_for_channel(channel: str, limit: int = 50) -> List[Dict]:
         conn = pg.connect(autocommit=True)
         with conn.cursor() as cur:
             cur.execute("""
-                SELECT work_date, sequence, row_count, source_filename, updated_at
+                SELECT work_date, sequence, row_count, source_filename, updated_at, work_time
                 FROM daone_pending_batch
                 WHERE channel=%s
                 ORDER BY work_date DESC, sequence DESC
@@ -169,7 +174,7 @@ def list_keys_for_channel(channel: str, limit: int = 50) -> List[Dict]:
         return []
     return [{
         'work_date': r[0], 'sequence': r[1], 'row_count': r[2],
-        'source_filename': r[3], 'updated_at': r[4],
+        'source_filename': r[3], 'updated_at': r[4], 'work_time': r[5],
     } for r in rows]
 
 
@@ -183,7 +188,7 @@ def list_all(limit: int = 200) -> List[Dict]:
         with conn.cursor() as cur:
             cur.execute("""
                 SELECT work_date, sequence, channel, row_count,
-                       source_filename, note, created_at, updated_at
+                       source_filename, note, created_at, updated_at, work_time
                 FROM daone_pending_batch
                 ORDER BY work_date DESC, sequence DESC, channel
                 LIMIT %s
@@ -195,7 +200,7 @@ def list_all(limit: int = 200) -> List[Dict]:
     return [{
         'work_date': r[0], 'sequence': r[1], 'channel': r[2],
         'row_count': r[3], 'source_filename': r[4], 'note': r[5],
-        'created_at': r[6], 'updated_at': r[7],
+        'created_at': r[6], 'updated_at': r[7], 'work_time': r[8],
     } for r in rows]
 
 
