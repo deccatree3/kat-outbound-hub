@@ -1,11 +1,13 @@
 """탭 1: 발주 계획 (자매 페이지 lines 401-1374 의 신규 계획 모드 이전).
 
 C-1 (완료): 파일 업로드 + 자동 분류 + 파싱 + 마스터 로드
-C-2 (현재): 발주 계획 산출 + 팔레트 최적화 + 편집 UI
-C-3 (다음): 저장 + 쿠팡 양식 다운로드
+C-2 (완료): 발주 계획 산출 + 팔레트 최적화 + 편집 UI
+C-3 (현재): 저장 (InboundPlan + PlanFile) + 쿠팡 입고생성 양식.xlsx 다운로드
 """
 from __future__ import annotations
 
+import io
+from datetime import date as _date
 from pathlib import Path
 
 import pandas as pd
@@ -18,7 +20,10 @@ from rocketgrowth.file_classifier import (
     FILE_TYPE_COUPANG, FILE_TYPE_WMS, FILE_TYPE_TEMPLATE, FILE_TYPE_MOVEMENT,
     FILE_TYPE_LABELS, classify_uploaded_files,
 )
-from rocketgrowth.export import extract_template_option_ids
+from rocketgrowth.export import (
+    ExportItem, dates_from_batch, default_expiry_dates,
+    extract_template_option_ids, fill_coupang_template,
+)
 from rocketgrowth.ingestion.coupang_file import parse_coupang_inventory_file
 from rocketgrowth.ingestion.wms_file import aggregate_wms_by_barcode, parse_wms_inventory_file
 from rocketgrowth.models import CoupangProduct, WmsProduct
@@ -26,7 +31,9 @@ from rocketgrowth.planning import PlanInput, PlanParams, compute_plan, urgency_b
 from rocketgrowth.pallet import PalletItem, optimize_to_pallet
 from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
 
-from channels.rocketgrowth._helpers import ni, resolve_parent_barcode, section_note
+from channels.rocketgrowth._helpers import (
+    ni, resolve_parent_barcode, save_plan, section_note,
+)
 
 
 _BRAND_TO_COMPANY = {
@@ -857,16 +864,145 @@ def render(brand: str):
     }
 
     st.divider()
-    if confirmed_qty == 0:
+
+    # ─── 입고 수량 확정 + 저장 + 쿠팡 양식 다운로드 (C-3) ─────────
+    saved_state_key = f"rg_{brand}_last_saved_plan_id"
+    last_saved = st.session_state.get(saved_state_key)
+
+    if confirmed_qty == 0 and not last_saved:
         st.button(
-            "입고 수량 확정",
+            "입고 수량 확정 + 저장",
             disabled=True, width="stretch",
             help="확정 수량 1개 이상 입력 필요.",
-            key=f"rg_{brand}_confirm_disabled",
+            key=f"rg_{brand}_save_disabled",
         )
-        st.caption("확정 수량 입력 후 이 버튼 → C-3 단계에서 저장 + 쿠팡 양식 다운로드.")
-    else:
-        st.info(
-            f"🚧 **C-2 완료** — 확정수량 {confirmed_qty:,}개 산출됨. "
-            f"**C-3 (다음 단계)**: 저장 버튼 + 쿠팡 입고생성 양식.xlsx 다운로드 이전 예정."
+        st.caption("확정 수량을 입력한 후 이 버튼 → DB 저장 + 쿠팡 입고생성 양식 다운로드.")
+        return
+
+    # 저장 직후가 아니면 저장 버튼 노출
+    if not last_saved:
+        if st.button(
+            f"💾 입고 수량 확정 + 저장 ({confirmed_qty:,}개)",
+            type="primary", width="stretch",
+            help="DB 저장 + 쿠팡 입고생성 양식 자동 생성. 저장 후 탭 2 결과물 패키지에서 이어서 진행.",
+            key=f"rg_{brand}_save_btn",
+        ):
+            try:
+                # 편집본을 allocated_df 에 머지 (필터로 숨겨진 SKU 도 보존)
+                save_df = allocated_df.copy()
+                for _, erow in edited.iterrows():
+                    opt = int(erow["coupang_option_id"])
+                    mask = save_df["coupang_option_id"] == opt
+                    save_df.loc[mask, "inbound_final"] = ni(erow["inbound_final"]) or 0
+
+                _raw_files: dict[str, tuple[str, bytes]] = {}
+                if coupang_file:
+                    _raw_files["coupang_raw"] = (coupang_file.name, coupang_file.getvalue())
+                if wms_file:
+                    _raw_files["wms_raw"] = (wms_file.name, wms_file.getvalue())
+                if template_file:
+                    _raw_files["template"] = (template_file.name, template_file.getvalue())
+
+                # 화주 = 자매 컬럼 'company_name' 그대로 (서현/캐처스)
+                shipment_type = cfg.default_shipment_type  # 'milkrun' default; 탭 2에서 변경
+                plan_id = save_plan(
+                    cp_snap=cp_snap, wms_snap=wms_snap, full_df=save_df,
+                    company_name=brand_company,
+                    shipment_type=shipment_type,
+                    total_weight_kg=total_weight_kg,
+                    movement_blob=movement_file.getvalue() if movement_file else None,
+                    movement_filename=movement_file.name if movement_file else None,
+                    raw_files=_raw_files,
+                )
+                st.session_state[saved_state_key] = plan_id
+                st.success(f"✅ 저장 완료 (plan_id={plan_id}) — 쿠팡 양식 다운로드 가능")
+                st.rerun()
+            except Exception as ex:
+                st.error(f"저장 실패: {ex}")
+        return
+
+    # 저장 직후 — 쿠팡 입고생성 양식.xlsx 생성 + 다운로드
+    st.success(
+        f"✅ 저장 완료 (plan_id={last_saved}). "
+        "아래 쿠팡 입고생성 양식 다운로드 후 쿠팡 Wing 에 업로드. "
+        "탭 2 (결과물 패키지) 에서 검수 + 물류센터 전달 패키지 진행."
+    )
+
+    if not template_file:
+        st.error("쿠팡 입고생성 양식 파일이 없습니다. 위에서 재업로드 필요.")
+        return
+
+    # 저장된 plan 의 items 에서 ExportItem 생성
+    # save_df 사용 (이미 allocated_df + 편집본 머지 상태)
+    save_df = allocated_df.copy()
+    for _, erow in edited.iterrows():
+        opt = int(erow["coupang_option_id"])
+        mask = save_df["coupang_option_id"] == opt
+        save_df.loc[mask, "inbound_final"] = ni(erow["inbound_final"]) or 0
+
+    export_items: list[ExportItem] = []
+    for _, row in save_df.iterrows():
+        qty = int(row["inbound_final"] or 0)
+        if qty <= 0:
+            continue
+        own_bc = row.get("own_wms_barcode")
+        shelf = row.get("shelf_life_days")
+        wms_short = row.get("selected_batch_expiry")
+        if wms_short:
+            exp_d, man_d = dates_from_batch(wms_short, shelf)
+        else:
+            exp_d, man_d = default_expiry_dates(shelf)
+        export_items.append(ExportItem(
+            coupang_option_id=int(row["coupang_option_id"]),
+            inbound_qty=qty,
+            shelf_life_days=int(shelf) if shelf else None,
+            expiry_date=exp_d,
+            manufacture_date=man_d,
+            wms_barcode=own_bc,
+            product_name=row.get("product_name"),
+        ))
+
+    if not export_items:
+        st.warning("입고 수량 > 0 인 SKU 가 없어 양식을 생성하지 않습니다.")
+        return
+
+    try:
+        xlsx_bytes, missing = fill_coupang_template(
+            io.BytesIO(template_file.getvalue()),
+            export_items,
+            delete_non_target=True,
         )
+    except Exception as ex:
+        st.error(f"쿠팡 양식 생성 실패: {ex}")
+        return
+
+    out_name = f"generated_excel_{_date.today().isoformat()}.xlsx"
+    st.download_button(
+        f"📥 쿠팡 입고생성 양식 다운로드 ({out_name})",
+        data=xlsx_bytes,
+        file_name=out_name,
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        type="primary", width="stretch",
+        key=f"rg_{brand}_dl_coupang",
+    )
+
+    if missing:
+        st.warning(
+            f"⚠️ {len(missing)}건 누락 (쿠팡 양식에 없는 옵션 ID). "
+            "쿠팡 입고생성 파일을 새로 받아 업로드 필요."
+        )
+        with st.expander("누락 옵션 목록", expanded=False):
+            st.dataframe(pd.DataFrame(missing), width="stretch", hide_index=True)
+
+    # 새 작업 시작 버튼
+    if st.button(
+        "🔄 새 작업 시작 (이 plan 저장 상태 클리어)",
+        key=f"rg_{brand}_clear_saved",
+        help="저장된 plan 은 그대로 DB에 남고, 화면만 신규 작업 모드로 초기화.",
+    ):
+        st.session_state.pop(saved_state_key, None)
+        # 편집 세션도 cleanup
+        for _k in list(st.session_state.keys()):
+            if isinstance(_k, str) and _k.startswith(f"rg_{brand}_inbound_final::"):
+                st.session_state.pop(_k, None)
+        st.rerun()
