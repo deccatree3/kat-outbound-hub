@@ -155,7 +155,7 @@ def build_eza_waybill_from_triples(triples: List[tuple]) -> bytes:
     ws_out.title = 'Sheet1'
     ws_out.cell(1, 1, '택배사')
     ws_out.cell(1, 4, '송장번호')
-    ws_out.cell(1, 5, '관리번호')
+    ws_out.cell(1, 5, '주문번호')
     for letter, w in [('A', 13), ('B', 13), ('C', 13), ('D', 15), ('E', 13)]:
         ws_out.column_dimensions[letter].width = w
 
