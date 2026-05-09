@@ -806,7 +806,8 @@ def render(brand: str):
         # 정수면 정수, 아니면 소수점 1자리
         return f"{int(v):,}" if float(v).is_integer() else f"{v:,.1f}"
 
-    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
+    # 팔레트 컬럼 폭을 1.5배로 확장 (소수점 표현 텍스트 잘림 방지)
+    col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns([1, 1, 1.5, 1, 1])
     col_s1.metric("확정 수량 (낱개)", f"{confirmed_qty:,}")
     col_s2.metric("확정 박스수", _fmt_boxes(confirmed_boxes_sum))
     if _pallet_sz:
@@ -818,13 +819,10 @@ def render(brand: str):
         pallet_full = 0
         pallet_remainder = confirmed_boxes_sum
     if pallet_remainder == 0 and pallet_full > 0:
-        pallet_value = str(pallet_full)
-        pallet_delta = "(꽉참)"
+        pallet_disp = f"{pallet_full} (꽉참)"
     else:
-        pallet_value = f"{pallet_decimal:.2f}"
-        pallet_delta = f"{pallet_full}+{_fmt_boxes(pallet_remainder)}박스"
-    # 메인 값은 짧게 (0.99), 세부는 delta(작은 글씨)로 분리해 컬럼 폭 절약
-    col_s3.metric("팔레트", pallet_value, delta=pallet_delta, delta_color="off")
+        pallet_disp = f"{pallet_decimal:.2f}({pallet_full}+{_fmt_boxes(pallet_remainder)}박스)"
+    col_s3.metric("팔레트", pallet_disp)
     col_s4.metric(
         "총중량 (kg)",
         f"{total_weight_kg:,.1f}",
