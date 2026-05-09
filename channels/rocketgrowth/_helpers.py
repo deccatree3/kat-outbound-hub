@@ -247,11 +247,22 @@ def save_plan(
                 )
             )
         if raw_files:
+            # (plan_id, file_type) unique constraint 회피 — merge 는 PK 만 보고 dedup
             for ftype, (fname, fbytes) in raw_files.items():
-                session.merge(PlanFile(
-                    plan_id=plan.id, file_type=ftype,
-                    file_name=fname, content=fbytes,
-                ))
+                existing_pf = session.execute(
+                    select(PlanFile).where(
+                        PlanFile.plan_id == plan.id,
+                        PlanFile.file_type == ftype,
+                    )
+                ).scalar_one_or_none()
+                if existing_pf:
+                    existing_pf.file_name = fname
+                    existing_pf.content = fbytes
+                else:
+                    session.add(PlanFile(
+                        plan_id=plan.id, file_type=ftype,
+                        file_name=fname, content=fbytes,
+                    ))
         session.commit()
         return plan.id
 
