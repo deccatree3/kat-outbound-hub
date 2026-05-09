@@ -818,10 +818,13 @@ def render(brand: str):
         pallet_full = 0
         pallet_remainder = confirmed_boxes_sum
     if pallet_remainder == 0 and pallet_full > 0:
-        pallet_disp = f"{pallet_full} (꽉참)"
+        pallet_value = str(pallet_full)
+        pallet_delta = "(꽉참)"
     else:
-        pallet_disp = f"{pallet_decimal:.2f}({pallet_full}+{_fmt_boxes(pallet_remainder)}박스)"
-    col_s3.metric("팔레트", pallet_disp)
+        pallet_value = f"{pallet_decimal:.2f}"
+        pallet_delta = f"{pallet_full}+{_fmt_boxes(pallet_remainder)}박스"
+    # 메인 값은 짧게 (0.99), 세부는 delta(작은 글씨)로 분리해 컬럼 폭 절약
+    col_s3.metric("팔레트", pallet_value, delta=pallet_delta, delta_color="off")
     col_s4.metric(
         "총중량 (kg)",
         f"{total_weight_kg:,.1f}",
