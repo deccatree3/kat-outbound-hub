@@ -32,7 +32,7 @@ from rocketgrowth.export import (
     ExportItem, dates_from_batch, default_expiry_dates, fill_coupang_template,
 )
 from rocketgrowth.models import (
-    CoupangProduct, CoupangResultLog, InboundPlan, InboundPlanItem, WmsProduct,
+    CoupangProduct, CoupangResultLog, InboundPlan, InboundPlanItem, PlanFile, WmsProduct,
 )
 from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
 from rocketgrowth.pallet_assign import (
