@@ -842,7 +842,7 @@ def render(brand: str):
     st.divider()
     import streamlit.components.v1 as components
     if st.button(
-        "🚚 다음 단계 → 송장 후처리",
+        "다음 단계 →",
         key=f"pkg_{brand}_goto_invoice",
         type="primary",
         width="stretch",

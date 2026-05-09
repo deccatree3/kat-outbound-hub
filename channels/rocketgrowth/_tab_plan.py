@@ -979,7 +979,7 @@ def render(brand: str):
     # 다음 단계 (결과물 패키지 탭으로 이동) — 스크롤 없이 탭 전환
     import streamlit.components.v1 as components
     if st.button(
-        "📦 다음 단계 → 결과물 패키지",
+        "다음 단계 →",
         key=f"rg_{brand}_goto_pack",
         type="primary",
         width="stretch",
