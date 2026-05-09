@@ -79,8 +79,9 @@ def _render_context_bar(plan: InboundPlan, has_attach_pdf: bool = False) -> str:
     )
 
 
-def _select_plan(brand_company: str) -> InboundPlan | None:
-    """업체별 plan dropdown — 방금 저장한 plan_id (session) 우선 자동 선택."""
+def _select_plan(brand: str, brand_company: str) -> InboundPlan | None:
+    """업체별 plan dropdown. 기본값은 sentinel(미선택). 단, 다른 탭의
+    '다음 단계 →' 버튼이 set 한 pending_pick_plan_id 가 있으면 자동 선택."""
     with get_session() as s:
         plans = s.execute(
             select(InboundPlan)
@@ -112,12 +113,20 @@ def _select_plan(brand_company: str) -> InboundPlan | None:
             + (f" · {p.fc_name}" if p.fc_name else "")
         )
 
+    # 다른 탭의 '다음 단계 →' 가 set 한 pending plan 이 있으면 selectbox 에 1회 적용
+    sel_key = f"pkg_{brand_company}_plan_select"
+    pending = st.session_state.pop(f"rg_{brand}_pending_pkg_pick", None)
+    if pending is not None:
+        target = next((i for i, p in enumerate(plans) if p.id == pending), None)
+        if target is not None:
+            st.session_state[sel_key] = target
+
     sel = st.selectbox(
         "발주 계획 선택",
         options=[SENTINEL] + list(range(len(plans))),
         format_func=lambda o: labels[o],
-        index=0,  # 항상 sentinel default — 자동 선택 X
-        key=f"pkg_{brand_company}_plan_select",
+        index=0,  # 사용자가 직접 진입한 경우 sentinel
+        key=sel_key,
     )
     if sel == SENTINEL:
         return None
@@ -149,7 +158,7 @@ def render(brand: str):
     cfg = load_config()
     brand_company = _BRAND_TO_COMPANY[brand]
 
-    plan = _select_plan(brand_company)
+    plan = _select_plan(brand, brand_company)
     if plan is None:
         return
 
@@ -693,6 +702,7 @@ def render(brand: str):
                 help="물류센터 출고 요청 탭으로 이동.",
                 key=f"pkg_{brand}_goto_dispatch_{plan.id}",
             ):
+                st.session_state[f"rg_{brand}_pending_dispatch_pick"] = plan.id
                 components.html(
                     """
                     <script>

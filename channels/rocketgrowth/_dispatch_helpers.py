@@ -62,12 +62,21 @@ def select_dispatch_plan(brand: str, brand_company: str, key_suffix: str = "") -
             + (f" · {SHIPMENT_LABELS.get(p.shipment_type or '', p.shipment_type or '')}")
         )
 
+    # 다른 탭의 '다음 단계 →' 가 set 한 pending plan 이 있으면 selectbox 에 1회 적용
+    # key_suffix='dispatch' (탭 3) / 'invoice' (탭 4) 별로 분리
+    sel_key = f"disp_{brand}_{key_suffix}_plan_select"
+    pending = st.session_state.pop(f"rg_{brand}_pending_{key_suffix}_pick", None)
+    if pending is not None:
+        target = next((i for i, p in enumerate(plans) if p.id == pending), None)
+        if target is not None:
+            st.session_state[sel_key] = target
+
     sel = st.selectbox(
         "발주 계획 선택",
         options=[SENTINEL] + list(range(len(plans))),
         format_func=lambda o: labels[o],
-        index=0,  # 항상 sentinel default — 자동 선택 X
-        key=f"disp_{brand}_{key_suffix}_plan_select",
+        index=0,  # 사용자가 직접 진입한 경우 sentinel
+        key=sel_key,
     )
     if sel == SENTINEL:
         return None

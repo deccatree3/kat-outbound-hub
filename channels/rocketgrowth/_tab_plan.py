@@ -292,7 +292,8 @@ def _render_saved_plan_view(brand: str, brand_company: str, plan_id: int):
         width="stretch",
         help="결과물 패키지 탭으로 이동.",
     ):
-        # 탭 2 의 plan picker 가 이 plan_id 를 자동 선택하도록 session 저장
+        # 탭 2 의 plan picker 가 이 plan_id 를 자동 선택
+        st.session_state[f'rg_{brand}_pending_pkg_pick'] = plan_id
         st.session_state[f'rg_{brand}_last_saved_plan_id'] = plan_id
         components.html(
             """
@@ -1360,6 +1361,8 @@ def render(brand: str):
         width="stretch",
         help="결과물 패키지 탭으로 자동 이동 + 페이지 상단으로 스크롤.",
     ):
+        if last_saved:
+            st.session_state[f"rg_{brand}_pending_pkg_pick"] = last_saved
         components.html(
             """
             <script>

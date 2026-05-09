@@ -158,6 +158,7 @@ def render(brand: str):
         width="stretch",
         help="송장 후처리 탭으로 자동 이동.",
     ):
+        st.session_state[f"rg_{brand}_pending_invoice_pick"] = plan.id
         # tab index: 0=발주계획, 1=쿠팡입고생성, 2=물류센터출고요청, 3=송장후처리
         components.html(
             """
