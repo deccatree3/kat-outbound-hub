@@ -299,29 +299,37 @@ def load_plan_files(plan_id: int) -> dict[str, tuple[str, bytes]]:
 STATUS_LABELS = {
     "draft": "📝 임시저장",
     "qty_confirmed": "📋 수량확정",
+    "inbound_confirmed": "📦 입고확정",
     "verified": "✅ 발주확정",
     "completed": "🏁 완료",
 }
+
+# 입고확정 이상이면 수량 잠금 (탭 1 수량확정 버튼 disabled)
+QTY_LOCKED_STATUSES = {"inbound_confirmed", "verified", "completed"}
 
 
 def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
     """plan 의 status + 시그널을 종합한 세부 상태 라벨.
 
     상태 흐름:
-      draft → qty_confirmed → (검수 진행중) → verified → completed
+      draft → qty_confirmed → inbound_confirmed → (검수 진행중) → verified → completed
 
-    - draft         + attach 없음 → 📝 임시저장
-    - draft         + attach 있음 → 📝 검수 진행중
-    - qty_confirmed + attach 없음 → 📋 수량확정
-    - qty_confirmed + attach 있음 → 📝 검수 진행중
-    - verified                    → ✅ 발주확정
-    - completed                   → 🏁 완료
+    - draft             + attach 없음 → 📝 임시저장
+    - qty_confirmed     + attach 없음 → 📋 수량확정
+    - inbound_confirmed + attach 없음 → 📦 입고확정
+    - draft/qty/inbound + attach 있음 → 📝 검수 진행중
+    - verified                        → ✅ 발주확정
+    - completed                       → 🏁 완료
     """
     s = plan.status or "draft"
-    if s in ("draft", "qty_confirmed"):
+    if s in ("draft", "qty_confirmed", "inbound_confirmed"):
         if has_attach_pdf:
             return "📝 검수 진행중"
-        return "📋 수량확정" if s == "qty_confirmed" else "📝 임시저장"
+        if s == "inbound_confirmed":
+            return "📦 입고확정"
+        if s == "qty_confirmed":
+            return "📋 수량확정"
+        return "📝 임시저장"
     if s == "verified":
         return "✅ 발주확정"
     if s == "completed":

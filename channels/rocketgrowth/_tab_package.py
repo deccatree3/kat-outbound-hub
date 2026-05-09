@@ -251,6 +251,63 @@ def render(brand: str):
         },
     )
 
+    # ─── 입고생성 확정 + 다음 단계 버튼 (① 와 ② 사이) ────────
+    st.divider()
+    _is_inbound_confirmed = (plan.status or "") in (
+        "inbound_confirmed", "verified", "completed"
+    )
+    btn_cols = st.columns(2)
+    with btn_cols[0]:
+        if _is_inbound_confirmed:
+            st.button(
+                "✅ 입고생성 확정됨",
+                disabled=True, width="stretch",
+                help=f"plan #{plan.id} 입고확정 완료 — 수량 수정 불가.",
+                key=f"pkg_{brand}_inbound_done_{plan.id}",
+            )
+        else:
+            if st.button(
+                "입고생성 확정",
+                type="primary", width="stretch",
+                help="쿠팡 Wing 입고생성 후 클릭. 상태=입고확정으로 변경 + 수량 잠금.",
+                key=f"pkg_{brand}_inbound_confirm_{plan.id}",
+            ):
+                try:
+                    with get_session() as _ic_s:
+                        _p = _ic_s.get(InboundPlan, plan.id)
+                        _p.status = "inbound_confirmed"
+                        _ic_s.commit()
+                    st.success(f"✅ 입고확정 (plan #{plan.id}). 수량 잠금됨.")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"입고확정 실패: {ex}")
+    with btn_cols[1]:
+        import streamlit.components.v1 as components
+        if st.button(
+            "다음 단계 →",
+            disabled=(not _is_inbound_confirmed),
+            width="stretch",
+            type="primary" if _is_inbound_confirmed else "secondary",
+            help="② 결과물 검수 섹션으로 스크롤.",
+            key=f"pkg_{brand}_next_to_verify_{plan.id}",
+        ):
+            # ② subheader 까지 스크롤
+            components.html(
+                """
+                <script>
+                const labels = window.parent.document.querySelectorAll('h3');
+                for (const el of labels) {
+                    if (el.innerText && el.innerText.indexOf('② 쿠팡 입고생성 결과물 검수') !== -1) {
+                        el.scrollIntoView({behavior: 'smooth', block: 'start'});
+                        break;
+                    }
+                }
+                </script>
+                """,
+                height=0,
+            )
+    st.divider()
+
     # ─── SecondaryItem + PalletAssignment 빌드 ─────────────
     sec_items: list[SecondaryItem] = []
     for it in items:
@@ -350,12 +407,28 @@ def render(brand: str):
         invoice_pdf = io.BytesIO(b)
         invoice_pdf.name = n
 
-    pdf_status = (
-        f"바코드 라벨: {'✅' if label_pdf else '❌'} · "
-        f"부착 문서: {'✅' if attach_pdf else '❌'} · "
-        f"동봉 문서: {'✅' if invoice_pdf else '⚪'}"
-    )
-    st.caption(pdf_status)
+    # PDF 상태 — 이전 업로드된 파일이 있으면 명시
+    def _pdf_disp(name, file_obj, db_key):
+        if file_obj is None:
+            return f"❌ {name} 미업로드"
+        fname = getattr(file_obj, 'name', '?')
+        prev = (db_key in plan_files
+                and not (pdf_up and any(
+                    db_key.replace("_pdf", "") in (f.name or '').lower()
+                    or "물류부착" in (f.name or '') and db_key == "attach_pdf"
+                    or "물류동봉" in (f.name or '') and db_key == "invoice_pdf"
+                    for f in pdf_up
+                )))
+        src = " (이전 저장됨)" if prev else " (방금 업로드)"
+        return f"✅ {name}: `{fname}`{src}"
+
+    st.caption("📎 PDF 상태:")
+    for line in [
+        _pdf_disp("바코드 라벨", label_pdf, "label_pdf"),
+        _pdf_disp("부착 문서", attach_pdf, "attach_pdf"),
+        _pdf_disp("동봉 문서", invoice_pdf, "invoice_pdf"),
+    ]:
+        st.caption(line)
 
     if not (label_pdf and attach_pdf):
         st.info("바코드 라벨 PDF + 부착 문서 PDF 업로드 필요. 동봉 문서는 혼적 박스 있을 때만.")

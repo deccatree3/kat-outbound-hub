@@ -33,8 +33,8 @@ from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
 from sqlalchemy import desc
 
 from channels.rocketgrowth._helpers import (
-    derive_substatus_label, ni, load_plan_files, resolve_parent_barcode,
-    save_plan, section_note,
+    QTY_LOCKED_STATUSES, derive_substatus_label, ni, load_plan_files,
+    resolve_parent_barcode, save_plan, section_note,
 )
 
 
@@ -1160,6 +1160,20 @@ def render(brand: str):
             disabled=True, width="stretch",
             help="재고 부족 SKU 해결 후 활성화.",
             key=f"rg_{brand}_qty_btn_blocked",
+        )
+        return
+
+    # 입고확정 이상 plan 은 수량 잠금 (버튼 비활성)
+    qty_locked = (
+        selected_plan_obj is not None
+        and (selected_plan_obj.status or "") in QTY_LOCKED_STATUSES
+    )
+    if qty_locked:
+        st.button(
+            f"수량확정 ({confirmed_qty:,}개) — 입고확정 이후 수정 불가",
+            disabled=True, width="stretch",
+            help=f"plan #{selected_plan_obj.id} 상태={selected_plan_obj.status}. 수량 변경 불가.",
+            key=f"rg_{brand}_qty_btn_locked",
         )
         return
 
