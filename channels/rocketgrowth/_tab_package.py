@@ -228,9 +228,9 @@ def render(brand: str):
     # FC / 송장ID / 입고예정일 은 검수 단계에서 첨부문서 파싱 결과로 보정됨.
     meta = _derive_meta(plan)
 
-    # ─── ② 쿠팡 입고생성 계획 요약 ───────────────────
+    # ─── ① 쿠팡 입고생성 계획 ───────────────────
     import math as _math
-    st.subheader("① 쿠팡 입고생성 계획 요약")
+    st.subheader("① 쿠팡 입고생성 계획")
     section_note("아래 계획대로 Wing에서 입고생성을 해주세요.")
 
     # 메트릭 — 박스수/팔레트 ceil 기반 (탭 1 과 동일)
@@ -265,17 +265,21 @@ def render(brand: str):
             f"{(cp_master_by_opt.get(i.coupang_option_id).product_name if cp_master_by_opt.get(i.coupang_option_id) else (i.product_name or ''))} "
             f"{(cp_master_by_opt.get(i.coupang_option_id).option_name if cp_master_by_opt.get(i.coupang_option_id) else (i.option_name or ''))}"
         ).strip(),
-        "소비기한": i.wms_short_expiry,
         "상품수": i.inbound_qty_final,
+        "box인입": i.box_qty,
         "박스수": _math.ceil((i.inbound_qty_final or 0) / max(int(i.box_qty or 1), 1)),
+        "소비기한": i.wms_short_expiry,
     } for i in items])
     st.dataframe(
         plan_df, width="stretch", hide_index=True, height=380,
         column_config={
             "상품명": st.column_config.TextColumn("상품명", width="large"),
-            "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),
             "상품수": st.column_config.NumberColumn("상품수", format="%d"),
+            "box인입": st.column_config.NumberColumn(
+                "box인입", format="%d", help="박스 1개당 들어가는 상품 수",
+            ),
             "박스수": st.column_config.NumberColumn("박스수", format="%d"),
+            "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),
         },
     )
 
