@@ -541,17 +541,30 @@ def render(brand: str):
 
         check_rows.append({
             "옵션ID": sku.coupang_option_id,
+            "SKU ID": sku.sku_id,
             "상품명": sku.product_name or "",
             "수량": sku.inbound_qty,
-            "라벨": "✅" if label_ok is True else ("—" if label_ok == "—" else "❌"),
+            "소비기한": sku.expected_expiry,
+            "거래명세서 수량": inv_match.confirmed_qty if inv_match else None,
+            "상품일치": "✅" if name_ok else ("—" if name_ok is None else "❌"),
+            "발주수량": "✅" if qty_ok else ("—" if qty_ok is None else "❌"),
+            "소비기한 일치": "✅" if exp_ok else ("—" if exp_ok is None else "❌"),
+            "라벨 인쇄": "✅" if label_ok is True else ("—" if label_ok == "—" else "❌"),
             "라벨 소비기한": "✅" if label_exp_ok is True else ("—" if label_exp_ok == "—" else "❌"),
-            "거래명세서 상품": "✅" if name_ok else ("⚪" if name_ok is None else "❌"),
-            "거래명세서 수량": "✅" if qty_ok else ("⚪" if qty_ok is None else "❌"),
-            "거래명세서 소비기한": "✅" if exp_ok else ("⚪" if exp_ok is None else "❌"),
         })
 
-    with st.expander(f"SKU별 검수 결과 ({len(check_rows)} 건)", expanded=True):
-        st.dataframe(pd.DataFrame(check_rows), width="stretch", hide_index=True)
+    st.dataframe(
+        pd.DataFrame(check_rows),
+        width="stretch", hide_index=True,
+        column_config={
+            "옵션ID": st.column_config.NumberColumn("옵션ID", format="%d"),
+            "SKU ID": st.column_config.NumberColumn("SKU ID", format="%d"),
+            "상품명": st.column_config.TextColumn("상품명", width="large"),
+            "수량": st.column_config.NumberColumn("수량", format="%d"),
+            "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),
+            "거래명세서 수량": st.column_config.NumberColumn("거래명세서 수량", format="%d"),
+        },
+    )
 
     # ─── 발주 확정 ────────────────────────────────────────
     st.divider()
