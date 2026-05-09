@@ -264,6 +264,24 @@ def load_plan_files(plan_id: int) -> dict[str, tuple[str, bytes]]:
 STATUS_LABELS = {"draft": "📝 임시저장", "verified": "✅ 발주확정", "completed": "🏁 완료"}
 
 
+def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
+    """plan 의 status + 시그널을 종합한 세부 상태 라벨.
+
+    - draft + attach_pdf 없음 → '📝 임시저장'
+    - draft + attach_pdf 있음 → '📝 검수 진행중'
+    - verified                → '✅ 발주확정'
+    - completed               → '🏁 완료'
+    """
+    s = plan.status or "draft"
+    if s == "draft":
+        return "📝 검수 진행중" if has_attach_pdf else "📝 임시저장"
+    if s == "verified":
+        return "✅ 발주확정"
+    if s == "completed":
+        return "🏁 완료"
+    return f"❓ {s}"
+
+
 def section_note(text: str) -> None:
     """섹션 헤더 아래 안내 — 좌측 파란 테두리 + 옅은 파란 배경."""
     import streamlit as st

@@ -26,13 +26,15 @@ from rocketgrowth.export import (
 )
 from rocketgrowth.ingestion.coupang_file import parse_coupang_inventory_file
 from rocketgrowth.ingestion.wms_file import aggregate_wms_by_barcode, parse_wms_inventory_file
-from rocketgrowth.models import CoupangProduct, WmsProduct
+from rocketgrowth.models import CoupangProduct, InboundPlan, InboundPlanItem, PlanFile, WmsProduct
 from rocketgrowth.planning import PlanInput, PlanParams, compute_plan, urgency_badge
 from rocketgrowth.pallet import PalletItem, optimize_to_pallet
 from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
+from sqlalchemy import desc
 
 from channels.rocketgrowth._helpers import (
-    ni, resolve_parent_barcode, save_plan, section_note,
+    derive_substatus_label, ni, load_plan_files, resolve_parent_barcode,
+    save_plan, section_note,
 )
 
 
@@ -120,6 +122,178 @@ def _extract_template_option_ids(template_file) -> set[int]:
             pass
 
 
+def _render_plan_picker(brand: str, brand_company: str) -> int | None:
+    """발주 계획 dropdown — '+ 신규' + 기존 plan 목록.
+
+    반환:
+      None  → 신규 계획 (현재 동작 유지)
+      int   → 선택된 plan_id (조회 모드)
+    """
+    with get_session() as s:
+        plans = s.execute(
+            select(InboundPlan)
+            .where(InboundPlan.company_name == brand_company)
+            .order_by(desc(InboundPlan.id)).limit(30)
+        ).scalars().all()
+
+    if not plans:
+        # 첫 사용자 — 픽커 숨기고 바로 신규 모드
+        return None
+
+    # 각 plan 의 attach_pdf 보유 여부 (검수 진행중 / 임시저장 구분용)
+    plan_ids = [p.id for p in plans]
+    with get_session() as s:
+        attach_rows = s.execute(
+            select(PlanFile.plan_id).where(
+                PlanFile.plan_id.in_(plan_ids),
+                PlanFile.file_type == "attach_pdf",
+            )
+        ).scalars().all()
+    has_attach = set(attach_rows)
+
+    NEW = "__new__"
+    options: list = [NEW] + plan_ids
+
+    def _label(opt):
+        if opt == NEW:
+            return "+ 신규 계획"
+        p = next((p for p in plans if p.id == opt), None)
+        if not p:
+            return f"#{opt}"
+        sub = derive_substatus_label(p, has_attach_pdf=(p.id in has_attach))
+        date_str = str(p.plan_date or "")
+        fc_str = f" · FC {p.fc_name}" if p.fc_name else ""
+        return f"#{p.id} {sub} · {date_str}{fc_str}"
+
+    sel = st.selectbox(
+        "발주 계획 선택",
+        options=options,
+        format_func=_label,
+        index=0,  # default = 신규 계획
+        key=f"rg_{brand}_tab1_plan_picker",
+    )
+    return None if sel == NEW else int(sel)
+
+
+def _render_saved_plan_view(brand: str, brand_company: str, plan_id: int):
+    """저장된 plan 의 발주계획 내용 조회 — 메트릭 + SKU + 파일 + 다음 단계."""
+    import math as _math
+    cfg = load_config()
+    with get_session() as s:
+        plan = s.get(InboundPlan, plan_id)
+        if plan is None:
+            st.error(f"plan #{plan_id} 을 찾지 못했습니다.")
+            return
+        items = s.execute(
+            select(InboundPlanItem).where(InboundPlanItem.plan_id == plan_id)
+            .order_by(InboundPlanItem.coupang_option_id)
+        ).scalars().all()
+
+    plan_files = load_plan_files(plan_id)
+    sub_label = derive_substatus_label(plan, has_attach_pdf=("attach_pdf" in plan_files))
+
+    # 컨텍스트 바
+    fc = plan.fc_name or "미정"
+    arr = plan.arrival_date or "미정"
+    worker = plan.worker or "미정"
+    milkrun = plan.milkrun_id or "미정"
+    parts = [
+        f'<span style="background:#fef3c7; color:#92400e; padding:3px 8px; '
+        f'border-radius:4px; font-weight:700;">#{plan.id}</span>',
+        f'<span>{sub_label}</span>',
+        f'<span><b>업체</b> {plan.company_name}</span>',
+        f'<span><b>FC</b> {fc}</span>',
+        f'<span><b>입고일</b> {arr}</span>',
+        f'<span><b>작업자</b> {worker}</span>',
+        f'<span><b>milkrun_id</b> {milkrun}</span>',
+    ]
+    st.markdown(
+        '<div style="display:flex; flex-wrap:wrap; gap:12px; align-items:center; '
+        'padding:8px 12px; background:#f9fafb; border:1px solid #e5e7eb; '
+        'border-radius:6px; margin:0 0 10px 0; font-size:0.92em;">'
+        + "".join(parts) + "</div>",
+        unsafe_allow_html=True,
+    )
+
+    if not items:
+        st.warning("이 plan 에 저장된 SKU 가 없습니다.")
+        return
+
+    # 메트릭
+    total_qty = sum(int(i.inbound_qty_final or 0) for i in items)
+    active = [i for i in items if (i.inbound_qty_final or 0) > 0]
+    total_boxes = sum(
+        _math.ceil((i.inbound_qty_final or 0) / max(int(i.box_qty or 1), 1))
+        for i in active
+    )
+    psz = cfg.pallet_size_boxes
+    pallet_decimal = (total_boxes / psz) if psz else 0.0
+    pallet_full = (total_boxes // psz) if psz else 0
+    pallet_remainder = total_boxes - pallet_full * psz if psz else total_boxes
+    if pallet_remainder == 0 and pallet_full > 0:
+        pallet_disp = f"{pallet_full} (꽉참)"
+    else:
+        pallet_disp = f"{pallet_decimal:.2f}({pallet_full}+{pallet_remainder}박스)"
+    weight_kg = float(plan.total_weight_kg) if plan.total_weight_kg else 0.0
+
+    c1, c2, c3, c4, c5 = st.columns([1, 1, 1.5, 1, 1])
+    c1.metric("확정 수량 (낱개)", f"{total_qty:,}")
+    c2.metric("확정 박스수", f"{total_boxes:,}")
+    c3.metric("팔레트", pallet_disp)
+    c4.metric("총중량 (kg)", f"{weight_kg:,.1f}")
+    c5.metric("대상 SKU", f"{len(active)}")
+
+    # SKU 목록
+    with st.expander(f"📋 SKU 목록 ({len(items)}건)", expanded=False):
+        df_items = pd.DataFrame([{
+            "옵션ID": i.coupang_option_id,
+            "상품명": i.product_name,
+            "확정(낱개)": i.inbound_qty_final,
+            "확정(box)": _math.ceil((i.inbound_qty_final or 0) / max(int(i.box_qty or 1), 1)),
+            "박스인입": i.box_qty,
+            "7일판매": i.sales_7d,
+            "30일판매": i.sales_30d,
+            "팔레트번호": i.pallet_no,
+        } for i in items])
+        st.dataframe(df_items, width="stretch", hide_index=True, height=320)
+
+    # 업로드된 파일 목록
+    if plan_files:
+        with st.expander(f"📎 업로드된 파일 ({len(plan_files)}개)", expanded=False):
+            for ftype, (fname, fbytes) in plan_files.items():
+                st.download_button(
+                    f"{ftype} — {fname} ({len(fbytes) / 1024:,.1f} KB)",
+                    data=fbytes,
+                    file_name=fname,
+                    key=f"rg_{brand}_savedview_dl_{plan_id}_{ftype}",
+                )
+
+    # 다음 단계 버튼 (탭 2 결과물 패키지로 이동)
+    st.divider()
+    import streamlit.components.v1 as components
+    if st.button(
+        "다음 단계 →",
+        key=f"rg_{brand}_savedview_next_{plan_id}",
+        type="primary",
+        width="stretch",
+        help="결과물 패키지 탭으로 이동.",
+    ):
+        # 탭 2 의 plan picker 가 이 plan_id 를 자동 선택하도록 session 저장
+        st.session_state[f'rg_{brand}_last_saved_plan_id'] = plan_id
+        components.html(
+            """
+            <script>
+            const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+            if (tabs.length > 1) {
+                tabs[1].click();
+                window.parent.scrollTo({top: 0, behavior: 'smooth'});
+            }
+            </script>
+            """,
+            height=0,
+        )
+
+
 def render(brand: str):
     """탭 1 메인 진입점.
 
@@ -127,6 +301,12 @@ def render(brand: str):
     """
     cfg = load_config()
     brand_company = _BRAND_TO_COMPANY[brand]
+
+    # ─── 0. 발주 계획 선택 (신규 / 기존) ──────────────────
+    selected_plan_id = _render_plan_picker(brand, brand_company)
+    if selected_plan_id is not None:
+        _render_saved_plan_view(brand, brand_company, selected_plan_id)
+        return
 
     plan_params = PlanParams(
         lead_time_days=cfg.lead_time_days,

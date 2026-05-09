@@ -48,7 +48,8 @@ from rocketgrowth.verification import (
 )
 
 from channels.rocketgrowth._helpers import (
-    STATUS_LABELS, load_plan_files, resolve_parent_barcode, save_plan_files, section_note,
+    STATUS_LABELS, derive_substatus_label, load_plan_files, resolve_parent_barcode,
+    save_plan_files, section_note,
 )
 
 
@@ -58,10 +59,10 @@ _BRAND_TO_COMPANY = {
 }
 
 
-def _render_context_bar(plan: InboundPlan) -> str:
+def _render_context_bar(plan: InboundPlan, has_attach_pdf: bool = False) -> str:
     """회차 컨텍스트 바 — plan 메타 한 줄 표시."""
     sid = f"#{plan.id}"
-    status_label = STATUS_LABELS.get(plan.status or "draft", plan.status or "?")
+    status_label = derive_substatus_label(plan, has_attach_pdf=has_attach_pdf)
     company = plan.company_name or "—"
     fc = plan.fc_name or "미정"
     arr = plan.arrival_date or "미정"  # 첨부문서 파싱 전엔 미정
@@ -98,9 +99,20 @@ def _select_plan(brand_company: str) -> InboundPlan | None:
         st.info(f"📭 **{brand_company}** 의 저장된 plan 이 없습니다. 탭 1 에서 먼저 발주 계획 저장 필요.")
         return None
 
+    # attach_pdf 보유 여부 (검수 진행중 vs 임시저장 구분)
+    plan_ids = [p.id for p in plans]
+    with get_session() as s:
+        attach_rows = s.execute(
+            select(PlanFile.plan_id).where(
+                PlanFile.plan_id.in_(plan_ids),
+                PlanFile.file_type == "attach_pdf",
+            )
+        ).scalars().all()
+    has_attach = set(attach_rows)
+
     options = [
-        f"#{p.id} {STATUS_LABELS.get(p.status, p.status)} · {p.company_name} · "
-        f"{p.arrival_date or p.plan_date or ''}"
+        f"#{p.id} {derive_substatus_label(p, has_attach_pdf=(p.id in has_attach))} · "
+        f"{p.company_name} · {p.arrival_date or p.plan_date or ''}"
         + (f" · {p.fc_name}" if p.fc_name else "")
         for p in plans
     ]
@@ -160,7 +172,11 @@ def render(brand: str):
     if plan is None:
         return
 
-    st.markdown(_render_context_bar(plan), unsafe_allow_html=True)
+    plan_files = load_plan_files(plan.id)
+    st.markdown(
+        _render_context_bar(plan, has_attach_pdf=("attach_pdf" in plan_files)),
+        unsafe_allow_html=True,
+    )
 
     # ─── 공통 데이터 로드 ──────────────────────────────────
     with get_session() as ms:
@@ -180,8 +196,6 @@ def render(brand: str):
     cp_master_by_opt = {m.coupang_option_id: m for m in cp_masters_list}
     wms_master_by_bc = {m.wms_barcode: m for m in wms_masters_list}
     wms_master_by_opt = {m.coupang_option_id: m for m in wms_masters_list if m.coupang_option_id}
-
-    plan_files = load_plan_files(plan.id)
 
     if not items:
         st.warning("이 계획에 확정 수량(>0) SKU가 없습니다. 탭 1 로 돌아가서 확정 수량 입력 후 저장.")
