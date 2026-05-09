@@ -182,7 +182,7 @@ class InboundPlan(Base):
     wms_snapshot_id: Mapped[int | None] = mapped_column(
         BigInteger, ForeignKey("wms_inventory_snapshot.id")
     )
-    status: Mapped[str] = mapped_column(String(16), default="draft")  # draft|verified|completed
+    status: Mapped[str] = mapped_column(String(32), default="draft")  # draft|qty_confirmed|inbound_confirmed|verified|completed
     note: Mapped[str | None] = mapped_column(Text)
     # 검수 단계에서 채워지는 값
     milkrun_id: Mapped[str | None] = mapped_column(String(32))
