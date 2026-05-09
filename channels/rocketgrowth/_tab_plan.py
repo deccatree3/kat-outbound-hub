@@ -379,6 +379,47 @@ def render(brand: str):
         movement_file = _DBFile(*plan_files_db["movement"]) if "movement" in plan_files_db else None
         # 수량확정 = 재확정 모드 (existing_plan_id 로 update)
         st.session_state[f"rg_{brand}_last_saved_plan_id"] = selected_plan_id
+
+        # 입고확정 전엔 기초자료 재업로드 가능 (수량확정 재확정 시 PlanFile 갱신됨)
+        from channels.rocketgrowth._helpers import QTY_LOCKED_STATUSES
+        if (selected_plan_obj.status or "") not in QTY_LOCKED_STATUSES:
+            st.markdown("##### 1-1 기초자료 (재업로드 — 선택)")
+            section_note(
+                "기존 저장된 파일이 자동 사용됩니다. 변경하려면 재업로드 (전체 4종 또는 일부)."
+            )
+            re_uploaded = st.file_uploader(
+                f"재업로드 — {brand_company}",
+                type=["xlsx", "xls"],
+                accept_multiple_files=True,
+                key=f"rg_{brand}_reupload_{selected_plan_id}",
+                label_visibility="collapsed",
+            )
+            if re_uploaded:
+                _classified, _company_groups = classify_uploaded_files(re_uploaded)
+                _group = _company_groups.get(brand_company)
+                if _group is None:
+                    st.error(
+                        f"**{brand_company}** 업체로 식별된 파일이 없습니다. "
+                        "상품 정보 관리에 해당 업체 상품이 등록되어 있는지 확인하세요."
+                    )
+                else:
+                    replaced = []
+                    if FILE_TYPE_COUPANG in _group.files:
+                        coupang_file = _group.files[FILE_TYPE_COUPANG]
+                        replaced.append(FILE_TYPE_LABELS[FILE_TYPE_COUPANG])
+                    if FILE_TYPE_WMS in _group.files:
+                        wms_file = _group.files[FILE_TYPE_WMS]
+                        replaced.append(FILE_TYPE_LABELS[FILE_TYPE_WMS])
+                    if FILE_TYPE_TEMPLATE in _group.files:
+                        template_file = _group.files[FILE_TYPE_TEMPLATE]
+                        replaced.append(FILE_TYPE_LABELS[FILE_TYPE_TEMPLATE])
+                    if FILE_TYPE_MOVEMENT in _group.files:
+                        movement_file = _group.files[FILE_TYPE_MOVEMENT]
+                        replaced.append(FILE_TYPE_LABELS[FILE_TYPE_MOVEMENT])
+                    if replaced:
+                        st.success(
+                            f"✅ 재업로드: {', '.join(replaced)} — 수량확정 재확정 시 DB 에 갱신됨."
+                        )
     else:
         # 신규 계획 — file uploader UI
         st.markdown("##### 1-1 기초자료 업로드")
