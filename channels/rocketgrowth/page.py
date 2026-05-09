@@ -7,7 +7,7 @@
   📋 1. 발주 계획         — 파일 업로드 + 발주 수량 산출 + 쿠팡 업로드 양식
   📦 2. 쿠팡 입고생성     — 쿠팡 결과물 업로드 + 검수
   🚚 3. 물류센터 출고 요청 — 취합리스트 / 팔레트적재 / 재고이동 / PDF 3종
-  🧾 4. 송장 후 처리      — 화주별 출고요청 + 다원 송장 채번 → 이지어드민 양식
+  🧾 4. 출고 후 처리      — 화주별 출고요청 + 다원 송장 채번 → 이지어드민 양식
 
 자매 프로젝트(nn-rocketgrowth_inventory) 의 단일 페이지를 4 탭으로 재구성.
 """
@@ -47,7 +47,7 @@ def _tab_dispatch(brand: str):
 
 
 def _tab_invoice(brand: str):
-    """탭 4: 송장 후 처리."""
+    """탭 4: 출고 후 처리."""
     from channels.rocketgrowth._tab_invoice import render as _render_invoice
     _render_invoice(brand)
 
@@ -67,7 +67,7 @@ def render_page(brand: str = 'nenu'):
         "📋 1. 발주 계획",
         "📦 2. 쿠팡 입고생성",
         "🚚 3. 물류센터 출고 요청",
-        "🧾 4. 송장 후 처리",
+        "🧾 4. 출고 후 처리",
     ])
     with tab_plan:
         _tab_plan(brand)
