@@ -206,8 +206,8 @@ def render(brand: str):
 
     # ─── ② 쿠팡 입고생성 계획 요약 ───────────────────
     import math as _math
-    st.subheader("쿠팡 입고생성 계획 요약")
-    section_note("탭 1 에서 저장한 발주 계획 요약. 필요 시 양식 재생성 가능.")
+    st.subheader("① 쿠팡 입고생성 계획 요약")
+    section_note("아래 계획대로 Wing에서 입고생성을 해주세요.")
 
     # 메트릭 — 박스수/팔레트 ceil 기반 (탭 1 과 동일)
     total_qty = int(sum(int(i.inbound_qty_final or 0) for i in items))
@@ -318,7 +318,7 @@ def render(brand: str):
         pa = pa_assign_pallets(pa_items, pallet_size=cfg.pallet_size_boxes)
 
     # ─── ③ 쿠팡 결과물 PDF 업로드 + 검수 ──────────────────
-    st.subheader("③ 쿠팡 입고생성 결과물 검수")
+    st.subheader("② 쿠팡 입고생성 결과물 검수")
     section_note(
         "쿠팡 결과물 PDF 3종을 업로드하세요. "
         "바코드 라벨 다운로드 시 소비기한 표기 체크 필수 (번들 상품만 적용)."
@@ -625,7 +625,7 @@ def render(brand: str):
     is_milkrun = shipment_type == 'milkrun'
     ship_label = SHIPMENT_LABELS.get(shipment_type, shipment_type)
 
-    st.subheader(f"④ 물류센터 전달 파일 ({ship_label})")
+    st.subheader(f"③ 물류센터 전달 파일 ({ship_label})")
     if is_milkrun:
         section_note(
             "아래 파일 다운로드 → 메일 송부.<br>"
@@ -741,7 +741,7 @@ def render(brand: str):
         st.info("📦 택배 박스 라벨 출력 양식은 후속 단계에서 추가 예정.")
 
     # ─── ⑤ 공유시트 기록 (선택) ──────────────────────────────
-    st.markdown("##### ⑤ 공유시트 기록 (선택)")
+    st.markdown("##### ④ 공유시트 기록 (선택)")
     section_note(
         "쿠팡 입고생성 후 발급된 입고ID 를 입력하면 공유시트 붙여넣기용 TSV 가 표시됩니다. "
         "Google Sheets 마지막 행 아래에 Ctrl+V — 탭 자동 분할."
@@ -769,7 +769,7 @@ def render(brand: str):
             st.error(f"공유시트 데이터 생성 실패: {ex}")
 
     # ─── ⑥ 화주별 출고요청 (네뉴=이지어드민 / 캐처스=다원) ────
-    st.markdown(f"##### ⑥ 화주별 출고요청 — **{brand_company}**")
+    st.markdown(f"##### ⑤ 화주별 출고요청 — **{brand_company}**")
     if brand == 'nenu':
         section_note(
             "네뉴(서현커머스): 이지어드민 발주서양식 다운로드 → 이지어드민 업로드 → "

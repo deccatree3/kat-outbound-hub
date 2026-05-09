@@ -396,7 +396,6 @@ def render(brand: str):
         )
 
         if not uploaded_files:
-            st.info(f"파일을 업로드하세요. {brand_company} 의 파일 4종을 한 번에 올릴 수 있습니다.")
             return
 
         # 자동 분류
