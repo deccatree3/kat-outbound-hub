@@ -1,12 +1,9 @@
-"""탭 3: 송장 후처리.
+"""탭 4: 송장 후 처리.
 
 흐름:
-  1. plan 선택 (탭 2 와 동일 dropdown)
-  2. 다원에서 채번한 송장 파일 업로드 (.xls)
-  3. 화주 분기:
-     - 네뉴: 이지어드민 송장 업로드 양식.xlsx 생성
-     - 캐처스: 수기 처리 안내 (이지어드민 미사용)
-  4. 쿠팡 송장 업로드: 일단 보류 (Phase F 이후 검토)
+  1. verified/completed plan 선택 (탭 3 와 동일 dropdown)
+  2. ① 화주별 출고요청 (네뉴=이지어드민 / 캐처스=다원 출고요청서)
+  3. ② 다원 송장 채번 → 이지어드민 송장 업로드 양식 생성 (네뉴만)
 """
 from __future__ import annotations
 
@@ -14,67 +11,142 @@ import io
 from datetime import date as _date
 
 import streamlit as st
-from sqlalchemy import desc, select
 
-from rocketgrowth.db import get_session
-from rocketgrowth.models import InboundPlan
 from outputs.eza.builder import (
     EZA_WAYBILL_DEFAULT_CARRIER,
     parse_daone_invoice_xls,
     build_eza_waybill_from_triples,
 )
+from outputs.daone.builder import build_daone_xlsx
+from rocketgrowth.secondary_export import build_order_form
 
-from channels.rocketgrowth._helpers import STATUS_LABELS, section_note
+from channels.rocketgrowth._helpers import section_note
+from channels.rocketgrowth._dispatch_helpers import (
+    _BRAND_TO_COMPANY, build_dispatch_data, render_context_bar, select_dispatch_plan,
+)
 
 
-_BRAND_TO_COMPANY = {
-    'nenu':    '서현',
-    'cachers': '캐처스',
+# 캐처스 다원 출고요청서 placeholder 정보 (탭 4 로 이전됨)
+COUPANG_FC_ADDRESS = {
+    '동탄1': '경기 화성시 동탄ㅇㅇ로 (placeholder)',
+    '화성2': '경기 화성시 화성ㅇㅇ로 (placeholder)',
+    '천안2': '충남 천안시 천안ㅇㅇ로 (placeholder)',
+    '옥천3': '충북 옥천군 옥천ㅇㅇ로 (placeholder)',
+}
+COUPANG_FC_PHONE = '02-1577-7011'
+CACHERS_INFO = {
+    'name': '캐처스',
+    'phone1': '02-0000-0000',
+    'phone2': '',
 }
 
 
-def _select_plan(brand_company: str) -> InboundPlan | None:
-    """업체별 plan dropdown — 발주확정(verified) 또는 완료(completed) 만 표시."""
-    with get_session() as s:
-        plans = s.execute(
-            select(InboundPlan)
-            .where(
-                InboundPlan.company_name == brand_company,
-                InboundPlan.status.in_(['verified', 'completed']),
-            )
-            .order_by(desc(InboundPlan.arrival_date), desc(InboundPlan.created_at))
-        ).scalars().all()
-
-    if not plans:
-        st.info(
-            f"📭 **{brand_company}** 의 발주확정(verified)된 plan 이 없습니다. "
-            "탭 2 에서 검수 + 발주 확정 먼저 진행."
-        )
-        return None
-
-    options = [
-        f"#{p.id} {STATUS_LABELS.get(p.status, p.status)} · "
-        f"{p.arrival_date or p.plan_date or ''}"
-        + (f" · {p.fc_name}" if p.fc_name else "")
-        + (f" · {p.shipment_type}" if p.shipment_type else "")
-        for p in plans
-    ]
-    sel = st.selectbox(
-        "발주 계획 선택 (verified/completed 만)",
-        options=range(len(plans)),
-        format_func=lambda i: options[i],
-        key=f"inv_{brand_company}_plan_select",
-    )
-    return plans[sel]
+def _sec_items_to_daone_rows(sec_items, fc_name, brand_company, milkrun_id, arrival_date):
+    """SecondaryItem → 다원 19컬럼 dict 리스트 (캐처스 전용)."""
+    rows = []
+    seq = 0
+    for it in sec_items:
+        if it.inbound_qty <= 0:
+            continue
+        seq += 1
+        rows.append({
+            '몰명(또는 몰코드)': '쿠팡 로켓그로스',
+            '출하의뢰번호': f"{milkrun_id}",
+            '출하의뢰항번': str(seq),
+            '고객주문번호': str(it.coupang_option_id),
+            '상품명': it.product_name or '',
+            '제품코드': it.own_wms_barcode or '',
+            '주문수량': it.inbound_qty,
+            '주문자명': CACHERS_INFO['name'],
+            '주문자연락처1': CACHERS_INFO['phone1'],
+            '주문자연락처2': CACHERS_INFO['phone2'],
+            '수취인명': f'쿠팡 {fc_name}',
+            '수취인연락처1': COUPANG_FC_PHONE,
+            '수취인연락처2': '',
+            '수취인우편번호': '',
+            '수취인주소1': COUPANG_FC_ADDRESS.get(fc_name, f'쿠팡 {fc_name} (주소 미등록)'),
+            '주소2': '',
+            '배송메시지': f'쿠팡 로켓그로스 입고 ({arrival_date})' if arrival_date else '쿠팡 로켓그로스 입고',
+            '송장번호': '',
+            '택배사명': '',
+        })
+    return rows
 
 
 def render(brand: str):
-    """탭 3 메인."""
+    """탭 4 메인."""
     brand_company = _BRAND_TO_COMPANY[brand]
 
-    plan = _select_plan(brand_company)
+    plan = select_dispatch_plan(brand, brand_company, key_suffix="invoice")
     if plan is None:
         return
+
+    render_context_bar(plan)
+
+    data = build_dispatch_data(brand, brand_company, plan)
+    if data is None:
+        return
+
+    # ─── ① 화주별 출고요청 (네뉴=이지어드민 / 캐처스=다원) ────
+    st.subheader(f"① 화주별 출고요청 — {brand_company}")
+    if brand == 'nenu':
+        section_note(
+            "네뉴(서현커머스): 이지어드민 발주서양식 다운로드 → 이지어드민 업로드 → "
+            "이지어드민↔다원 자동연동으로 다원에 발주 전달 (재고차감)."
+        )
+        try:
+            order_xlsx = build_order_form(
+                data.sec_items, data.fc, str(data.order_base).strip(),
+                pallet_assignment=data.pa,
+            )
+            st.download_button(
+                "📥 이지어드민 발주서양식",
+                data=order_xlsx,
+                file_name=(
+                    f"{data.ship_prefix}재고차감_로켓그로스({brand_company}커머스)"
+                    f"발주서양식_{data.datesuf}.xlsx"
+                ),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch", type="primary",
+                key=f"inv_{brand}_dl_eaorder_{plan.id}",
+            )
+        except Exception as ex:
+            st.error(f"이지어드민 발주서 생성 실패: {ex}")
+    else:
+        section_note(
+            "캐처스: 다원 출고요청서.xlsx 다운로드 → 다원에 직접 업로드 (수기). "
+            "이지어드민 미사용 (캐처스 ↔ 다원 자동연동 없음)."
+        )
+        try:
+            daone_rows = _sec_items_to_daone_rows(
+                data.sec_items, data.fc, brand_company,
+                milkrun_id=data.order_base or str(plan.id),
+                arrival_date=data.arr,
+            )
+            if not daone_rows:
+                st.info("출고 대상 (inbound_qty > 0) SKU 가 없습니다.")
+            else:
+                xlsx_bytes = build_daone_xlsx(daone_rows)
+                st.download_button(
+                    "📥 다원 출고요청서",
+                    data=xlsx_bytes,
+                    file_name=(
+                        f"{data.ship_prefix}_다원출고요청_로켓그로스(캐처스)_{data.fc}_{data.datesuf}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch", type="primary",
+                    key=f"inv_{brand}_dl_daone_{plan.id}",
+                )
+                st.caption(
+                    "⚠️ 주문자/수취인 정보는 placeholder — 다원 업로드 전 확인 필요."
+                )
+        except Exception as ex:
+            st.error(f"다원 출고요청서 생성 실패: {ex}")
+
+    st.divider()
+
+    # ─── ② 송장 후 처리 (네뉴: 이지어드민 양식 / 캐처스: 안내) ────
+    st.subheader("② 다원 송장 채번 → 이지어드민 송장 양식")
 
     # 화주 분기
     if brand == 'cachers':

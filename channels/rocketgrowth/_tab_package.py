@@ -35,11 +35,7 @@ from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
 from rocketgrowth.pallet_assign import (
     PalletAssignment, PalletEntry, PalletItem as PA_PalletItem, assign_pallets as pa_assign_pallets,
 )
-from rocketgrowth.secondary_export import (
-    SecondaryItem, build_consolidation_list, build_order_form, build_pallet_loading_list,
-    update_inventory_movement,
-)
-from outputs.daone.builder import build_daone_xlsx
+from rocketgrowth.secondary_export import SecondaryItem
 from rocketgrowth.verification import (
     PlannedSku, derive_attached_barcode, is_label_expected, verify,
 )
@@ -636,294 +632,33 @@ def render(brand: str):
             except Exception as ex:
                 st.error(f"확정 실패: {ex}")
     elif plan.status == "verified":
-        st.success(f"✅ 발주 확정됨 (plan_id={plan.id}). 아래 ④ 물류센터 전달 파일 다운로드.")
+        st.success(
+            f"✅ 발주 확정됨 (plan_id={plan.id}). 다음 탭 → 물류센터 출고 요청 으로 이동."
+        )
     else:
         st.info(f"plan status: {plan.status}")
 
-    # ─── ④ 물류센터 전달 파일 ──────────────────────────────
-    if plan.status not in ("verified", "completed"):
-        return
-
-    shipment_type = plan.shipment_type or 'milkrun'
-    is_milkrun = shipment_type == 'milkrun'
-    ship_label = SHIPMENT_LABELS.get(shipment_type, shipment_type)
-
-    st.subheader(f"③ 물류센터 전달 파일 ({ship_label})")
-    if is_milkrun:
-        section_note(
-            "아래 파일 다운로드 → 메일 송부.<br>"
-            "<b>밀크런</b>: 팔레트 단위 → 팔레트적재리스트 포함."
-        )
-    else:
-        section_note(
-            "아래 파일 다운로드 → 메일 송부.<br>"
-            "<b>택배</b>: 박스 단위 → 팔레트적재리스트 제외 (택배 박스 라벨은 후속 단계에서 추가)."
-        )
-
-    fc = meta['fc_name']
-    arr = meta['arrival_date']
-    yymmdd = arr.strftime("%y%m%d") if arr else _date.today().strftime("%y%m%d")
-    yyyymm = arr.strftime("%Y_%m월") if arr else _date.today().strftime("%Y_%m월")
-    datesuf = arr.strftime("%Y%m%d") if arr else _date.today().strftime("%Y%m%d")
-    order_base = (invoice.order_id if invoice and invoice.order_id else None) or (plan.milkrun_id or attachment.milkrun_id or "")
-    ship_prefix = "밀크런" if is_milkrun else "택배"
-
-    # 취합리스트 + (밀크런만) 팔레트적재 + 재고이동건
-    if is_milkrun:
-        dc = st.columns(3)
-    else:
-        dc = st.columns(2)
-    try:
-        cons = build_consolidation_list(
-            sec_items, pa, fc, arr, brand_company,
-            invoice.order_id if invoice and invoice.order_id else attachment.milkrun_id,
-        )
-        with dc[0]:
-            st.download_button(
-                "📥 취합리스트", data=cons,
-                file_name=f"{brand_company}_{ship_prefix}_취합리스트_{yymmdd}_{fc}.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch", type="primary",
-                key=f"pkg_{brand}_dl_cons_{plan.id}",
+    # 다음 단계 (물류센터 출고 요청 탭으로 이동)
+    if plan.status in ("verified", "completed"):
+        import streamlit.components.v1 as components
+        st.divider()
+        if st.button(
+            "다음 단계 →",
+            key=f"pkg_{brand}_goto_dispatch_{plan.id}",
+            type="primary",
+            width="stretch",
+            help="물류센터 출고 요청 탭으로 이동.",
+        ):
+            components.html(
+                """
+                <script>
+                const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+                if (tabs.length > 2) {
+                    tabs[2].click();
+                    window.parent.scrollTo({top: 0, behavior: 'smooth'});
+                }
+                </script>
+                """,
+                height=0,
             )
-    except Exception as ex:
-        with dc[0]:
-            st.error(f"취합리스트: {ex}")
 
-    if is_milkrun:
-        try:
-            pal = build_pallet_loading_list(
-                sec_items, pa, fc, arr,
-                milkrun_request_id=order_base, pallet_size=cfg.pallet_size_boxes,
-            )
-            with dc[1]:
-                st.download_button(
-                    "📥 팔레트적재리스트", data=pal,
-                    file_name=f"밀크런_물류부착문서2 (팔레트적재리스트)_{fc}_{datesuf}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    width="stretch", type="primary",
-                    key=f"pkg_{brand}_dl_pal_{plan.id}",
-                )
-        except Exception as ex:
-            with dc[1]:
-                st.error(f"팔레트적재: {ex}")
-        mv_col = dc[2]
-    else:
-        mv_col = dc[1]
-
-    if plan.movement_template_blob:
-        try:
-            mv_out = update_inventory_movement(
-                bytes(plan.movement_template_blob), sec_items, arr, fc, brand_company,
-            )
-            with mv_col:
-                st.download_button(
-                    "📥 재고이동건", data=mv_out,
-                    file_name=plan.movement_template_filename or f"쿠팡 재고이동건_{yyyymm}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    width="stretch", type="primary",
-                    key=f"pkg_{brand}_dl_mv_{plan.id}",
-                )
-        except Exception as ex:
-            with mv_col:
-                st.error(f"재고이동건: {ex}")
-    else:
-        with mv_col:
-            st.caption("재고이동건 템플릿 미저장 — 탭 1 에서 업로드 시 활성화")
-
-    # PDF 리네임 다운로드 (운송별 명칭 차이)
-    dpc = st.columns(3)
-    if ib:
-        with dpc[0]:
-            st.download_button(
-                "📥 물류동봉문서(거래명세서)", data=ib,
-                file_name=f"{ship_prefix}_물류동봉문서(거래명세서)_{fc}_{datesuf}.pdf",
-                mime="application/pdf", width="stretch", type="primary",
-                key=f"pkg_{brand}_dl_inv_{plan.id}",
-            )
-    else:
-        with dpc[0]:
-            st.caption("동봉문서 미업로드 (혼적 박스 없는 경우)")
-    with dpc[1]:
-        st.download_button(
-            "📥 제품 바코드라벨", data=lb,
-            file_name=f"제품 바코드라벨_{fc}_{datesuf}.pdf",
-            mime="application/pdf", width="stretch", type="primary",
-            key=f"pkg_{brand}_dl_lb_{plan.id}",
-        )
-    with dpc[2]:
-        attach_label = "팔레트부착" if is_milkrun else "박스부착"
-        st.download_button(
-            f"📥 물류부착문서({attach_label})", data=ab,
-            file_name=f"{ship_prefix}_물류부착문서1 ({attach_label}문서)_{fc}_{datesuf}.pdf",
-            mime="application/pdf", width="stretch", type="primary",
-            key=f"pkg_{brand}_dl_ab_{plan.id}",
-        )
-
-    if not is_milkrun:
-        st.info("📦 택배 박스 라벨 출력 양식은 후속 단계에서 추가 예정.")
-
-    # ─── ⑤ 공유시트 기록 (선택) ──────────────────────────────
-    st.markdown("##### ④ 공유시트 기록 (선택)")
-    section_note(
-        "쿠팡 입고생성 후 발급된 입고ID 를 입력하면 공유시트 붙여넣기용 TSV 가 표시됩니다. "
-        "Google Sheets 마지막 행 아래에 Ctrl+V — 탭 자동 분할."
-    )
-    inbound_id = st.text_input(
-        "입고ID",
-        key=f"pkg_{brand}_inbound_id_{plan.id}",
-        help="쿠팡 입고생성 후 발급된 ID",
-    )
-    if inbound_id.strip():
-        from rocketgrowth.secondary_export import build_share_sheet_tsv
-        request_d = plan.plan_date or arr
-        try:
-            ss_tsv = build_share_sheet_tsv(
-                sec_items,
-                request_date=request_d,
-                arrival_date=arr,
-                company_short=brand_company,
-                inbound_id=inbound_id.strip(),
-                pallet_assignment=pa,
-            )
-            st.caption("아래 박스 우상단 📋 클릭해 복사 → 공유시트에 붙여넣기.")
-            st.code(ss_tsv, language=None)
-        except Exception as ex:
-            st.error(f"공유시트 데이터 생성 실패: {ex}")
-
-    # ─── ⑥ 화주별 출고요청 (네뉴=이지어드민 / 캐처스=다원) ────
-    st.markdown(f"##### ⑤ 화주별 출고요청 — **{brand_company}**")
-    if brand == 'nenu':
-        section_note(
-            "네뉴(서현커머스): 이지어드민 발주서양식 다운로드 → 이지어드민 업로드 → "
-            "이지어드민↔다원 자동연동으로 다원에 발주 전달."
-        )
-        try:
-            order_xlsx = build_order_form(
-                sec_items, fc, str(order_base).strip(),
-                pallet_assignment=pa,
-            )
-            st.download_button(
-                "📥 이지어드민 발주서양식",
-                data=order_xlsx,
-                file_name=(
-                    f"{ship_prefix}재고차감_로켓그로스({brand_company}커머스)"
-                    f"발주서양식_{datesuf}.xlsx"
-                ),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch", type="primary",
-                key=f"pkg_{brand}_dl_eaorder_{plan.id}",
-            )
-        except Exception as ex:
-            st.error(f"이지어드민 발주서 생성 실패: {ex}")
-    else:
-        section_note(
-            "캐처스: 다원 출고요청서.xlsx 다운로드 → 다원에 직접 업로드 (수기). "
-            "이지어드민 미사용 (캐처스 ↔ 다원 자동연동 없음)."
-        )
-        try:
-            daone_rows = _sec_items_to_daone_rows(
-                sec_items, fc, brand_company,
-                milkrun_id=order_base or str(plan.id),
-                arrival_date=arr,
-            )
-            if not daone_rows:
-                st.info("출고 대상 (inbound_qty > 0) SKU 가 없습니다.")
-            else:
-                xlsx_bytes = build_daone_xlsx(daone_rows)
-                st.download_button(
-                    "📥 다원 출고요청서",
-                    data=xlsx_bytes,
-                    file_name=(
-                        f"{ship_prefix}_다원출고요청_로켓그로스(캐처스)_{fc}_{datesuf}.xlsx"
-                    ),
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    width="stretch", type="primary",
-                    key=f"pkg_{brand}_dl_daone_{plan.id}",
-                )
-                st.caption(
-                    "⚠️ 주문자/수취인 정보는 placeholder — 다원 업로드 전 확인 필요. "
-                    "쿠팡 FC 주소 매핑 추가 필요 시 알려주세요."
-                )
-        except Exception as ex:
-            st.error(f"다원 출고요청서 생성 실패: {ex}")
-
-    # 다음 단계 (송장 후처리 탭으로 이동) — 스크롤 없이 탭 전환
-    st.divider()
-    import streamlit.components.v1 as components
-    if st.button(
-        "다음 단계 →",
-        key=f"pkg_{brand}_goto_invoice",
-        type="primary",
-        width="stretch",
-        help="송장 후처리 탭으로 자동 이동 + 페이지 상단으로 스크롤.",
-    ):
-        components.html(
-            """
-            <script>
-            const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
-            if (tabs.length > 2) {
-                tabs[2].click();
-                window.parent.scrollTo({top: 0, behavior: 'smooth'});
-            }
-            </script>
-            """,
-            height=0,
-        )
-
-
-# ─── 캐처스 다원 출고요청서 생성 helper ──────────────────────
-COUPANG_FC_ADDRESS = {
-    '동탄1': '경기 화성시 동탄ㅇㅇ로 (placeholder)',
-    '화성2': '경기 화성시 화성ㅇㅇ로 (placeholder)',
-    '천안2': '충남 천안시 천안ㅇㅇ로 (placeholder)',
-    '옥천3': '충북 옥천군 옥천ㅇㅇ로 (placeholder)',
-}
-COUPANG_FC_PHONE = '02-1577-7011'  # 쿠팡 대표 (placeholder)
-CACHERS_INFO = {
-    'name': '캐처스',
-    'phone1': '02-0000-0000',  # placeholder
-    'phone2': '',
-}
-
-
-def _sec_items_to_daone_rows(
-    sec_items: list[SecondaryItem],
-    fc_name: str,
-    brand_company: str,
-    milkrun_id: str,
-    arrival_date,
-) -> list[dict]:
-    """SecondaryItem → 다원 19컬럼 dict 리스트.
-
-    캐처스 로켓그로스 → 다원 출고요청 양식.
-    주문자 = 캐처스, 수취인 = 쿠팡 FC.
-    """
-    rows = []
-    seq = 0
-    for it in sec_items:
-        if it.inbound_qty <= 0:
-            continue
-        seq += 1
-        rows.append({
-            '몰명(또는 몰코드)': '쿠팡 로켓그로스',
-            '출하의뢰번호': f"{milkrun_id}",
-            '출하의뢰항번': str(seq),
-            '고객주문번호': str(it.coupang_option_id),
-            '상품명': it.product_name or '',
-            '제품코드': it.own_wms_barcode or '',
-            '주문수량': it.inbound_qty,
-            '주문자명': CACHERS_INFO['name'],
-            '주문자연락처1': CACHERS_INFO['phone1'],
-            '주문자연락처2': CACHERS_INFO['phone2'],
-            '수취인명': f'쿠팡 {fc_name}',
-            '수취인연락처1': COUPANG_FC_PHONE,
-            '수취인연락처2': '',
-            '수취인우편번호': '',
-            '수취인주소1': COUPANG_FC_ADDRESS.get(fc_name, f'쿠팡 {fc_name} (주소 미등록)'),
-            '주소2': '',
-            '배송메시지': f'쿠팡 로켓그로스 입고 ({arrival_date})' if arrival_date else '쿠팡 로켓그로스 입고',
-            '송장번호': '',
-            '택배사명': '',
-        })
-    return rows
