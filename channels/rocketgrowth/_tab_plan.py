@@ -881,10 +881,16 @@ def render(brand: str):
     if status_filter:
         view = view[view["urgency"].isin(status_filter)]
 
+    # 입고권장 = 번들 단위 (단품은 unit_qty=1 이라 inbound_basic 와 동일)
+    allocated_df["inbound_basic_bundle"] = allocated_df.apply(
+        lambda r: int((r["inbound_basic"] or 0) // max(int(r["unit_qty"] or 1), 1)),
+        axis=1,
+    )
+
     display_cols = [
         "coupang_option_id", "urgency", "product_name",
         "orderable", "sales_7d", "sales_30d", "velocity", "days_until_stockout",
-        "box_qty", "inbound_basic", "basic_boxes",
+        "box_qty", "inbound_basic_bundle", "basic_boxes",
         "pool_remaining_base", "pool_remaining_bundle",
         "inbound_final", "confirmed_boxes",
         "selected_batch_expiry", "selected_status",
@@ -966,9 +972,9 @@ def render(brand: str):
                 "소진예상(일)", format="%.1f",
             ),
             "box_qty": st.column_config.NumberColumn("box입인", format="%d"),
-            "inbound_basic": st.column_config.NumberColumn(
-                "입고권장(낱개)", format="%d",
-                help="엔진 기본 추천 — 팔레트 꽉 채움 적용 전",
+            "inbound_basic_bundle": st.column_config.NumberColumn(
+                "입고권장", format="%d",
+                help="엔진 기본 추천 — 단품은 단품 수량, 번들은 번들 수량 (낱개 환산 X). 팔레트 꽉 채움 적용 전.",
             ),
             "basic_boxes": st.column_config.NumberColumn(
                 "입고권장(box)", format="%d",
