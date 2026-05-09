@@ -482,13 +482,11 @@ def render(brand: str):
         v = r["inbound_final"]
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return None
+        import math as _math
         box = max(int(r["box_qty"] or 1), 1)
         qty = int(v)
-        # 박스 단위 정확히 떨어지면 정수, 아니면 소수점 1자리(truncate)
-        # 예: box_qty=50, qty=48 -> 0.9 (48/50=0.96 -> truncate to 0.9)
-        if qty % box == 0:
-            return float(qty // box)
-        return int(qty * 10 / box) / 10
+        # 박스 미충족도 1박스로 계산 (ceil). 예: box=50, qty=48 -> 1
+        return _math.ceil(qty / box)
 
     allocated_df["confirmed_boxes"] = allocated_df.apply(_calc_confirmed_boxes, axis=1)
 
@@ -728,8 +726,8 @@ def render(brand: str):
                 help="사용자가 직접 입력. 권장입고수 참고하여 결정",
             ),
             "confirmed_boxes": st.column_config.NumberColumn(
-                "확정(box)", format="%g",
-                help="박스인입수의 배수면 정수, 아니면 소수점 1자리 (truncate). 예: box=50, qty=48 → 0.9",
+                "확정(box)", format="%d",
+                help="박스인입수 미충족도 1박스로 계산 (ceil). 예: box=50, qty=48 → 1",
             ),
             "selected_batch_expiry": st.column_config.DateColumn("소비기한"),
             "selected_status": None,
@@ -785,19 +783,14 @@ def render(brand: str):
             qty = int(raw) if raw is not None and not (isinstance(raw, float) and pd.isna(raw)) else 0
         if qty > 0:
             active_cnt += 1
+            import math as _math
             box = int(r.get("box_qty") or 1)
-            # 박스수: 박스 배수면 정수, 아니면 0.1 truncate (확정(box) 컬럼과 동일 로직)
-            if qty % max(box, 1) == 0:
-                box_val = float(qty // max(box, 1))
-            else:
-                box_val = int(qty * 10 / max(box, 1)) / 10
+            # 박스수: ceil — 박스인입 미충족도 1박스 (확정(box) 컬럼과 동일)
+            box_val = _math.ceil(qty / max(box, 1))
             confirmed_qty += qty
             confirmed_boxes_sum += box_val
-            # 중량은 ceil(box_val) 로 — 부분박스도 1박스 분 포장재 필요
-            import math as _math
-            phys_boxes = int(_math.ceil(box_val))
             unit_w = int(r.get("weight_g") or 0)
-            total_weight_g += unit_w * qty + 500 * phys_boxes
+            total_weight_g += unit_w * qty + 500 * box_val
 
     total_weight_kg = total_weight_g / 1000
     _pallet_sz = cfg.pallet_size_boxes
@@ -826,7 +819,7 @@ def render(brand: str):
     col_s4.metric(
         "총중량 (kg)",
         f"{total_weight_kg:,.1f}",
-        help="(WMS 단위중량 × 확정수량 + 500g × ⌈박스수⌉) ÷ 1000",
+        help="(WMS 단위중량 × 확정수량 + 500g × 박스수) ÷ 1000",
     )
     col_s5.metric("대상 SKU", f"{active_cnt}")
 
