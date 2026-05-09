@@ -64,7 +64,7 @@ def _render_context_bar(plan: InboundPlan) -> str:
     status_label = STATUS_LABELS.get(plan.status or "draft", plan.status or "?")
     company = plan.company_name or "—"
     fc = plan.fc_name or "미정"
-    arr = plan.arrival_date or plan.plan_date or "미정"
+    arr = plan.arrival_date or "미정"  # 첨부문서 파싱 전엔 미정
     worker = plan.worker or "미정"
     milkrun = plan.milkrun_id or "미정"
     parts = [
@@ -406,6 +406,24 @@ def render(brand: str):
         meta['arrival_date'] = attachment.arrival_date
     if attachment.milkrun_id:
         meta['milkrun_id'] = attachment.milkrun_id
+
+    # 첨부 파싱 결과를 plan 에 영구 반영 → 다음 렌더 시 컨텍스트 바 갱신
+    _ctx_changed = False
+    with get_session() as ps:
+        pdb_ctx = ps.get(InboundPlan, plan.id)
+        if attachment.fc_name and pdb_ctx.fc_name != attachment.fc_name:
+            pdb_ctx.fc_name = attachment.fc_name
+            _ctx_changed = True
+        if attachment.arrival_date and pdb_ctx.arrival_date != attachment.arrival_date:
+            pdb_ctx.arrival_date = attachment.arrival_date
+            _ctx_changed = True
+        if attachment.milkrun_id and pdb_ctx.milkrun_id != attachment.milkrun_id:
+            pdb_ctx.milkrun_id = attachment.milkrun_id
+            _ctx_changed = True
+        if _ctx_changed:
+            ps.commit()
+    if _ctx_changed:
+        st.rerun()
 
     # PlannedSku 빌드
     planned: list[PlannedSku] = []
