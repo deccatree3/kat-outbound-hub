@@ -34,21 +34,21 @@ _BRAND_TO_COMPANY = {'nenu': '서현', 'cachers': '캐처스'}
 
 
 def select_dispatch_plan(brand: str, brand_company: str, key_suffix: str = "") -> InboundPlan | None:
-    """verified/completed plan 선택 dropdown — 탭 3/4 공통."""
+    """입고확정 이상 plan 선택 dropdown — 탭 3/4 공통."""
     with get_session() as s:
         plans = s.execute(
             select(InboundPlan)
             .where(
                 InboundPlan.company_name == brand_company,
-                InboundPlan.status.in_(['verified', 'completed']),
+                InboundPlan.status.in_(['inbound_confirmed', 'verified', 'completed']),
             )
             .order_by(desc(InboundPlan.arrival_date), desc(InboundPlan.created_at))
         ).scalars().all()
 
     if not plans:
         st.info(
-            f"📭 **{brand_company}** 의 발주확정(verified)된 plan 이 없습니다. "
-            "탭 2 에서 검수 + 발주 확정 먼저 진행."
+            f"📭 **{brand_company}** 의 입고확정된 plan 이 없습니다. "
+            "탭 2 에서 검수 + 입고생성 확정 먼저 진행."
         )
         return None
 

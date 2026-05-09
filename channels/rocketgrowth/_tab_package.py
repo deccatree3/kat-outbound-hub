@@ -251,63 +251,6 @@ def render(brand: str):
         },
     )
 
-    # ─── 입고생성 확정 + 다음 단계 버튼 (① 와 ② 사이) ────────
-    st.divider()
-    _is_inbound_confirmed = (plan.status or "") in (
-        "inbound_confirmed", "verified", "completed"
-    )
-    btn_cols = st.columns(2)
-    with btn_cols[0]:
-        if _is_inbound_confirmed:
-            st.button(
-                "✅ 입고생성 확정됨",
-                disabled=True, width="stretch",
-                help=f"plan #{plan.id} 입고확정 완료 — 수량 수정 불가.",
-                key=f"pkg_{brand}_inbound_done_{plan.id}",
-            )
-        else:
-            if st.button(
-                "입고생성 확정",
-                type="primary", width="stretch",
-                help="쿠팡 Wing 입고생성 후 클릭. 상태=입고확정으로 변경 + 수량 잠금.",
-                key=f"pkg_{brand}_inbound_confirm_{plan.id}",
-            ):
-                try:
-                    with get_session() as _ic_s:
-                        _p = _ic_s.get(InboundPlan, plan.id)
-                        _p.status = "inbound_confirmed"
-                        _ic_s.commit()
-                    st.success(f"✅ 입고확정 (plan #{plan.id}). 수량 잠금됨.")
-                    st.rerun()
-                except Exception as ex:
-                    st.error(f"입고확정 실패: {ex}")
-    with btn_cols[1]:
-        import streamlit.components.v1 as components
-        if st.button(
-            "다음 단계 →",
-            disabled=(not _is_inbound_confirmed),
-            width="stretch",
-            type="primary" if _is_inbound_confirmed else "secondary",
-            help="② 결과물 검수 섹션으로 스크롤.",
-            key=f"pkg_{brand}_next_to_verify_{plan.id}",
-        ):
-            # ② subheader 까지 스크롤
-            components.html(
-                """
-                <script>
-                const labels = window.parent.document.querySelectorAll('h3');
-                for (const el of labels) {
-                    if (el.innerText && el.innerText.indexOf('② 쿠팡 입고생성 결과물 검수') !== -1) {
-                        el.scrollIntoView({behavior: 'smooth', block: 'start'});
-                        break;
-                    }
-                }
-                </script>
-                """,
-                height=0,
-            )
-    st.divider()
-
     # ─── SecondaryItem + PalletAssignment 빌드 ─────────────
     sec_items: list[SecondaryItem] = []
     for it in items:
@@ -645,93 +588,102 @@ def render(brand: str):
         },
     )
 
-    # ─── 발주 확정 ────────────────────────────────────────
+    # ─── 입고생성 확정 + 다음 단계 (탭 2 마지막, 검수 통과 시 노출) ───
     st.divider()
-    if plan.status == "draft":
-        if st.button(
-            "✅ 발주 확정 (status → verified)",
-            type="primary", width="stretch",
-            disabled=(report.overall == "fail" or not meta['fc_name']),
-            key=f"pkg_{brand}_verify_{plan.id}",
-            help="검수 통과 시 활성화. 클릭 시 status=verified 로 변경 + CoupangResultLog 기록.",
-        ):
-            try:
-                with get_session() as s4:
-                    pdb = s4.get(InboundPlan, plan.id)
-                    pdb.status = "verified"
-                    pdb.fc_name = meta['fc_name']
-                    pdb.worker = meta['worker']
-                    pdb.arrival_date = meta['arrival_date']
-                    pdb.milkrun_id = meta['milkrun_id'] or attachment.milkrun_id or None
-                    pdb.shipment_type = meta['shipment_type']
-                    pdb.total_pallets = pa.pallet_count if meta['shipment_type'] == 'milkrun' else None
-                    # 팔레트 번호 + 부착 바코드 db 반영
-                    items_by_opt = {it.coupang_option_id: it for it in s4.execute(
-                        select(InboundPlanItem).where(InboundPlanItem.plan_id == plan.id)
-                    ).scalars().all()}
-                    for pi, pal in enumerate(pa.pallets, start=1):
-                        for en in pal:
-                            dbi = items_by_opt.get(en.key)
-                            if dbi:
-                                sk = next((s for s in planned if s.coupang_option_id == en.key), None)
-                                if sk:
-                                    cm7 = cp_master_by_opt.get(sk.coupang_option_id)
-                                    bc7 = (
-                                        cm7.coupang_barcode if cm7 and cm7.coupang_barcode
-                                        and cm7.coupang_barcode.startswith("S0")
-                                        else sk.own_wms_barcode
-                                    )
-                                    bt7 = (
-                                        "쿠팡바코드"
-                                        if (cm7 and cm7.coupang_barcode and cm7.coupang_barcode.startswith("S0"))
-                                        else "88코드"
-                                    )
-                                    dbi.pallet_no = pi
-                                    dbi.barcode_attached = bc7
-                                    dbi.barcode_type = bt7
-                    tb = sum(s.boxes for s in planned)
-                    s4.add(CoupangResultLog(
-                        company_name=brand_company,
-                        milkrun_id=attachment.milkrun_id or "",
-                        fc_name=meta['fc_name'], arrival_date=meta['arrival_date'],
-                        total_pallets=pa.pallet_count, total_boxes=tb,
-                        total_skus=len([s for s in planned if s.boxes > 0]),
-                        plan_id=plan.id,
-                        label_filename=lname, attachment_filename=aname,
-                    ))
-                    s4.commit()
-                st.success(f"✅ 발주 #{plan.id} 확정 완료")
-                st.rerun()
-            except Exception as ex:
-                st.error(f"확정 실패: {ex}")
-    elif plan.status == "verified":
-        st.success(
-            f"✅ 발주 확정됨 (plan_id={plan.id}). 다음 탭 → 물류센터 출고 요청 으로 이동."
-        )
-    else:
-        st.info(f"plan status: {plan.status}")
 
-    # 다음 단계 (물류센터 출고 요청 탭으로 이동)
-    if plan.status in ("verified", "completed"):
-        import streamlit.components.v1 as components
-        st.divider()
-        if st.button(
-            "다음 단계 →",
-            key=f"pkg_{brand}_goto_dispatch_{plan.id}",
-            type="primary",
-            width="stretch",
-            help="물류센터 출고 요청 탭으로 이동.",
-        ):
-            components.html(
-                """
-                <script>
-                const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
-                if (tabs.length > 2) {
-                    tabs[2].click();
-                    window.parent.scrollTo({top: 0, behavior: 'smooth'});
-                }
-                </script>
-                """,
-                height=0,
-            )
+    # 검수 통과(ok 또는 warning) 일 때만 버튼 영역 노출. fail 이면 숨김.
+    _verification_passed = report.overall in ("ok", "warning")
+
+    if not _verification_passed:
+        st.warning("❌ 검수 실패 — 위 검수 이슈를 해결한 후 입고생성 확정을 진행할 수 있습니다.")
+    else:
+        already_confirmed = (plan.status or "") in (
+            "inbound_confirmed", "verified", "completed"
+        )
+        btn_cols = st.columns(2)
+        with btn_cols[0]:
+            if already_confirmed:
+                st.button(
+                    "✅ 입고생성 확정됨",
+                    disabled=True, width="stretch",
+                    help=f"plan #{plan.id} 입고확정 완료 — 수량 수정 불가.",
+                    key=f"pkg_{brand}_inbound_done_{plan.id}",
+                )
+            else:
+                if st.button(
+                    "입고생성 확정",
+                    type="primary", width="stretch",
+                    help="검수 결과 OK 시 활성화. 클릭 시 status=inbound_confirmed 로 변경 + CoupangResultLog 기록 + 수량 잠금.",
+                    key=f"pkg_{brand}_inbound_confirm_{plan.id}",
+                ):
+                    try:
+                        with get_session() as s4:
+                            pdb = s4.get(InboundPlan, plan.id)
+                            pdb.status = "inbound_confirmed"
+                            pdb.fc_name = meta['fc_name']
+                            pdb.worker = meta['worker']
+                            pdb.arrival_date = meta['arrival_date']
+                            pdb.milkrun_id = meta['milkrun_id'] or attachment.milkrun_id or None
+                            pdb.shipment_type = meta['shipment_type']
+                            pdb.total_pallets = pa.pallet_count if meta['shipment_type'] == 'milkrun' else None
+                            items_by_opt = {it.coupang_option_id: it for it in s4.execute(
+                                select(InboundPlanItem).where(InboundPlanItem.plan_id == plan.id)
+                            ).scalars().all()}
+                            for pi, pal in enumerate(pa.pallets, start=1):
+                                for en in pal:
+                                    dbi = items_by_opt.get(en.key)
+                                    if dbi:
+                                        sk = next((s for s in planned if s.coupang_option_id == en.key), None)
+                                        if sk:
+                                            cm7 = cp_master_by_opt.get(sk.coupang_option_id)
+                                            bc7 = (
+                                                cm7.coupang_barcode if cm7 and cm7.coupang_barcode
+                                                and cm7.coupang_barcode.startswith("S0")
+                                                else sk.own_wms_barcode
+                                            )
+                                            bt7 = (
+                                                "쿠팡바코드"
+                                                if (cm7 and cm7.coupang_barcode and cm7.coupang_barcode.startswith("S0"))
+                                                else "88코드"
+                                            )
+                                            dbi.pallet_no = pi
+                                            dbi.barcode_attached = bc7
+                                            dbi.barcode_type = bt7
+                            tb = sum(s.boxes for s in planned)
+                            s4.add(CoupangResultLog(
+                                company_name=brand_company,
+                                milkrun_id=attachment.milkrun_id or "",
+                                fc_name=meta['fc_name'], arrival_date=meta['arrival_date'],
+                                total_pallets=pa.pallet_count, total_boxes=tb,
+                                total_skus=len([s for s in planned if s.boxes > 0]),
+                                plan_id=plan.id,
+                                label_filename=lname, attachment_filename=aname,
+                            ))
+                            s4.commit()
+                        st.success(f"✅ 입고확정 (plan #{plan.id}). 수량 잠금됨.")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"입고확정 실패: {ex}")
+        with btn_cols[1]:
+            import streamlit.components.v1 as components
+            if st.button(
+                "다음 단계 →",
+                disabled=(not already_confirmed),
+                type="primary" if already_confirmed else "secondary",
+                width="stretch",
+                help="물류센터 출고 요청 탭으로 이동.",
+                key=f"pkg_{brand}_goto_dispatch_{plan.id}",
+            ):
+                components.html(
+                    """
+                    <script>
+                    const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+                    if (tabs.length > 2) {
+                        tabs[2].click();
+                        window.parent.scrollTo({top: 0, behavior: 'smooth'});
+                    }
+                    </script>
+                    """,
+                    height=0,
+                )
 
