@@ -28,9 +28,6 @@ from rocketgrowth.coupang_result import (
     parse_attachment_doc, parse_barcode_labels, parse_invoice_doc,
 )
 from rocketgrowth.db import get_session
-from rocketgrowth.export import (
-    ExportItem, dates_from_batch, default_expiry_dates, fill_coupang_template,
-)
 from rocketgrowth.models import (
     CoupangProduct, CoupangResultLog, InboundPlan, InboundPlanItem, PlanFile, WmsProduct,
 )
@@ -257,44 +254,6 @@ def render(brand: str):
             "박스수": st.column_config.NumberColumn("박스수", format="%d"),
         },
     )
-
-    # 쿠팡 양식 재생성 (template 파일 있는 경우만)
-    if "template" in plan_files and not is_completed:
-        with st.expander("📥 쿠팡 입고생성 양식 재생성 (탭 1 에서 다운로드한 것 손실 시)", expanded=False):
-            tpl_name, tpl_bytes = plan_files["template"]
-            re_export = []
-            for it in items:
-                cm = cp_master_by_opt.get(it.coupang_option_id)
-                own_bc = cm.wms_barcode if cm else None
-                wp = wms_master_by_bc.get(own_bc) if own_bc else None
-                shl = wp.shelf_life_days if wp else None
-                if it.wms_short_expiry:
-                    exp_d, man_d = dates_from_batch(it.wms_short_expiry, shl)
-                else:
-                    exp_d, man_d = default_expiry_dates(shl)
-                re_export.append(ExportItem(
-                    coupang_option_id=it.coupang_option_id,
-                    inbound_qty=it.inbound_qty_final,
-                    shelf_life_days=shl, expiry_date=exp_d,
-                    manufacture_date=man_d, wms_barcode=own_bc,
-                    product_name=it.product_name,
-                ))
-            try:
-                xlsx_bytes, missing = fill_coupang_template(
-                    io.BytesIO(tpl_bytes), re_export, delete_non_target=True
-                )
-                st.download_button(
-                    "📥 쿠팡 입고생성 파일 다운로드",
-                    data=xlsx_bytes,
-                    file_name=f"generated_excel_{_date.today().isoformat()}.xlsx",
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    type="primary",
-                    key=f"pkg_{brand}_recoupang_{plan.id}",
-                )
-                if missing:
-                    st.warning(f"⚠️ {len(missing)}건 누락 (옵션 ID 양식에 없음)")
-            except Exception as ex:
-                st.error(f"양식 생성 실패: {ex}")
 
     # ─── SecondaryItem + PalletAssignment 빌드 ─────────────
     sec_items: list[SecondaryItem] = []
