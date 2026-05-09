@@ -136,20 +136,18 @@ def _render_plan_picker(brand: str, brand_company: str) -> int | None:
             .order_by(desc(InboundPlan.id)).limit(30)
         ).scalars().all()
 
-    if not plans:
-        # 첫 사용자 — 픽커 숨기고 바로 신규 모드
-        return None
-
     # 각 plan 의 attach_pdf 보유 여부 (검수 진행중 / 임시저장 구분용)
     plan_ids = [p.id for p in plans]
-    with get_session() as s:
-        attach_rows = s.execute(
-            select(PlanFile.plan_id).where(
-                PlanFile.plan_id.in_(plan_ids),
-                PlanFile.file_type == "attach_pdf",
-            )
-        ).scalars().all()
-    has_attach = set(attach_rows)
+    has_attach: set[int] = set()
+    if plan_ids:
+        with get_session() as s:
+            attach_rows = s.execute(
+                select(PlanFile.plan_id).where(
+                    PlanFile.plan_id.in_(plan_ids),
+                    PlanFile.file_type == "attach_pdf",
+                )
+            ).scalars().all()
+        has_attach = set(attach_rows)
 
     NEW = "__new__"
     options: list = [NEW] + plan_ids
