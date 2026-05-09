@@ -865,6 +865,12 @@ def render(brand: str):
             key=f"rg_{brand}_status_filter",
         )
 
+    # 입고권장 = 번들 단위 (단품은 unit_qty=1 이라 inbound_basic 와 동일)
+    allocated_df["inbound_basic_bundle"] = allocated_df.apply(
+        lambda r: int((r["inbound_basic"] or 0) // max(int(r["unit_qty"] or 1), 1)),
+        axis=1,
+    )
+
     view = allocated_df.copy()
     if search:
         import re as _re
@@ -880,12 +886,6 @@ def render(brand: str):
             view = view[mask]
     if status_filter:
         view = view[view["urgency"].isin(status_filter)]
-
-    # 입고권장 = 번들 단위 (단품은 unit_qty=1 이라 inbound_basic 와 동일)
-    allocated_df["inbound_basic_bundle"] = allocated_df.apply(
-        lambda r: int((r["inbound_basic"] or 0) // max(int(r["unit_qty"] or 1), 1)),
-        axis=1,
-    )
 
     display_cols = [
         "coupang_option_id", "urgency", "product_name",
