@@ -56,21 +56,14 @@ _UPLOAD_GUIDE_ROWS = [
      "이번달 '쿠팡 재고이동건' 파일",
      "쿠팡 재고이동건_YYYY_MM월.xlsx"),
 ]
-_GUIDE_NA_BY_COMPANY = {("캐처스", FILE_TYPE_MOVEMENT)}
 
 
 def _render_upload_guide(brand_company: str, group=None) -> str:
     """단일 업체 기준 업로드 가이드 HTML."""
     body = ""
     for label, ft, path, fname_example in _UPLOAD_GUIDE_ROWS:
-        if (brand_company, ft) in _GUIDE_NA_BY_COMPANY:
-            mark_cell = (
-                '<td style="width:60px; text-align:center; '
-                'background-color:#eee; color:#888;">—</td>'
-            )
-        else:
-            mark = "✅" if group and ft in group.files else ""
-            mark_cell = f'<td style="width:60px; text-align:center;">{mark}</td>'
+        mark = "✅" if group and ft in group.files else ""
+        mark_cell = f'<td style="width:60px; text-align:center;">{mark}</td>'
         body += (
             f"<tr><td>{label}</td>"
             f'<td><code style="font-size:0.85em;">{fname_example}</code></td>'
@@ -198,29 +191,18 @@ def render(brand: str):
             f"{', '.join(other_brands)}"
         )
 
-    # 필수 파일 체크 — 캐처스는 재고이동건 선택사항
+    # 필수 파일 체크 — 4종 모두 필수 (캐처스/네뉴 동일)
     coupang_file = group.files.get(FILE_TYPE_COUPANG)
     wms_file = group.files.get(FILE_TYPE_WMS)
     template_file = group.files.get(FILE_TYPE_TEMPLATE)
     movement_file = group.files.get(FILE_TYPE_MOVEMENT)
 
-    optional_for_company = (
-        {FILE_TYPE_MOVEMENT} if brand_company == "캐처스" else set()
-    )
-    missing_required = [
-        ft for ft in group.missing_types if ft not in optional_for_company
-    ]
-    if missing_required:
-        labels = [FILE_TYPE_LABELS[ft] for ft in missing_required]
+    if group.missing_types:
+        labels = [FILE_TYPE_LABELS[ft] for ft in group.missing_types]
         st.info(f"**{brand_company}** 미감지 파일: {', '.join(labels)}")
 
-    required_ok = (
-        coupang_file and wms_file and template_file
-        and (movement_file or FILE_TYPE_MOVEMENT in optional_for_company)
-    )
-    if not required_ok:
-        need = 3 if FILE_TYPE_MOVEMENT in optional_for_company else 4
-        st.warning(f"**{brand_company}** 의 필수 파일 {need}종이 모두 필요합니다.")
+    if not (coupang_file and wms_file and template_file and movement_file):
+        st.warning(f"**{brand_company}** 의 필수 파일 4종이 모두 필요합니다.")
         return
 
     # 파싱
