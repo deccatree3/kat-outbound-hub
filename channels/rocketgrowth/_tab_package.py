@@ -171,6 +171,37 @@ def render(brand: str):
         unsafe_allow_html=True,
     )
 
+    # ─── 입고방법 선택 (밀크런 / 택배) ─────────────────────
+    # 입고확정 이상은 변경 불가 (이미 운송수단 결정됨)
+    _ship_locked = (plan.status or "") in ("inbound_confirmed", "verified", "completed")
+    _ship_options = ['milkrun', 'parcel']
+    _ship_labels = {'milkrun': '밀크런', 'parcel': '택배'}
+    _cur_ship = plan.shipment_type if plan.shipment_type in _ship_options else 'milkrun'
+    selected_ship = st.radio(
+        "입고방법",
+        options=_ship_options,
+        format_func=lambda v: _ship_labels.get(v, v),
+        index=_ship_options.index(_cur_ship),
+        horizontal=True,
+        disabled=_ship_locked,
+        key=f"pkg_{brand}_ship_select_{plan.id}",
+        help=(
+            "입고확정 이후엔 변경 불가." if _ship_locked
+            else "밀크런: 팔레트 단위 트럭. 택배: 박스 단위."
+        ),
+    )
+    # 변경 시 DB 저장
+    if not _ship_locked and selected_ship != plan.shipment_type:
+        try:
+            with get_session() as _ss:
+                _p = _ss.get(InboundPlan, plan.id)
+                _p.shipment_type = selected_ship
+                _ss.commit()
+            plan.shipment_type = selected_ship
+            st.rerun()
+        except Exception as ex:
+            st.error(f"입고방법 저장 실패: {ex}")
+
     # ─── 공통 데이터 로드 ──────────────────────────────────
     with get_session() as ms:
         items = ms.execute(
