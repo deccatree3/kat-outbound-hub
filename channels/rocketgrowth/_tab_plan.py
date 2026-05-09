@@ -1052,24 +1052,26 @@ def render(brand: str):
     saved_state_key = f"rg_{brand}_last_saved_plan_id"
     last_saved = st.session_state.get(saved_state_key)
 
-    if confirmed_qty == 0 and not last_saved:
-        st.button(
-            "입고 수량 확정",
-            disabled=True, width="stretch",
-            help="확정 수량 1개 이상 입력 필요.",
-            key=f"rg_{brand}_save_disabled",
-        )
-        st.caption("확정 수량을 입력한 후 이 버튼 → DB 저장 + 쿠팡 입고생성 양식 다운로드.")
-        return
-
     # 재고 부족 체크 — 확정수량 > 0 인데 단일 배치로 커버 불가한 SKU
     insufficient_to_save = allocated_df[
         (allocated_df["selected_status"] == "insufficient")
         & (allocated_df["inbound_final"].fillna(0).astype(int) > 0)
     ]
-    if len(insufficient_to_save) > 0 and not last_saved:
+
+    # ─── 수량확정 버튼 (idempotent: 재클릭 시 기존 plan update) ─────
+    if confirmed_qty == 0:
+        st.button(
+            "수량확정",
+            disabled=True, width="stretch",
+            help="확정 수량 1개 이상 입력 필요.",
+            key=f"rg_{brand}_qty_btn_no_qty",
+        )
+        st.caption("확정 수량을 입력한 후 이 버튼 → DB 저장 + 쿠팡 입고생성 양식 다운로드.")
+        return
+
+    if len(insufficient_to_save) > 0:
         st.error(
-            f"⚠️ **재고 부족 SKU {len(insufficient_to_save)}건** 으로 입고 확정 불가. "
+            f"⚠️ **재고 부족 SKU {len(insufficient_to_save)}건** 으로 수량확정 불가. "
             "해당 SKU 의 확정 수량을 0 또는 가용 재고 이내로 조정 후 다시 시도하세요."
         )
         with st.expander(f"부족 SKU 목록 ({len(insufficient_to_save)}건)", expanded=True):
@@ -1080,58 +1082,70 @@ def render(brand: str):
             _disp.columns = ["옵션ID", "상품명", "확정수량", "출고후잔여(낱개)", "단일배치 최대"]
             st.dataframe(_disp, width="stretch", hide_index=True)
         st.button(
-            "입고 수량 확정",
+            "수량확정",
             disabled=True, width="stretch",
             help="재고 부족 SKU 해결 후 활성화.",
-            key=f"rg_{brand}_save_blocked",
+            key=f"rg_{brand}_qty_btn_blocked",
         )
         return
 
-    # 저장 직후가 아니면 저장 버튼 노출
+    # 활성 수량확정 버튼 (재클릭 시 update)
+    btn_label = (
+        f"수량확정 재확정 ({confirmed_qty:,}개)" if last_saved
+        else f"수량확정 ({confirmed_qty:,}개)"
+    )
+    btn_help = (
+        "기존 plan 의 items 갱신 + 쿠팡 입고생성 양식 재생성." if last_saved
+        else "DB 저장 (status=수량확정) + 쿠팡 입고생성 양식 자동 생성. 탭 2 결과물 패키지로 이어서 진행."
+    )
+    if st.button(
+        btn_label,
+        type="primary", width="stretch",
+        help=btn_help,
+        key=f"rg_{brand}_qty_btn",
+    ):
+        try:
+            # 편집본을 allocated_df 에 머지
+            save_df = allocated_df.copy()
+            for _, erow in edited.iterrows():
+                opt = int(erow["coupang_option_id"])
+                mask = save_df["coupang_option_id"] == opt
+                save_df.loc[mask, "inbound_final"] = ni(erow["inbound_final"]) or 0
+
+            _raw_files: dict[str, tuple[str, bytes]] = {}
+            if coupang_file:
+                _raw_files["coupang_raw"] = (coupang_file.name, coupang_file.getvalue())
+            if wms_file:
+                _raw_files["wms_raw"] = (wms_file.name, wms_file.getvalue())
+            if template_file:
+                _raw_files["template"] = (template_file.name, template_file.getvalue())
+
+            shipment_type = cfg.default_shipment_type
+            plan_id = save_plan(
+                cp_snap=cp_snap, wms_snap=wms_snap, full_df=save_df,
+                company_name=brand_company,
+                shipment_type=shipment_type,
+                total_weight_kg=total_weight_kg,
+                movement_blob=movement_file.getvalue() if movement_file else None,
+                movement_filename=movement_file.name if movement_file else None,
+                raw_files=_raw_files,
+                existing_plan_id=last_saved,  # 있으면 update, 없으면 신규
+            )
+            st.session_state[saved_state_key] = plan_id
+            verb = "재확정" if last_saved else "수량확정"
+            st.success(f"✅ {verb} 완료 (plan_id={plan_id}) — 쿠팡 양식 다운로드 가능")
+            st.rerun()
+        except Exception as ex:
+            st.error(f"저장 실패: {ex}")
+
+    # 수량확정 전이면 download/next 미노출
     if not last_saved:
-        if st.button(
-            f"입고 수량 확정 ({confirmed_qty:,}개)",
-            type="primary", width="stretch",
-            help="DB 저장 + 쿠팡 입고생성 양식 자동 생성. 저장 후 탭 2 결과물 패키지에서 이어서 진행.",
-            key=f"rg_{brand}_save_btn",
-        ):
-            try:
-                # 편집본을 allocated_df 에 머지 (필터로 숨겨진 SKU 도 보존)
-                save_df = allocated_df.copy()
-                for _, erow in edited.iterrows():
-                    opt = int(erow["coupang_option_id"])
-                    mask = save_df["coupang_option_id"] == opt
-                    save_df.loc[mask, "inbound_final"] = ni(erow["inbound_final"]) or 0
-
-                _raw_files: dict[str, tuple[str, bytes]] = {}
-                if coupang_file:
-                    _raw_files["coupang_raw"] = (coupang_file.name, coupang_file.getvalue())
-                if wms_file:
-                    _raw_files["wms_raw"] = (wms_file.name, wms_file.getvalue())
-                if template_file:
-                    _raw_files["template"] = (template_file.name, template_file.getvalue())
-
-                # 화주 = 자매 컬럼 'company_name' 그대로 (서현/캐처스)
-                shipment_type = cfg.default_shipment_type  # 'milkrun' default; 탭 2에서 변경
-                plan_id = save_plan(
-                    cp_snap=cp_snap, wms_snap=wms_snap, full_df=save_df,
-                    company_name=brand_company,
-                    shipment_type=shipment_type,
-                    total_weight_kg=total_weight_kg,
-                    movement_blob=movement_file.getvalue() if movement_file else None,
-                    movement_filename=movement_file.name if movement_file else None,
-                    raw_files=_raw_files,
-                )
-                st.session_state[saved_state_key] = plan_id
-                st.success(f"✅ 저장 완료 (plan_id={plan_id}) — 쿠팡 양식 다운로드 가능")
-                st.rerun()
-            except Exception as ex:
-                st.error(f"저장 실패: {ex}")
         return
 
-    # 저장 직후 — 쿠팡 입고생성 양식.xlsx 생성 + 다운로드
+    # ─── 수량확정 후: 쿠팡 양식 + 다음 단계 ─────────────────────
+    st.divider()
     st.success(
-        f"✅ 저장 완료 (plan_id={last_saved}). "
+        f"✅ 수량확정 완료 (plan_id={last_saved}). "
         "아래 쿠팡 입고생성 양식 다운로드 후 쿠팡 Wing 에 업로드. "
         "탭 2 (결과물 패키지) 에서 검수 + 물류센터 전달 패키지 진행."
     )

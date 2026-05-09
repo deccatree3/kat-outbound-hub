@@ -169,28 +169,52 @@ def save_plan(
     movement_blob: Optional[bytes] = None,
     movement_filename: Optional[str] = None,
     raw_files: Optional[dict[str, tuple[str, bytes]]] = None,
+    existing_plan_id: Optional[int] = None,
 ) -> int:
-    """draft 상태로 InboundPlan 저장. 작업일/FC/작업자/검수메타는 검수 단계에서 채움."""
+    """수량확정 상태로 InboundPlan 저장 또는 갱신.
+
+    existing_plan_id 가 주어지면 해당 plan 을 update (items 전체 재생성, raw_files merge).
+    검수 메타(FC/입고일/작업자/milkrun_id) 는 보존.
+    """
+    from sqlalchemy import delete  # local import (모듈 상단 의존성 노출 회피)
     with get_session() as session:
         cp_row = upsert_coupang_snapshot(session, cp_snap)
         wms_row = upsert_wms_snapshot(session, wms_snap)
         session.flush()
 
-        plan = InboundPlan(
-            company_name=company_name,
-            shipment_type=shipment_type,
-            plan_date=date.today(),
-            fc_name=None,
-            worker=None,
-            coupang_snapshot_id=cp_row.id,
-            wms_snapshot_id=wms_row.id,
-            status="draft",
-            total_weight_kg=total_weight_kg,
-            movement_template_blob=movement_blob,
-            movement_template_filename=movement_filename,
-        )
-        session.add(plan)
-        session.flush()
+        if existing_plan_id is not None:
+            plan = session.get(InboundPlan, existing_plan_id)
+            if plan is None:
+                raise ValueError(f"plan #{existing_plan_id} not found")
+            plan.coupang_snapshot_id = cp_row.id
+            plan.wms_snapshot_id = wms_row.id
+            plan.status = "qty_confirmed"
+            plan.total_weight_kg = total_weight_kg
+            plan.shipment_type = shipment_type
+            if movement_blob:
+                plan.movement_template_blob = movement_blob
+                plan.movement_template_filename = movement_filename
+            # 기존 items 삭제 후 신규 items 재생성
+            session.execute(
+                delete(InboundPlanItem).where(InboundPlanItem.plan_id == plan.id)
+            )
+            session.flush()
+        else:
+            plan = InboundPlan(
+                company_name=company_name,
+                shipment_type=shipment_type,
+                plan_date=date.today(),
+                fc_name=None,
+                worker=None,
+                coupang_snapshot_id=cp_row.id,
+                wms_snapshot_id=wms_row.id,
+                status="qty_confirmed",
+                total_weight_kg=total_weight_kg,
+                movement_template_blob=movement_blob,
+                movement_template_filename=movement_filename,
+            )
+            session.add(plan)
+            session.flush()
 
         for _, row in full_df.iterrows():
             final_qty = int(row["inbound_final"] or 0)
@@ -261,20 +285,32 @@ def load_plan_files(plan_id: int) -> dict[str, tuple[str, bytes]]:
         return {r.file_type: (r.file_name, bytes(r.content)) for r in rows}
 
 
-STATUS_LABELS = {"draft": "📝 임시저장", "verified": "✅ 발주확정", "completed": "🏁 완료"}
+STATUS_LABELS = {
+    "draft": "📝 임시저장",
+    "qty_confirmed": "📋 수량확정",
+    "verified": "✅ 발주확정",
+    "completed": "🏁 완료",
+}
 
 
 def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
     """plan 의 status + 시그널을 종합한 세부 상태 라벨.
 
-    - draft + attach_pdf 없음 → '📝 임시저장'
-    - draft + attach_pdf 있음 → '📝 검수 진행중'
-    - verified                → '✅ 발주확정'
-    - completed               → '🏁 완료'
+    상태 흐름:
+      draft → qty_confirmed → (검수 진행중) → verified → completed
+
+    - draft         + attach 없음 → 📝 임시저장
+    - draft         + attach 있음 → 📝 검수 진행중
+    - qty_confirmed + attach 없음 → 📋 수량확정
+    - qty_confirmed + attach 있음 → 📝 검수 진행중
+    - verified                    → ✅ 발주확정
+    - completed                   → 🏁 완료
     """
     s = plan.status or "draft"
-    if s == "draft":
-        return "📝 검수 진행중" if has_attach_pdf else "📝 임시저장"
+    if s in ("draft", "qty_confirmed"):
+        if has_attach_pdf:
+            return "📝 검수 진행중"
+        return "📋 수량확정" if s == "qty_confirmed" else "📝 임시저장"
     if s == "verified":
         return "✅ 발주확정"
     if s == "completed":
