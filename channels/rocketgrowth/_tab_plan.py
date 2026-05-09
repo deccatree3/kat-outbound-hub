@@ -786,33 +786,51 @@ def render(brand: str):
         if qty > 0:
             active_cnt += 1
             box = int(r.get("box_qty") or 1)
-            boxes = qty // max(box, 1)
+            # 박스수: 박스 배수면 정수, 아니면 0.1 truncate (확정(box) 컬럼과 동일 로직)
+            if qty % max(box, 1) == 0:
+                box_val = float(qty // max(box, 1))
+            else:
+                box_val = int(qty * 10 / max(box, 1)) / 10
             confirmed_qty += qty
-            confirmed_boxes_sum += boxes
+            confirmed_boxes_sum += box_val
+            # 중량은 ceil(box_val) 로 — 부분박스도 1박스 분 포장재 필요
+            import math as _math
+            phys_boxes = int(_math.ceil(box_val))
             unit_w = int(r.get("weight_g") or 0)
-            total_weight_g += unit_w * qty + 500 * boxes
+            total_weight_g += unit_w * qty + 500 * phys_boxes
 
     total_weight_kg = total_weight_g / 1000
     _pallet_sz = cfg.pallet_size_boxes
 
+    def _fmt_boxes(v: float) -> str:
+        # 정수면 정수, 아니면 소수점 1자리
+        return f"{int(v):,}" if float(v).is_integer() else f"{v:,.1f}"
+
     col_s1, col_s2, col_s3, col_s4, col_s5 = st.columns(5)
     col_s1.metric("확정 수량 (낱개)", f"{confirmed_qty:,}")
-    col_s2.metric("확정 박스수", f"{confirmed_boxes_sum:,}")
-    pallet_full = confirmed_boxes_sum // _pallet_sz if _pallet_sz else 0
-    pallet_remainder = confirmed_boxes_sum % _pallet_sz if _pallet_sz else confirmed_boxes_sum
-    col_s3.metric(
-        "팔레트",
-        f"{pallet_full}" + (f" + {pallet_remainder}박스" if pallet_remainder else " (꽉참)"),
+    col_s2.metric("확정 박스수", _fmt_boxes(confirmed_boxes_sum))
+    if _pallet_sz:
+        pallet_full = int(confirmed_boxes_sum // _pallet_sz)
+        pallet_remainder = round(confirmed_boxes_sum - pallet_full * _pallet_sz, 1)
+    else:
+        pallet_full = 0
+        pallet_remainder = confirmed_boxes_sum
+    pallet_remainder_disp = (
+        f" + {_fmt_boxes(pallet_remainder)}박스" if pallet_remainder > 0 else " (꽉참)"
     )
+    col_s3.metric("팔레트", f"{pallet_full}{pallet_remainder_disp}")
     col_s4.metric(
         "총중량 (kg)",
         f"{total_weight_kg:,.1f}",
-        help="(WMS 단위중량 × 확정수량 + 500g × 박스수) ÷ 1000",
+        help="(WMS 단위중량 × 확정수량 + 500g × ⌈박스수⌉) ÷ 1000",
     )
     col_s5.metric("대상 SKU", f"{active_cnt}")
 
     # 팔레트 최적화 상세
-    _pallets_already_full = confirmed_boxes_sum > 0 and confirmed_boxes_sum % _pallet_sz == 0
+    _pallets_already_full = (
+        confirmed_boxes_sum > 0
+        and float(confirmed_boxes_sum % _pallet_sz) == 0.0
+    )
     if pallet_on and pallet_result is not None and pallet_result.mode != "noop" and not _pallets_already_full:
         with st.expander(
             f"🎯 팔레트 최적화 ({pallet_result.mode}, "
