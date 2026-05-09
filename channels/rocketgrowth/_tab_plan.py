@@ -44,6 +44,22 @@ _BRAND_TO_COMPANY = {
 }
 
 
+class _DBFile:
+    """PlanFile DB 에서 로드한 raw 파일을 file_uploader 출력 (UploadedFile) 형태로 mock."""
+    def __init__(self, name: str, content: bytes):
+        self.name = name
+        self._content = content
+
+    def getvalue(self) -> bytes:
+        return self._content
+
+    def read(self) -> bytes:
+        return self._content
+
+    def seek(self, *_args, **_kwargs):
+        return 0
+
+
 _UPLOAD_GUIDE_ROWS = [
     ("WMS 재고 파일", FILE_TYPE_WMS,
      "다원WMS > 재고관리 > 창고별로케이션별재고(OWNER) > [품목-정상,불량-로케이션-로트] 탭 > 검색 > 우클릭, Export(Excel)",
@@ -302,9 +318,22 @@ def render(brand: str):
 
     # ─── 0. 발주 계획 선택 (신규 / 기존) ──────────────────
     selected_plan_id = _render_plan_picker(brand, brand_company)
-    if selected_plan_id is not None:
-        _render_saved_plan_view(brand, brand_company, selected_plan_id)
-        return
+
+    # picker 전환 시 stale state 정리 (기존 plan → 신규, 또는 plan A → plan B)
+    _prev_key = f"rg_{brand}_prev_picker"
+    _prev = st.session_state.get(_prev_key)
+    if _prev != selected_plan_id:
+        # last_saved 는 picker 가 set 한 값으로 곧 덮어씀 — 신규 모드 진입 시는 clear
+        if selected_plan_id is None:
+            st.session_state.pop(f"rg_{brand}_last_saved_plan_id", None)
+        # plan 전환 시 이전 편집 세션 / loaded 플래그 모두 정리
+        for _k in list(st.session_state.keys()):
+            if isinstance(_k, str) and (
+                _k.startswith(f"rg_{brand}_inbound_final::")
+                or _k.startswith(f"rg_{brand}_loaded_for_plan_")
+            ):
+                st.session_state.pop(_k, None)
+    st.session_state[_prev_key] = selected_plan_id
 
     plan_params = PlanParams(
         lead_time_days=cfg.lead_time_days,
@@ -320,68 +349,108 @@ def render(brand: str):
         icon="ℹ️",
     )
 
-    st.markdown("##### 1-1 기초자료 업로드")
-    section_note("입고수량확정에 필요한 기초 자료를 취합하여 업로드해 주세요.")
-
-    _guide_ph = st.empty()
-    _guide_ph.markdown(_render_upload_guide(brand_company, None), unsafe_allow_html=True)
-
-    uploaded_files = st.file_uploader(
-        f"파일 업로드 — {brand_company}",
-        type=["xlsx", "xls"],
-        accept_multiple_files=True,
-        key=f"rg_{brand}_upload",
-        label_visibility="collapsed",
-    )
-
-    if not uploaded_files:
-        st.info(f"파일을 업로드하세요. {brand_company} 의 파일 4종을 한 번에 올릴 수 있습니다.")
-        return
-
-    # 자동 분류
-    classified, company_groups = classify_uploaded_files(uploaded_files)
-
-    # 화주 강제 — 사용자 선택한 채널의 화주만 사용
-    group = company_groups.get(brand_company)
-    _guide_ph.markdown(
-        _render_upload_guide(brand_company, group), unsafe_allow_html=True
-    )
-
-    if group is None:
-        st.error(
-            f"**{brand_company}** 업체로 식별된 파일이 없습니다. "
-            "상품 정보 관리에 해당 업체 상품이 등록되어 있는지 확인하세요."
-        )
-        # 미분류 파일 경고
-        unclassified = [cf for cf in classified if not cf.company]
-        if unclassified:
-            st.warning(
-                f"⚠️ {len(unclassified)}개 파일의 업체를 식별 못 했습니다: "
-                + ", ".join(cf.file.name for cf in unclassified)
+    # 기존 plan 선택 모드 → DB에서 raw 파일 로드 + 검토 모드 진입
+    selected_plan_obj = None
+    if selected_plan_id is not None:
+        with get_session() as _s:
+            selected_plan_obj = _s.get(InboundPlan, selected_plan_id)
+        if selected_plan_obj is None:
+            st.error(f"plan #{selected_plan_id} 을 찾지 못했습니다.")
+            return
+        # verified/completed 는 read-only summary
+        if selected_plan_obj.status in ("verified", "completed"):
+            _render_saved_plan_view(brand, brand_company, selected_plan_id)
+            return
+        # qty_confirmed/draft 는 편집 가능
+        plan_files_db = load_plan_files(selected_plan_id)
+        missing = [
+            t for t in ("coupang_raw", "wms_raw", "template")
+            if t not in plan_files_db
+        ]
+        if missing:
+            st.error(
+                f"plan #{selected_plan_id} 의 raw 파일 누락: {missing}. "
+                "신규 계획으로 다시 진행해 주세요."
             )
-        return
+            return
+        coupang_file = _DBFile(*plan_files_db["coupang_raw"])
+        wms_file = _DBFile(*plan_files_db["wms_raw"])
+        template_file = _DBFile(*plan_files_db["template"])
+        movement_file = _DBFile(*plan_files_db["movement"]) if "movement" in plan_files_db else None
+        # 수량확정 = 재확정 모드 (existing_plan_id 로 update)
+        st.session_state[f"rg_{brand}_last_saved_plan_id"] = selected_plan_id
+        st.markdown(
+            f"<div style='padding:8px 12px; background:#eff6ff; border-left:4px solid #3b82f6; "
+            f"border-radius:4px; margin:4px 0 12px 0; font-size:0.92em;'>"
+            f"📋 plan <b>#{selected_plan_id}</b> 편집 모드 — 수량 변경 후 "
+            f"<b>수량확정 재확정</b> 시 양식 자동 재생성"
+            f"</div>",
+            unsafe_allow_html=True,
+        )
+    else:
+        # 신규 계획 — file uploader UI
+        st.markdown("##### 1-1 기초자료 업로드")
+        section_note("입고수량확정에 필요한 기초 자료를 취합하여 업로드해 주세요.")
 
-    # 업로드된 파일 중 다른 업체 분류 발견 시 안내 (이 채널에서는 무시)
-    other_brands = [c for c in company_groups if c != brand_company]
-    if other_brands:
-        st.warning(
-            f"이 채널은 **{brand_company}** 전용입니다. 다른 업체로 분류된 파일은 무시됩니다: "
-            f"{', '.join(other_brands)}"
+        _guide_ph = st.empty()
+        _guide_ph.markdown(_render_upload_guide(brand_company, None), unsafe_allow_html=True)
+
+        uploaded_files = st.file_uploader(
+            f"파일 업로드 — {brand_company}",
+            type=["xlsx", "xls"],
+            accept_multiple_files=True,
+            key=f"rg_{brand}_upload",
+            label_visibility="collapsed",
         )
 
-    # 필수 파일 체크 — 4종 모두 필수 (캐처스/네뉴 동일)
-    coupang_file = group.files.get(FILE_TYPE_COUPANG)
-    wms_file = group.files.get(FILE_TYPE_WMS)
-    template_file = group.files.get(FILE_TYPE_TEMPLATE)
-    movement_file = group.files.get(FILE_TYPE_MOVEMENT)
+        if not uploaded_files:
+            st.info(f"파일을 업로드하세요. {brand_company} 의 파일 4종을 한 번에 올릴 수 있습니다.")
+            return
 
-    if group.missing_types:
-        labels = [FILE_TYPE_LABELS[ft] for ft in group.missing_types]
-        st.info(f"**{brand_company}** 미감지 파일: {', '.join(labels)}")
+        # 자동 분류
+        classified, company_groups = classify_uploaded_files(uploaded_files)
 
-    if not (coupang_file and wms_file and template_file and movement_file):
-        st.warning(f"**{brand_company}** 의 필수 파일 4종이 모두 필요합니다.")
-        return
+        # 화주 강제 — 사용자 선택한 채널의 화주만 사용
+        group = company_groups.get(brand_company)
+        _guide_ph.markdown(
+            _render_upload_guide(brand_company, group), unsafe_allow_html=True
+        )
+
+        if group is None:
+            st.error(
+                f"**{brand_company}** 업체로 식별된 파일이 없습니다. "
+                "상품 정보 관리에 해당 업체 상품이 등록되어 있는지 확인하세요."
+            )
+            # 미분류 파일 경고
+            unclassified = [cf for cf in classified if not cf.company]
+            if unclassified:
+                st.warning(
+                    f"⚠️ {len(unclassified)}개 파일의 업체를 식별 못 했습니다: "
+                    + ", ".join(cf.file.name for cf in unclassified)
+                )
+            return
+
+        # 업로드된 파일 중 다른 업체 분류 발견 시 안내 (이 채널에서는 무시)
+        other_brands = [c for c in company_groups if c != brand_company]
+        if other_brands:
+            st.warning(
+                f"이 채널은 **{brand_company}** 전용입니다. 다른 업체로 분류된 파일은 무시됩니다: "
+                f"{', '.join(other_brands)}"
+            )
+
+        # 필수 파일 체크 — 4종 모두 필수 (캐처스/네뉴 동일)
+        coupang_file = group.files.get(FILE_TYPE_COUPANG)
+        wms_file = group.files.get(FILE_TYPE_WMS)
+        template_file = group.files.get(FILE_TYPE_TEMPLATE)
+        movement_file = group.files.get(FILE_TYPE_MOVEMENT)
+
+        if group.missing_types:
+            labels = [FILE_TYPE_LABELS[ft] for ft in group.missing_types]
+            st.info(f"**{brand_company}** 미감지 파일: {', '.join(labels)}")
+
+        if not (coupang_file and wms_file and template_file and movement_file):
+            st.warning(f"**{brand_company}** 의 필수 파일 4종이 모두 필요합니다.")
+            return
 
     # 파싱
     try:
@@ -586,6 +655,20 @@ def render(brand: str):
     )
     if _session_key not in st.session_state:
         st.session_state[_session_key] = {}
+
+    # 기존 plan 편집 모드 — 저장된 inbound_qty_final 로 세션 초기화 (1회)
+    if (selected_plan_obj is not None
+        and not st.session_state.get(f"rg_{brand}_loaded_for_plan_{selected_plan_obj.id}")):
+        with get_session() as _s:
+            _saved_items = _s.execute(
+                select(InboundPlanItem)
+                .where(InboundPlanItem.plan_id == selected_plan_obj.id)
+            ).scalars().all()
+        for it in _saved_items:
+            st.session_state[_session_key][int(it.coupang_option_id)] = int(
+                it.inbound_qty_final or 0
+            )
+        st.session_state[f"rg_{brand}_loaded_for_plan_{selected_plan_obj.id}"] = True
 
     for i, row in base_df.iterrows():
         opt = int(row["coupang_option_id"])
