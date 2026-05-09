@@ -207,38 +207,56 @@ def render(brand: str):
     # FC / 송장ID / 입고예정일 은 검수 단계에서 첨부문서 파싱 결과로 보정됨.
     meta = _derive_meta(plan)
 
-    # ─── ② 계획 요약 + 쿠팡 양식 재생성 ───────────────────
-    st.subheader("② 쿠팡 입고생성 파일 (계획 요약)")
+    # ─── ② 쿠팡 입고생성 계획 요약 ───────────────────
+    import math as _math
+    st.subheader("쿠팡 입고생성 계획 요약")
     section_note("탭 1 에서 저장한 발주 계획 요약. 필요 시 양식 재생성 가능.")
 
-    plan_df = pd.DataFrame([{
-        "상품명": i.product_name,
-        "7일판매": i.sales_7d,
-        "30일판매": i.sales_30d,
-        "현재재고": i.current_total_stock,
-        "박스낱수": i.box_qty,
-        "추천입고": i.inbound_qty_suggested,
-        "확정입고": i.inbound_qty_final,
-        "확정박스": i.inbound_boxes,
-        "팔레트": i.pallet_no,
-    } for i in items])
-
-    total_qty = int(plan_df["확정입고"].sum())
-    total_boxes = int(plan_df["확정박스"].sum())
+    # 메트릭 — 박스수/팔레트 ceil 기반 (탭 1 과 동일)
+    total_qty = int(sum(int(i.inbound_qty_final or 0) for i in items))
+    total_boxes = int(sum(
+        _math.ceil((i.inbound_qty_final or 0) / max(int(i.box_qty or 1), 1))
+        for i in items
+    ))
     psz = cfg.pallet_size_boxes
-    pallet_cnt = plan.total_pallets or ((total_boxes + psz - 1) // psz if total_boxes else 0)
-    pallet_disp = f"{pallet_cnt}" + (" (꽉참)" if total_boxes and total_boxes % psz == 0 else "")
+    if psz:
+        pallet_decimal = total_boxes / psz
+        pallet_full = total_boxes // psz
+        pallet_remainder = total_boxes - pallet_full * psz
+    else:
+        pallet_decimal = 0.0; pallet_full = 0; pallet_remainder = total_boxes
+    if pallet_remainder == 0 and pallet_full > 0:
+        pallet_disp = f"{pallet_full} (꽉참)"
+    else:
+        pallet_disp = f"{pallet_decimal:.2f}({pallet_full}+{pallet_remainder}박스)"
     weight_kg = float(plan.total_weight_kg) if plan.total_weight_kg else 0.0
 
-    mc1, mc2, mc3, mc4, mc5 = st.columns(5)
+    mc1, mc2, mc3, mc4, mc5 = st.columns([1, 1, 1, 1.5, 1])
     mc1.metric("SKU", f"{len(items)}")
     mc2.metric("확정수량", f"{total_qty:,}")
     mc3.metric("박스수", f"{total_boxes:,}")
     mc4.metric("팔레트", pallet_disp)
     mc5.metric("총중량 (kg)", f"{weight_kg:,.1f}")
 
-    with st.expander("계획 상세 (행별)", expanded=False):
-        st.dataframe(plan_df, width="stretch", hide_index=True, height=300)
+    # 계획 상세 — 항상 표시 (접기 X)
+    plan_df = pd.DataFrame([{
+        "상품명": (
+            f"{(cp_master_by_opt.get(i.coupang_option_id).product_name if cp_master_by_opt.get(i.coupang_option_id) else (i.product_name or ''))} "
+            f"{(cp_master_by_opt.get(i.coupang_option_id).option_name if cp_master_by_opt.get(i.coupang_option_id) else (i.option_name or ''))}"
+        ).strip(),
+        "소비기한": i.wms_short_expiry,
+        "상품수": i.inbound_qty_final,
+        "박스수": _math.ceil((i.inbound_qty_final or 0) / max(int(i.box_qty or 1), 1)),
+    } for i in items])
+    st.dataframe(
+        plan_df, width="stretch", hide_index=True, height=380,
+        column_config={
+            "상품명": st.column_config.TextColumn("상품명", width="large"),
+            "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),
+            "상품수": st.column_config.NumberColumn("상품수", format="%d"),
+            "박스수": st.column_config.NumberColumn("박스수", format="%d"),
+        },
+    )
 
     # 쿠팡 양식 재생성 (template 파일 있는 경우만)
     if "template" in plan_files and not is_completed:

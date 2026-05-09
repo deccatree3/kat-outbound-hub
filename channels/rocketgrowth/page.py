@@ -60,7 +60,7 @@ def render_page(brand: str = 'nenu'):
 
     tab_plan, tab_pack, tab_inv = st.tabs([
         "📋 1. 발주 계획",
-        "📦 2. 결과물 패키지",
+        "📦 2. 쿠팡 입고생성",
         "🚚 3. 송장 후처리",
     ])
     with tab_plan:
