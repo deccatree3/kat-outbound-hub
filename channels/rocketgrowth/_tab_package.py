@@ -134,51 +134,20 @@ def _select_plan(brand_company: str) -> InboundPlan | None:
 SHIPMENT_LABELS = {'milkrun': '밀크런', 'parcel': '택배'}
 
 
-def _render_meta_inputs(plan: InboundPlan, brand: str) -> dict[str, Any]:
-    """검수 메타 입력 — FC, 작업자, 입고예정일, 밀크런 ID, 운송방식."""
-    cols = st.columns(5)
+def _derive_meta(plan: InboundPlan) -> dict[str, Any]:
+    """plan 레코드에서 메타 자동 derive — 입력 UI 제거 후 사용.
+
+    fc_name / milkrun_id / arrival_date 는 검수 단계에서 첨부문서 파싱 결과로
+    추후 보정될 수 있음 (verify_section 내부에서 attachment.fc / attachment.milkrun_id /
+    attachment.arrival_date 사용).
+    """
     cfg = load_config()
-    with cols[0]:
-        fc = st.text_input(
-            "FC명", value=plan.fc_name or "동탄1",
-            key=f"pkg_{brand}_fc_{plan.id}",
-        )
-    with cols[1]:
-        worker = st.text_input(
-            "작업자", value=plan.worker or cfg.default_company_name,
-            key=f"pkg_{brand}_worker_{plan.id}",
-        )
-    with cols[2]:
-        arrival_default = plan.arrival_date or plan.plan_date or _date.today()
-        arr = st.date_input(
-            "입고예정일", value=arrival_default,
-            key=f"pkg_{brand}_arr_{plan.id}",
-        )
-    with cols[3]:
-        milkrun_id = st.text_input(
-            "밀크런/송장 ID", value=plan.milkrun_id or "",
-            key=f"pkg_{brand}_mr_{plan.id}",
-            help="밀크런: 쿠팡 부착문서 ID. 택배: 운송 식별자.",
-        )
-    with cols[4]:
-        cur_ship = plan.shipment_type or 'milkrun'
-        ship_options = ['milkrun', 'parcel']
-        ship_idx = ship_options.index(cur_ship) if cur_ship in ship_options else 0
-        shipment = st.radio(
-            "운송방식",
-            options=ship_options,
-            format_func=lambda v: SHIPMENT_LABELS.get(v, v),
-            index=ship_idx,
-            key=f"pkg_{brand}_ship_{plan.id}",
-            horizontal=True,
-            help="밀크런: 팔레트 단위 트럭. 택배: 박스 단위 (CJ 등).",
-        )
     return {
-        'fc_name': fc.strip() if fc else None,
-        'worker': worker.strip() if worker else None,
-        'arrival_date': arr,
-        'milkrun_id': milkrun_id.strip() if milkrun_id else None,
-        'shipment_type': shipment,
+        'fc_name': plan.fc_name or "동탄1",
+        'worker': plan.worker or cfg.default_company_name,
+        'arrival_date': plan.arrival_date or plan.plan_date or _date.today(),
+        'milkrun_id': plan.milkrun_id,
+        'shipment_type': plan.shipment_type or 'milkrun',
     }
 
 
@@ -220,8 +189,9 @@ def render(brand: str):
 
     is_completed = plan.status == "completed"
 
-    # ─── 메타 입력 ────────────────────────────────────────
-    meta = _render_meta_inputs(plan, brand)
+    # ─── 메타 자동 derive (입력 UI 제거됨) ───────────────────
+    # FC / 송장ID / 입고예정일 은 검수 단계에서 첨부문서 파싱 결과로 보정됨.
+    meta = _derive_meta(plan)
 
     # ─── ② 계획 요약 + 쿠팡 양식 재생성 ───────────────────
     st.subheader("② 쿠팡 입고생성 파일 (계획 요약)")
@@ -429,6 +399,14 @@ def render(brand: str):
     attachment = parse_attachment_doc(ab)
     invoice = parse_invoice_doc(ib) if ib else None
 
+    # 메타 입력 UI 가 제거됨 — 첨부문서 파싱 결과로 자동 보정
+    if attachment.fc_name:
+        meta['fc_name'] = attachment.fc_name
+    if attachment.arrival_date:
+        meta['arrival_date'] = attachment.arrival_date
+    if attachment.milkrun_id:
+        meta['milkrun_id'] = attachment.milkrun_id
+
     # PlannedSku 빌드
     planned: list[PlannedSku] = []
     for it in items:
@@ -574,7 +552,7 @@ def render(brand: str):
             type="primary", width="stretch",
             disabled=(report.overall == "fail" or not meta['fc_name']),
             key=f"pkg_{brand}_verify_{plan.id}",
-            help="검수 통과 + 메타 입력 완료 시 활성화. 클릭 시 status=verified 로 변경 + CoupangResultLog 기록.",
+            help="검수 통과 시 활성화. 클릭 시 status=verified 로 변경 + CoupangResultLog 기록.",
         ):
             try:
                 with get_session() as s4:
