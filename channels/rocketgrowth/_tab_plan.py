@@ -75,7 +75,7 @@ def _render_upload_guide(brand_company: str, group=None) -> str:
         '<th style="text-align:left;">구분</th>'
         '<th style="text-align:left;">파일명 예시</th>'
         '<th style="text-align:left;">취합 경로</th>'
-        f'<th style="width:60px; text-align:center;">{brand_company}</th>'
+        '<th style="width:60px; text-align:center;">취합</th>'
         '</tr></thead>'
         f'<tbody>{body}</tbody>'
         '</table>'
