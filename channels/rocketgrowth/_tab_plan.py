@@ -976,6 +976,28 @@ def render(brand: str):
         with st.expander("누락 옵션 목록", expanded=False):
             st.dataframe(pd.DataFrame(missing), width="stretch", hide_index=True)
 
+    # 다음 단계 (결과물 패키지 탭으로 이동) — 스크롤 없이 탭 전환
+    import streamlit.components.v1 as components
+    if st.button(
+        "📦 다음 단계 → 결과물 패키지",
+        key=f"rg_{brand}_goto_pack",
+        type="primary",
+        width="stretch",
+        help="결과물 패키지 탭으로 자동 이동 + 페이지 상단으로 스크롤.",
+    ):
+        components.html(
+            """
+            <script>
+            const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+            if (tabs.length > 1) {
+                tabs[1].click();
+                window.parent.scrollTo({top: 0, behavior: 'smooth'});
+            }
+            </script>
+            """,
+            height=0,
+        )
+
     # 새 작업 시작 버튼
     if st.button(
         "🔄 새 작업 시작 (이 plan 저장 상태 클리어)",
