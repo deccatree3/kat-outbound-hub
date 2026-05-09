@@ -838,9 +838,28 @@ def render(brand: str):
         except Exception as ex:
             st.error(f"다원 출고요청서 생성 실패: {ex}")
 
-    st.info(
-        "🚧 **다음 단계 (Phase E)**: 탭 3 송장 후처리 (다원 채번 → 이지어드민 송장 양식)."
-    )
+    # 다음 단계 (송장 후처리 탭으로 이동) — 스크롤 없이 탭 전환
+    st.divider()
+    import streamlit.components.v1 as components
+    if st.button(
+        "🚚 다음 단계 → 송장 후처리",
+        key=f"pkg_{brand}_goto_invoice",
+        type="primary",
+        width="stretch",
+        help="송장 후처리 탭으로 자동 이동 + 페이지 상단으로 스크롤.",
+    ):
+        components.html(
+            """
+            <script>
+            const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+            if (tabs.length > 2) {
+                tabs[2].click();
+                window.parent.scrollTo({top: 0, behavior: 'smooth'});
+            }
+            </script>
+            """,
+            height=0,
+        )
 
 
 # ─── 캐처스 다원 출고요청서 생성 helper ──────────────────────
