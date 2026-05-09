@@ -483,7 +483,12 @@ def render(brand: str):
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return None
         box = max(int(r["box_qty"] or 1), 1)
-        return int(int(v) // box)
+        qty = int(v)
+        # 박스 단위 정확히 떨어지면 정수, 아니면 소수점 1자리(truncate)
+        # 예: box_qty=50, qty=48 -> 0.9 (48/50=0.96 -> truncate to 0.9)
+        if qty % box == 0:
+            return float(qty // box)
+        return int(qty * 10 / box) / 10
 
     allocated_df["confirmed_boxes"] = allocated_df.apply(_calc_confirmed_boxes, axis=1)
 
@@ -722,7 +727,10 @@ def render(brand: str):
                 "확정", format="%d", required=False,
                 help="사용자가 직접 입력. 권장입고수 참고하여 결정",
             ),
-            "confirmed_boxes": st.column_config.NumberColumn("확정(box)", format="%d"),
+            "confirmed_boxes": st.column_config.NumberColumn(
+                "확정(box)", format="%g",
+                help="박스인입수의 배수면 정수, 아니면 소수점 1자리 (truncate). 예: box=50, qty=48 → 0.9",
+            ),
             "selected_batch_expiry": st.column_config.DateColumn("소비기한"),
             "selected_status": None,
             "pool_remaining_base": st.column_config.NumberColumn("재고(낱개)", format="%d"),
