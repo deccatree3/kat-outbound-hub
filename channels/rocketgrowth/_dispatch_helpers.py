@@ -52,30 +52,25 @@ def select_dispatch_plan(brand: str, brand_company: str, key_suffix: str = "") -
         )
         return None
 
-    options = [
-        f"#{p.id} {derive_substatus_label(p)} · "
-        f"{p.arrival_date or p.plan_date or ''}"
-        + (f" · {p.fc_name}" if p.fc_name else "")
-        + (f" · {SHIPMENT_LABELS.get(p.shipment_type or '', p.shipment_type or '')}")
-        for p in plans
-    ]
-
-    # last_saved 우선 자동 선택
-    auto_id = st.session_state.get(f"rg_{brand}_last_saved_plan_id")
-    default_idx = 0
-    if auto_id:
-        for i, p in enumerate(plans):
-            if p.id == auto_id:
-                default_idx = i
-                break
+    SENTINEL = -1
+    labels = {SENTINEL: "— 발주계획 선택 —"}
+    for i, p in enumerate(plans):
+        labels[i] = (
+            f"#{p.id} {derive_substatus_label(p)} · "
+            f"{p.arrival_date or p.plan_date or ''}"
+            + (f" · {p.fc_name}" if p.fc_name else "")
+            + (f" · {SHIPMENT_LABELS.get(p.shipment_type or '', p.shipment_type or '')}")
+        )
 
     sel = st.selectbox(
         "발주 계획 선택",
-        options=range(len(plans)),
-        format_func=lambda i: options[i],
-        index=default_idx,
+        options=[SENTINEL] + list(range(len(plans))),
+        format_func=lambda o: labels[o],
+        index=0,  # 항상 sentinel default — 자동 선택 X
         key=f"disp_{brand}_{key_suffix}_plan_select",
     )
+    if sel == SENTINEL:
+        return None
     return plans[sel]
 
 

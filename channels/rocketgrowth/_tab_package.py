@@ -103,36 +103,24 @@ def _select_plan(brand_company: str) -> InboundPlan | None:
         ).scalars().all()
     has_attach = set(attach_rows)
 
-    options = [
-        f"#{p.id} {derive_substatus_label(p, has_attach_pdf=(p.id in has_attach))} · "
-        f"{p.company_name} · {p.arrival_date or p.plan_date or ''}"
-        + (f" · {p.fc_name}" if p.fc_name else "")
-        for p in plans
-    ]
-
-    # 방금 저장한 plan 자동 선택
-    auto_plan_id = None
-    for k in (f'rg_nenu_last_saved_plan_id', f'rg_cachers_last_saved_plan_id'):
-        if st.session_state.get(k):
-            cand_id = st.session_state[k]
-            if any(p.id == cand_id for p in plans):
-                auto_plan_id = cand_id
-                break
-
-    default_idx = 0
-    if auto_plan_id is not None:
-        for i, p in enumerate(plans):
-            if p.id == auto_plan_id:
-                default_idx = i
-                break
+    SENTINEL = -1
+    labels = {SENTINEL: "— 발주계획 선택 —"}
+    for i, p in enumerate(plans):
+        labels[i] = (
+            f"#{p.id} {derive_substatus_label(p, has_attach_pdf=(p.id in has_attach))} · "
+            f"{p.company_name} · {p.arrival_date or p.plan_date or ''}"
+            + (f" · {p.fc_name}" if p.fc_name else "")
+        )
 
     sel = st.selectbox(
         "발주 계획 선택",
-        options=range(len(plans)),
-        format_func=lambda i: options[i],
-        index=default_idx,
+        options=[SENTINEL] + list(range(len(plans))),
+        format_func=lambda o: labels[o],
+        index=0,  # 항상 sentinel default — 자동 선택 X
         key=f"pkg_{brand_company}_plan_select",
     )
+    if sel == SENTINEL:
+        return None
     return plans[sel]
 
 
