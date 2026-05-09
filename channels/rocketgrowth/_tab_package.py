@@ -485,20 +485,30 @@ def render(brand: str):
     else:
         st.error("❌ 검수 실패")
 
-    # 비-ok 체크만 노출
-    non_ok = [c for c in report.checks if c.status != "ok"]
-    if non_ok:
-        with st.expander(
-            f"검수 이슈 {len(non_ok)}건", expanded=(report.overall == "fail")
-        ):
-            for chk in non_ok:
-                icon = "❌" if chk.status == "fail" else "⚠️"
-                line = f"{icon} **{chk.name}**"
-                if chk.detail:
-                    line += f" — {chk.detail}"
-                if chk.expected is not None or chk.actual is not None:
-                    line += f"  (기대 `{chk.expected}` / 실제 `{chk.actual}`)"
-                st.markdown(line)
+    # 검수 요약 — 전체 체크 항목 (원본 프로젝트와 동일)
+    _STATUS_ICON = {"ok": "✅", "warning": "⚠️", "fail": "❌"}
+    summary_rows = [
+        {
+            "검수 항목": chk.name,
+            "상태": _STATUS_ICON.get(chk.status, "?"),
+            "상세": (
+                chk.detail or (
+                    f"기대 {chk.expected} / 실제 {chk.actual}"
+                    if (chk.expected is not None or chk.actual is not None) else ""
+                )
+            ),
+        }
+        for chk in report.checks
+    ]
+    st.dataframe(
+        pd.DataFrame(summary_rows),
+        width="stretch", hide_index=True,
+        column_config={
+            "검수 항목": st.column_config.TextColumn("검수 항목", width="medium"),
+            "상태": st.column_config.TextColumn("상태", width="small"),
+            "상세": st.column_config.TextColumn("상세", width="large"),
+        },
+    )
 
     # SKU 별 검수 결과 — 거래명세서 매칭 인덱스
     inv_by_bc: dict[str, Any] = {}
