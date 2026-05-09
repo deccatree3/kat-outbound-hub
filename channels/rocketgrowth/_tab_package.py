@@ -260,13 +260,31 @@ def render(brand: str):
     mc5.metric("총중량 (kg)", f"{weight_kg:,.1f}")
 
     # 계획 상세 — 항상 표시 (접기 X)
+    def _box_composition(qty, box_qty):
+        """확정 수량 + 박스인입 -> 쿠팡 Wing '박스 구성' 입력 형식.
+        - qty 가 box_qty 의 배수: box_qty 그대로 (예: 100/50 -> '50')
+        - qty <= box_qty: qty (부분 박스 1개) (예: 48/50 -> '48')
+        - 그 외 (배수 아님 + qty > box_qty): 'box_qty + remainder'
+          (예: 75/50 -> '50 + 25' = 50개 1박스 + 25개 1박스)
+        """
+        if not qty:
+            return "0"
+        bq = max(int(box_qty or 1), 1)
+        q = int(qty)
+        if q <= bq:
+            return str(q)
+        if q % bq == 0:
+            return str(bq)
+        rem = q % bq
+        return f"{bq} + {rem}"
+
     plan_df = pd.DataFrame([{
         "상품명": (
             f"{(cp_master_by_opt.get(i.coupang_option_id).product_name if cp_master_by_opt.get(i.coupang_option_id) else (i.product_name or ''))} "
             f"{(cp_master_by_opt.get(i.coupang_option_id).option_name if cp_master_by_opt.get(i.coupang_option_id) else (i.option_name or ''))}"
         ).strip(),
         "상품수": i.inbound_qty_final,
-        "box인입": i.box_qty,
+        "box인입": _box_composition(i.inbound_qty_final, i.box_qty),
         "박스수": _math.ceil((i.inbound_qty_final or 0) / max(int(i.box_qty or 1), 1)),
         "소비기한": i.wms_short_expiry,
     } for i in items])
@@ -275,8 +293,8 @@ def render(brand: str):
         column_config={
             "상품명": st.column_config.TextColumn("상품명", width="large"),
             "상품수": st.column_config.NumberColumn("상품수", format="%d"),
-            "box인입": st.column_config.NumberColumn(
-                "box인입", format="%d", help="박스 1개당 들어가는 상품 수",
+            "box인입": st.column_config.TextColumn(
+                "box인입", help="쿠팡 Wing 박스 구성 입력값. 배수 아닐 시 'X + 잔여' 형식.",
             ),
             "박스수": st.column_config.NumberColumn("박스수", format="%d"),
             "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),
