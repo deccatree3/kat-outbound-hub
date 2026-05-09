@@ -853,7 +853,7 @@ def render(brand: str):
 
     if confirmed_qty == 0 and not last_saved:
         st.button(
-            "입고 수량 확정 + 저장",
+            "입고 수량 확정",
             disabled=True, width="stretch",
             help="확정 수량 1개 이상 입력 필요.",
             key=f"rg_{brand}_save_disabled",
@@ -861,10 +861,35 @@ def render(brand: str):
         st.caption("확정 수량을 입력한 후 이 버튼 → DB 저장 + 쿠팡 입고생성 양식 다운로드.")
         return
 
+    # 재고 부족 체크 — 확정수량 > 0 인데 단일 배치로 커버 불가한 SKU
+    insufficient_to_save = allocated_df[
+        (allocated_df["selected_status"] == "insufficient")
+        & (allocated_df["inbound_final"].fillna(0).astype(int) > 0)
+    ]
+    if len(insufficient_to_save) > 0 and not last_saved:
+        st.error(
+            f"⚠️ **재고 부족 SKU {len(insufficient_to_save)}건** 으로 입고 확정 불가. "
+            "해당 SKU 의 확정 수량을 0 또는 가용 재고 이내로 조정 후 다시 시도하세요."
+        )
+        with st.expander(f"부족 SKU 목록 ({len(insufficient_to_save)}건)", expanded=True):
+            _disp = insufficient_to_save[[
+                "coupang_option_id", "product_name", "inbound_final",
+                "pool_remaining_base", "max_single_batch_after",
+            ]].copy()
+            _disp.columns = ["옵션ID", "상품명", "확정수량", "출고후잔여(낱개)", "단일배치 최대"]
+            st.dataframe(_disp, width="stretch", hide_index=True)
+        st.button(
+            "입고 수량 확정",
+            disabled=True, width="stretch",
+            help="재고 부족 SKU 해결 후 활성화.",
+            key=f"rg_{brand}_save_blocked",
+        )
+        return
+
     # 저장 직후가 아니면 저장 버튼 노출
     if not last_saved:
         if st.button(
-            f"💾 입고 수량 확정 + 저장 ({confirmed_qty:,}개)",
+            f"입고 수량 확정 ({confirmed_qty:,}개)",
             type="primary", width="stretch",
             help="DB 저장 + 쿠팡 입고생성 양식 자동 생성. 저장 후 탭 2 결과물 패키지에서 이어서 진행.",
             key=f"rg_{brand}_save_btn",
