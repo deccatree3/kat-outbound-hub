@@ -810,15 +810,18 @@ def render(brand: str):
     col_s1.metric("확정 수량 (낱개)", f"{confirmed_qty:,}")
     col_s2.metric("확정 박스수", _fmt_boxes(confirmed_boxes_sum))
     if _pallet_sz:
+        pallet_decimal = confirmed_boxes_sum / _pallet_sz
         pallet_full = int(confirmed_boxes_sum // _pallet_sz)
         pallet_remainder = round(confirmed_boxes_sum - pallet_full * _pallet_sz, 1)
     else:
+        pallet_decimal = 0.0
         pallet_full = 0
         pallet_remainder = confirmed_boxes_sum
-    pallet_remainder_disp = (
-        f" + {_fmt_boxes(pallet_remainder)}박스" if pallet_remainder > 0 else " (꽉참)"
-    )
-    col_s3.metric("팔레트", f"{pallet_full}{pallet_remainder_disp}")
+    if pallet_remainder == 0 and pallet_full > 0:
+        pallet_disp = f"{pallet_full} (꽉참)"
+    else:
+        pallet_disp = f"{pallet_decimal:.2f}({pallet_full}+{_fmt_boxes(pallet_remainder)}박스)"
+    col_s3.metric("팔레트", pallet_disp)
     col_s4.metric(
         "총중량 (kg)",
         f"{total_weight_kg:,.1f}",
