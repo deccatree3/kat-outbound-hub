@@ -379,14 +379,6 @@ def render(brand: str):
         movement_file = _DBFile(*plan_files_db["movement"]) if "movement" in plan_files_db else None
         # 수량확정 = 재확정 모드 (existing_plan_id 로 update)
         st.session_state[f"rg_{brand}_last_saved_plan_id"] = selected_plan_id
-        st.markdown(
-            f"<div style='padding:8px 12px; background:#eff6ff; border-left:4px solid #3b82f6; "
-            f"border-radius:4px; margin:4px 0 12px 0; font-size:0.92em;'>"
-            f"📋 plan <b>#{selected_plan_id}</b> 편집 모드 — 수량 변경 후 "
-            f"<b>수량확정 재확정</b> 시 양식 자동 재생성"
-            f"</div>",
-            unsafe_allow_html=True,
-        )
     else:
         # 신규 계획 — file uploader UI
         st.markdown("##### 1-1 기초자료 업로드")
