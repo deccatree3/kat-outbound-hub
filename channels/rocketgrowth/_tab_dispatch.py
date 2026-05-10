@@ -71,7 +71,7 @@ def render(brand: str):
                     "📥 이지어드민 발주서양식 (택배)",
                     data=order_xlsx,
                     file_name=(
-                        f"{brand_company}_이지어드민_발주서_{data.fc}_{data.datesuf}.xlsx"
+                        f"{brand_company}_이지어드민 발주서_{data.fc}_{data.datesuf}.xlsx"
                     ),
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     width="stretch", type="primary",
