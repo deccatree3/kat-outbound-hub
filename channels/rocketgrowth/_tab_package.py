@@ -536,8 +536,15 @@ def render(brand: str):
         meta['fc_name'] = attachment.fc_name
     if attachment.arrival_date:
         meta['arrival_date'] = attachment.arrival_date
-    if attachment.milkrun_id:
-        meta['milkrun_id'] = attachment.milkrun_id
+    # milkrun_id 결정:
+    #   택배: 부착문서 itr_id (요청ID, 예: 131139976)
+    #   밀크런: 거래명세서 order_id (발주번호, 예: 128907348)
+    if (plan.shipment_type or 'milkrun') == 'parcel':
+        _derived_milkrun_id = getattr(attachment, 'itr_id', None)
+    else:
+        _derived_milkrun_id = invoice.order_id if invoice and invoice.order_id else None
+    if _derived_milkrun_id:
+        meta['milkrun_id'] = _derived_milkrun_id
 
     # 첨부 파싱 결과를 plan 에 영구 반영 → 다음 렌더 시 컨텍스트 바 갱신
     _ctx_changed = False
@@ -549,8 +556,8 @@ def render(brand: str):
         if attachment.arrival_date and pdb_ctx.arrival_date != attachment.arrival_date:
             pdb_ctx.arrival_date = attachment.arrival_date
             _ctx_changed = True
-        if attachment.milkrun_id and pdb_ctx.milkrun_id != attachment.milkrun_id:
-            pdb_ctx.milkrun_id = attachment.milkrun_id
+        if _derived_milkrun_id and pdb_ctx.milkrun_id != _derived_milkrun_id:
+            pdb_ctx.milkrun_id = _derived_milkrun_id
             _ctx_changed = True
         if _ctx_changed:
             ps.commit()
@@ -588,19 +595,19 @@ def render(brand: str):
             expected_manufacture=emfg,
         ))
 
-    # 중복 체크 (밀크런 ID 기준)
+    # 중복 체크 (운송별 식별 ID 기준 — 밀크런: 발주번호, 택배: 요청ID)
     duplicate = False
-    if attachment.milkrun_id:
+    if _derived_milkrun_id:
         with get_session() as ds:
             dups = ds.execute(select(CoupangResultLog).where(
-                CoupangResultLog.milkrun_id == attachment.milkrun_id,
+                CoupangResultLog.milkrun_id == _derived_milkrun_id,
                 CoupangResultLog.company_name == brand_company,
             )).scalars().all()
             existing_ids = {d.plan_id for d in dups}
             if dups and plan.id not in existing_ids:
                 duplicate = True
                 st.warning(
-                    f"⚠️ 밀크런 ID {attachment.milkrun_id} 이미 처리된 이력 있음 — 다른 plan."
+                    f"⚠️ ID {_derived_milkrun_id} 이미 처리된 이력 있음 — 다른 plan."
                 )
 
     # 검수 실행
@@ -807,7 +814,7 @@ def render(brand: str):
                             pdb.fc_name = meta['fc_name']
                             pdb.worker = meta['worker']
                             pdb.arrival_date = meta['arrival_date']
-                            pdb.milkrun_id = meta['milkrun_id'] or attachment.milkrun_id or None
+                            pdb.milkrun_id = meta['milkrun_id'] or _derived_milkrun_id or None
                             pdb.shipment_type = meta['shipment_type']
                             pdb.total_pallets = pa.pallet_count if meta['shipment_type'] == 'milkrun' else None
                             items_by_opt = {it.coupang_option_id: it for it in s4.execute(
@@ -836,7 +843,7 @@ def render(brand: str):
                             tb = sum(s.boxes for s in planned)
                             s4.add(CoupangResultLog(
                                 company_name=brand_company,
-                                milkrun_id=attachment.milkrun_id or "",
+                                milkrun_id=_derived_milkrun_id or "",
                                 fc_name=meta['fc_name'], arrival_date=meta['arrival_date'],
                                 total_pallets=pa.pallet_count, total_boxes=tb,
                                 total_skus=len([s for s in planned if s.boxes > 0]),
