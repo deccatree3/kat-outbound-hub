@@ -461,10 +461,7 @@ def render():
     _render_classify_result(jp_orders, kr_orders, unknown_orders, both_active)
 
     _render_kr_action(kr_orders)
-    _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
-    # ↑ KR(국내) 먼저 처리(배송준비 전환). JP(일본) 분기는 일본 출고 탭에서 진행.
-
-    # ─── 주문수집 확정 ─────
+    # ─── 주문수집 확정 (배송준비 전환 후, 상품별 출고처 위) ─────
     st.markdown("---")
     brief_id = st.session_state.get('qoo10_brief_id')
     if brief_id:
@@ -492,6 +489,9 @@ def render():
                     st.rerun()
                 except Exception as ex:
                     st.error(f"저장 실패: {ex}")
+
+    _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
+    # ↑ KR(국내) 배송준비 전환 → 주문수집 확정 → 상품별 출고처(참고).
 
     st.markdown("---")
     if st.button("🗑 수집 초기화 (재수집)", key="cu_reset_btn"):
