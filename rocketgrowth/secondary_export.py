@@ -454,7 +454,13 @@ def build_parcel_consolidation_list(
     ws = wb.active
     ws.title = "상품리스트"
 
+    # 스타일
     bold = Font(bold=True)
+    center = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center")
+    yellow = PatternFill("solid", fgColor="FFFF00")  # 상단 요약 헤더 + 우측 헤더 그룹
+    green = PatternFill("solid", fgColor="92D050")   # 좌측 헤더 그룹 (FC/옵션ID/상품명/바코드)
+    even_box_fill = PatternFill("solid", fgColor="FBE2D5")  # 짝수 아웃박스NO 행 (옅은 빨강)
 
     # ─── 박스 단위 분할 ─────
     # SKU별 박스 qty 리스트 + 매칭 SKU
@@ -532,60 +538,78 @@ def build_parcel_consolidation_list(
                 "expiry": it.expiry_date,
             })
 
-    # ===== Row 1 (col H~J): 요약 헤더 =====
+    # ===== Row 1 (col H~J): 요약 헤더 (yellow) =====
     for col, val in [(8, "FC"), (9, "SKU"), (10, "총 수량")]:
         c = ws.cell(1, col, val)
         c.font = bold
+        c.alignment = center
+        c.fill = yellow
     sku_count = len({r["option_id"] for r in box_rows})
     total_qty = sum(r["qty"] for r in box_rows)
-    # Row 2: 데이터
-    ws.cell(2, 8, fc_name)
-    ws.cell(2, 9, sku_count)
-    ws.cell(2, 10, total_qty)
-    # Row 6: total
-    ws.cell(6, 8, "total").font = bold
-    ws.cell(6, 9, sku_count).font = bold
-    ws.cell(6, 10, total_qty).font = bold
+    # Row 2: 데이터 (center)
+    for col, val in [(8, fc_name), (9, sku_count), (10, total_qty)]:
+        c = ws.cell(2, col, val)
+        c.alignment = center
+    # Row 6: total (bold center)
+    for col, val in [(8, "total"), (9, sku_count), (10, total_qty)]:
+        c = ws.cell(6, col, val)
+        c.font = bold
+        c.alignment = center
 
-    # ===== Row 8: 섹션 마커 =====
+    # ===== Row 8: 섹션 마커 (bold left) =====
     ws.cell(8, 1, "■ 상품목록").font = bold
+    ws.cell(8, 1).alignment = left_align
     ws.cell(8, 12, "■ 번들작업표").font = bold
+    ws.cell(8, 12).alignment = left_align
 
-    # ===== Row 9: 컬럼 헤더 =====
+    # ===== Row 9: 컬럼 헤더 — 좌측 1~5 green, 6~10 yellow, 우측 12~16 no fill =====
     main_headers = [
         "FC", "옵션ID", "상품명", "바코드(WMS)", "바코드(부착)",
         "수량", "소비기한", "인박스", "아웃박스", "아웃박스NO",
     ]
     for i, h in enumerate(main_headers, start=1):
-        ws.cell(9, i, h).font = bold
+        c = ws.cell(9, i, h)
+        c.font = bold
+        c.alignment = center
+        c.fill = green if i <= 5 else yellow
     bundle_headers = ["바코드(WMS)", "바코드(부착)", "상품명", "수량", "소비기한"]
     for i, h in enumerate(bundle_headers, start=12):
-        ws.cell(9, i, h).font = bold
+        c = ws.cell(9, i, h)
+        c.font = bold
+        c.alignment = center
 
-    # ===== Row 10+: 좌측 상품목록 =====
+    # ===== Row 10+: 좌측 상품목록 — 짝수 아웃박스NO 행에 옅은 색상 =====
     for ri, r in enumerate(box_rows, start=10):
+        is_even = (r["out_box_no"] % 2 == 0)
+        row_fill = even_box_fill if is_even else None
         ws.cell(ri, 1, r["fc"])
         ws.cell(ri, 2, r["option_id"])
         ws.cell(ri, 3, r["product_name"])
         ws.cell(ri, 4, r["wms_barcode"])
         ws.cell(ri, 5, r["attached_barcode"])
-        ws.cell(ri, 6, r["qty"])
+        c_qty = ws.cell(ri, 6, r["qty"])
+        c_qty.alignment = center
         if r["expiry"]:
-            ws.cell(ri, 7, r["expiry"])
-            ws.cell(ri, 7).number_format = "YYYY-MM-DD"
-        ws.cell(ri, 8, r["in_box"])
-        ws.cell(ri, 9, r["out_box"])
-        ws.cell(ri, 10, r["out_box_no"])
+            c_exp = ws.cell(ri, 7, r["expiry"])
+            c_exp.number_format = "YYYY-MM-DD"
+            c_exp.alignment = center
+        ws.cell(ri, 8, r["in_box"]).alignment = center
+        ws.cell(ri, 9, r["out_box"]).alignment = center
+        ws.cell(ri, 10, r["out_box_no"]).alignment = center
+        if row_fill:
+            for col in range(1, 11):  # A~J
+                ws.cell(ri, col).fill = row_fill
 
-    # ===== Row 10+: 우측 번들작업표 =====
+    # ===== Row 10+: 우측 번들작업표 (배경색 X) =====
     for ri, r in enumerate(bundle_rows, start=10):
         ws.cell(ri, 12, r["wms_barcode"])
         ws.cell(ri, 13, r["attached_barcode"])
         ws.cell(ri, 14, r["product_name"])
-        ws.cell(ri, 15, r["qty"])
+        ws.cell(ri, 15, r["qty"]).alignment = center
         if r["expiry"]:
-            ws.cell(ri, 16, r["expiry"])
-            ws.cell(ri, 16).number_format = "YYYY-MM-DD"
+            c_bexp = ws.cell(ri, 16, r["expiry"])
+            c_bexp.number_format = "YYYY-MM-DD"
+            c_bexp.alignment = center
 
     # 컬럼 폭 조정
     widths = {1: 12, 2: 14, 3: 40, 4: 18, 5: 18, 6: 8, 7: 14, 8: 8, 9: 10, 10: 12,
