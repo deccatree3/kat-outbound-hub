@@ -577,6 +577,7 @@ def build_parcel_consolidation_list(
         c = ws.cell(9, i, h)
         c.font = bold
         c.alignment = center
+        c.fill = yellow
 
     # ===== Row 10+: 좌측 상품목록 — 짝수 아웃박스NO 행에 옅은 색상 =====
     for ri, r in enumerate(box_rows, start=10):
