@@ -350,7 +350,60 @@ def render():
     jp_orders, kr_orders, unknown_orders, both_active = _classify(qsm_rows, jp_map, kr_map)
     _render_classify_result(jp_orders, kr_orders, unknown_orders, both_active)
     _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
-    # 국내 출고 분기 (KR 배송상태 변경) 는 탭 2 (🇰🇷 국내 출고) 로 이전.
+    # 국내 출고 분기 상세 표는 탭 2 에 있음. 여기는 액션 버튼만 노출.
+
+    # ─── 국내 출고 배송상태 변경 (주문수집 확정 위) ─────
+    if kr_orders:
+        today = kst_today()
+        today_str = today.strftime('%Y-%m-%d')
+        today_yyyymmdd = today.strftime('%Y%m%d')
+        order_nos = [str(q.get('주문번호', '')).strip() for q in kr_orders
+                     if str(q.get('주문번호', '')).strip()]
+
+        st.markdown("---")
+        last_result = st.session_state.get('cu_kr_last_result')
+        if last_result:
+            if last_result['ok']:
+                st.success(
+                    f"✅ 직전 호출 성공: {last_result['count']}건 배송상태 변경 완료. "
+                    f"(ResultMsg: {last_result['msg']})"
+                )
+            else:
+                st.error(
+                    f"❌ 직전 호출 실패 (ResultCode={last_result['code']}, "
+                    f"ResultMsg={last_result['msg']})"
+                )
+        btn = f"🚚 국내 출고 {len(order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
+        if st.button(btn, type="primary", width="stretch",
+                     key="cu_kr_send_ready_btn_tab1"):
+            try:
+                sak = qapi.get_sak()
+            except Exception as ex:
+                st.error(f"SAK 발급 실패: {ex}")
+                return
+            with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(order_nos)}건)..."):
+                try:
+                    result = qapi.set_seller_check_yn(sak, order_nos, today_yyyymmdd)
+                except Exception as ex:
+                    st.error(f"API 호출 실패: {ex}")
+                    return
+            st.session_state['cu_kr_last_result'] = result
+            if result['ok']:
+                # 처리된 KR 주문은 session 에서 제거
+                remaining = [
+                    q for q in qsm_rows
+                    if str(q.get('주문번호', '')).strip() not in set(order_nos)
+                ]
+                st.session_state['cu_qsm_rows'] = remaining
+                st.success(
+                    f"✅ {len(order_nos)}건 배송상태 변경 완료. "
+                    "이후 KSE OMS 국내가 자동 수집."
+                )
+                st.rerun()
+            else:
+                st.error(
+                    f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']})."
+                )
 
     # ─── 페이지 하단 — 주문수집 확정 + 수집 초기화 ─────
     st.markdown("---")
