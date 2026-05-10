@@ -167,107 +167,15 @@ def _render_pending_mappings(unknown_rows, mappings):
                         st.error("매핑 등록 실패 (DB 연결 확인)")
 
 
-def _render_kr_transition_section(brief_content: bytes) -> None:
-    """탭 2 — 국내 출고 분기 + 배송상태 변경 버튼.
-
-    탭 1 에서 확정된 brief 의 KR 매핑 주문을 SetSellerCheckYN_V2 로 stat=3 (배송준비)
-    전이. 이후 KSE OMS 국내가 자동 수집 → 아래 KSE OMS xlsx 업로드 흐름으로 진행.
-    """
-    from qoo10 import generator as qgen
-    from qoo10 import api_client as qapi
-    from channels.cachers_qoo10._tab_new_orders import _classify
-    from channels import _db_cache as _cache
-    from utils.timezone import kst_today
-
-    try:
-        qsm_rows = qgen.parse_qsm_csv(brief_content)
-    except Exception as ex:
-        st.error(f"brief CSV 파싱 실패: {ex}")
-        return
-
-    CHANNEL_JP = 'qoo10_japan'
-    CHANNEL_KR = 'cachers_qoo10_kr'
-    jp_map = _cache.load_mapping(CHANNEL_JP, active_only=True)
-    kr_map = _cache.load_mapping(CHANNEL_KR, active_only=True)
-    _jp, kr_orders, _unk, _conf = _classify(qsm_rows, jp_map, kr_map)
-
-    st.markdown("### 국내 출고 분기 (한국 다원 → KSE → 일본)")
-    if not kr_orders:
-        st.info("📦 이 brief 에 KR 매핑 주문 없음.")
-        return
-
-    today = kst_today()
-    today_str = today.strftime('%Y-%m-%d')
-    today_yyyymmdd = today.strftime('%Y%m%d')
-    st.caption(
-        f"KR 활성 매핑 {len(kr_orders)} 건 — 배송상태 변경 후 KSE OMS 국내가 "
-        f"자동 수집. 발송예정일은 KST 오늘 ({today_str})."
-    )
-
-    df = pd.DataFrame([{
-        '주문번호': q.get('주문번호', ''),
-        '장바구니번호': q.get('장바구니번호', ''),
-        '상품명': (q.get('상품명') or '')[:40],
-        '옵션': (q.get('옵션정보') or '')[:30],
-        '수량': q.get('수량', 1),
-    } for q in kr_orders[:50]])
-    st.dataframe(df, hide_index=True, width="stretch")
-    if len(kr_orders) > 50:
-        st.caption(f"… 50/{len(kr_orders)} 행 표시")
-
-    last_result = st.session_state.get('cu_kr_last_result')
-    if last_result:
-        if last_result['ok']:
-            st.success(
-                f"✅ 직전 호출 성공: {last_result['count']}건 배송상태 변경 완료. "
-                f"(ResultMsg: {last_result['msg']})"
-            )
-        else:
-            st.error(
-                f"❌ 직전 호출 실패 (ResultCode={last_result['code']}, "
-                f"ResultMsg={last_result['msg']})"
-            )
-
-    order_nos = [str(q.get('주문번호', '')).strip() for q in kr_orders
-                 if str(q.get('주문번호', '')).strip()]
-    btn_label = f"🚚 국내 출고 {len(order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
-    if st.button(btn_label, type="primary", width="stretch", key="cu_kr_send_ready_btn"):
-        if not order_nos:
-            st.error("주문번호 없음 — 호출 중단")
-            return
-        try:
-            sak = qapi.get_sak()
-        except Exception as ex:
-            st.error(f"SAK 발급 실패: {ex}")
-            return
-        with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(order_nos)}건)..."):
-            try:
-                result = qapi.set_seller_check_yn(sak, order_nos, today_yyyymmdd)
-            except Exception as ex:
-                st.error(f"API 호출 실패: {ex}")
-                return
-        st.session_state['cu_kr_last_result'] = result
-        if result['ok']:
-            st.success(
-                f"✅ {len(order_nos)}건 배송상태 변경 완료. "
-                "이후 KSE OMS 국내가 자동 수집 — 아래에서 KSE OMS xlsx 업로드 진행."
-            )
-            st.rerun()
-        else:
-            st.error(
-                f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']}). "
-                "Qoo10 셀러 지원 또는 자격증명 만료 확인 필요."
-            )
-
-
 def render_page():
     _map.ensure_schema()
     st.markdown(
         "Qoo10 일본 주문 중 **한국 다원 → KSE 한국 → 일본** 출고 분량. "
-        "탭 1 발주계획 선택 → 국내 출고 배송상태 변경 → KSE OMS xlsx 업로드 → 다원 발주서."
+        "탭 1 발주계획 확정 → KSE OMS xlsx 업로드 → 다원 발주서."
     )
 
-    # 발주계획 picker — 탭 1 에서 '주문수집 확정' 한 brief 노출
+    # 발주계획 picker — 탭 1 에서 '주문수집 확정' 한 brief 컨텍스트만 표시
+    # (배송상태 변경은 탭 1 에서만 수행 — 여기는 후속 KSE OMS 처리 단계.)
     from channels.cachers_qoo10._brief_picker import render_brief_picker
     picked = render_brief_picker(
         key_prefix='cu_kr',
@@ -280,13 +188,9 @@ def render_page():
         st.caption(
             f"📋 발주계획 #{picked['id']} · "
             f"{wd.strftime('%Y-%m-%d') if wd else '—'} / {sq}차 · "
-            f"{picked.get('cart_count', 0)}건"
+            f"{picked.get('cart_count', 0)}건 — 컨텍스트 표시 "
+            "(국내 출고 배송상태 변경은 탭 1 에서 수행)."
         )
-        # 국내 출고 분기 (KR 배송상태 변경)
-        brief_content = st.session_state.get('qoo10_brief_bytes')
-        if brief_content:
-            st.markdown("---")
-            _render_kr_transition_section(brief_content)
     st.markdown("---")
 
     uploaded_files = st.file_uploader(
