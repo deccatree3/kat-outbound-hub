@@ -42,8 +42,9 @@ from rocketgrowth.verification import (
 )
 
 from channels.rocketgrowth._helpers import (
-    STATUS_LABELS, derive_substatus_label, get_fc_info, jump_to_tab, load_plan_files,
-    resolve_parent_barcode, save_plan_files, section_note, upsert_fc_info,
+    AGETSHOT_BOX_CAPACITY, STATUS_LABELS, derive_substatus_label, get_fc_info,
+    is_agetshot_bundle, jump_to_tab, load_plan_files, resolve_parent_barcode,
+    save_plan_files, section_note, upsert_fc_info,
 )
 
 
@@ -256,12 +257,28 @@ def render(brand: str):
     st.subheader("① 쿠팡 입고생성 계획")
     section_note("아래 계획대로 Wing에서 입고생성을 해주세요.")
 
-    # 메트릭 — 박스수/팔레트 ceil 기반 (탭 1 과 동일)
+    # 에이지샷 번들 식별 (캐처스 전용 — box인입 = FREE, capacity=100)
+    def _is_agetshot_for(i):
+        if brand != 'cachers':
+            return False
+        cm_i = cp_master_by_opt.get(i.coupang_option_id)
+        own_bc = cm_i.wms_barcode if cm_i else None
+        wms_i = wms_master_by_bc.get(own_bc) if own_bc else None
+        if wms_i is None and cm_i and cm_i.coupang_option_id in wms_master_by_opt:
+            wms_i = wms_master_by_opt[cm_i.coupang_option_id]
+        return is_agetshot_bundle(cm_i, wms_i)
+
+    def _boxes_for_item(i):
+        qty = int(i.inbound_qty_final or 0)
+        if qty <= 0:
+            return 0
+        if _is_agetshot_for(i):
+            return _math.ceil(qty / AGETSHOT_BOX_CAPACITY)
+        return _math.ceil(qty / max(int(i.box_qty or 1), 1))
+
+    # 메트릭 — 박스수/팔레트 ceil 기반 (탭 1 과 동일, 에이지샷 분기 포함)
     total_qty = int(sum(int(i.inbound_qty_final or 0) for i in items))
-    total_boxes = int(sum(
-        _math.ceil((i.inbound_qty_final or 0) / max(int(i.box_qty or 1), 1))
-        for i in items
-    ))
+    total_boxes = int(sum(_boxes_for_item(i) for i in items))
     psz = cfg.pallet_size_boxes
     if psz:
         pallet_decimal = total_boxes / psz
@@ -306,7 +323,7 @@ def render(brand: str):
             return [(bq, full)]
         return [(bq, full), (rem, 1)]
 
-    # SKU 마다 박스 구성에 따라 1+ 행 생성
+    # SKU 마다 박스 구성에 따라 1+ 행 생성 (에이지샷 번들은 box인입=FREE 단일 행)
     plan_rows = []
     for i in items:
         cm = cp_master_by_opt.get(i.coupang_option_id)
@@ -316,14 +333,25 @@ def render(brand: str):
         ).strip()
         qty = int(i.inbound_qty_final or 0)
         expiry = i.wms_short_expiry
-        for per_box, num_boxes in _box_compositions(qty, i.box_qty):
+        if _is_agetshot_for(i):
+            # 에이지샷 번들: 1번들=1인박스, 100/아웃박스. box인입 표기 = FREE
+            n_box = _math.ceil(qty / AGETSHOT_BOX_CAPACITY) if qty > 0 else 0
             plan_rows.append({
                 "상품명": name,
                 "상품수": qty,
-                "box인입": per_box,
-                "박스수": num_boxes,
+                "box인입": "FREE" if qty > 0 else "0",
+                "박스수": n_box,
                 "소비기한": expiry,
             })
+        else:
+            for per_box, num_boxes in _box_compositions(qty, i.box_qty):
+                plan_rows.append({
+                    "상품명": name,
+                    "상품수": qty,
+                    "box인입": str(per_box),
+                    "박스수": num_boxes,
+                    "소비기한": expiry,
+                })
     plan_df = pd.DataFrame(plan_rows)
 
     st.dataframe(
@@ -334,9 +362,9 @@ def render(brand: str):
                 "상품수", format="%d",
                 help="해당 SKU 의 확정 수량 (행 분할되어도 동일 — 같은 SKU 임을 표시)",
             ),
-            "box인입": st.column_config.NumberColumn(
-                "box인입", format="%d",
-                help="박스 1개당 들어가는 상품 수 (멀티 박스 구성 시 행 분할)",
+            "box인입": st.column_config.TextColumn(
+                "box인입",
+                help="박스 1개당 상품 수. 에이지샷 번들 (캐처스): 'FREE' (인박스/아웃박스 룰).",
             ),
             "박스수": st.column_config.NumberColumn("박스수", format="%d"),
             "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),

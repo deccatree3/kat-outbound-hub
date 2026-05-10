@@ -370,6 +370,30 @@ def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
     return "📝 임시저장"
 
 
+def is_agetshot_bundle(cp_master, wms_master) -> bool:
+    """에이지샷 번들 SKU 식별 ([캐처스]로켓그로스 박스 계산용).
+
+    조건 (둘 중 하나라도 매칭):
+    - 쿠팡 등록상품명에 '에이지샷' + 옵션명에 '2개' 또는 '3개'
+    - WMS 제품명에 '에이지샷' + 낱개수량(unit_qty) 2 또는 3
+    """
+    if cp_master is not None:
+        pname = (cp_master.product_name or '')
+        oname = (cp_master.option_name or '')
+        if '에이지샷' in pname and ('2개' in oname or '3개' in oname):
+            return True
+    if wms_master is not None:
+        wname = (wms_master.product_name or '')
+        uq = wms_master.unit_qty
+        if '에이지샷' in wname and (uq == 2 or uq == 3):
+            return True
+    return False
+
+
+# 에이지샷 박스 capacity (에이지샷 9호 = 대2 = max 100 인박스)
+AGETSHOT_BOX_CAPACITY = 100
+
+
 def jump_to_tab(tab_index: int) -> None:
     """JS injection 으로 Streamlit 탭 자동 전환.
 

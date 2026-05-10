@@ -33,7 +33,8 @@ from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
 from sqlalchemy import desc
 
 from channels.rocketgrowth._helpers import (
-    QTY_LOCKED_STATUSES, derive_substatus_label, jump_to_tab, ni, load_plan_files,
+    AGETSHOT_BOX_CAPACITY, QTY_LOCKED_STATUSES, derive_substatus_label,
+    is_agetshot_bundle, jump_to_tab, ni, load_plan_files,
     resolve_parent_barcode, save_plan, section_note,
 )
 
@@ -575,6 +576,12 @@ def render(brand: str):
             or (cm.product_name if cm else "")
         )
 
+        # 에이지샷 번들 식별 (캐처스 only — 다른 brand 는 일반 logic)
+        _is_agetshot = (
+            brand == 'cachers'
+            and is_agetshot_bundle(cm, own_wp or parent_wp)
+        )
+
         rows.append({
             "urgency": urgency_badge(engine_out.urgency),
             "urgency_key": engine_out.urgency,
@@ -582,6 +589,7 @@ def render(brand: str):
             "parent_wms_barcode": parent_bc,
             "own_wms_barcode": own_bc,
             "unit_qty": unit_qty,
+            "is_agetshot": _is_agetshot,
             "product_name": wms_product_name,
             "orderable": cp.orderable_stock,
             "inbound_stock": cp.inbound_stock,
@@ -771,9 +779,12 @@ def render(brand: str):
         if v is None or (isinstance(v, float) and pd.isna(v)):
             return None
         import math as _math
-        box = max(int(r["box_qty"] or 1), 1)
         qty = int(v)
-        # 박스 미충족도 1박스로 계산 (ceil). 예: box=50, qty=48 -> 1
+        # 에이지샷 번들 (캐처스): 박스 capacity = 100 (에이지샷 9호 max fit)
+        if r.get("is_agetshot"):
+            return _math.ceil(qty / AGETSHOT_BOX_CAPACITY) if qty > 0 else 0
+        box = max(int(r["box_qty"] or 1), 1)
+        # 일반 SKU: 박스 미충족도 1박스 (ceil). 예: box=50, qty=48 -> 1
         return _math.ceil(qty / box)
 
     allocated_df["confirmed_boxes"] = allocated_df.apply(_calc_confirmed_boxes, axis=1)
@@ -1078,9 +1089,12 @@ def render(brand: str):
         if qty > 0:
             active_cnt += 1
             import math as _math
-            box = int(r.get("box_qty") or 1)
-            # 박스수: ceil — 박스인입 미충족도 1박스 (확정(box) 컬럼과 동일)
-            box_val = _math.ceil(qty / max(box, 1))
+            # 박스수: 에이지샷 번들이면 capacity=100, 일반은 box_qty (ceil)
+            if r.get("is_agetshot"):
+                box_val = _math.ceil(qty / AGETSHOT_BOX_CAPACITY)
+            else:
+                box = int(r.get("box_qty") or 1)
+                box_val = _math.ceil(qty / max(box, 1))
             confirmed_qty += qty
             confirmed_boxes_sum += box_val
             unit_w = int(r.get("weight_g") or 0)
