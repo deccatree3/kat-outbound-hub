@@ -74,11 +74,14 @@ def derive_attached_barcode(sku: PlannedSku) -> tuple[str | None, str]:
     """이 SKU 에 출력될 부착바코드와 종류 반환.
 
     Returns: (barcode, type)  type ∈ {'쿠팡바코드', '88코드'}
+
+    쿠팡 어드민의 'SKU 바코드' 필드(=coupang_barcode)에 값이 있으면 그것이 부착바코드.
+    값이 'S0…' 이면 쿠팡 자체 발급 코드, '880…' 등 13자리면 제조사 88코드(GS1 GTIN)를
+    사업자가 그대로 등록한 케이스 — 두 경우 모두 라벨 PDF 에 그 값이 출력된다.
     """
-    # S00 으로 시작하면 쿠팡바코드
-    if sku.coupang_barcode and sku.coupang_barcode.startswith("S0"):
-        return sku.coupang_barcode, "쿠팡바코드"
-    # 그렇지 않으면 88코드 (wms_barcode)
+    if sku.coupang_barcode:
+        kind = "쿠팡바코드" if sku.coupang_barcode.startswith("S0") else "88코드"
+        return sku.coupang_barcode, kind
     return sku.own_wms_barcode, "88코드"
 
 
@@ -86,13 +89,15 @@ def is_label_expected(sku: PlannedSku) -> bool:
     """라벨 PDF 출력 대상인지 판정.
 
     출력 대상:
-      1. 번들 (unit_qty >= 2)
-      2. 단품(unit_qty=1) 이지만 쿠팡바코드(S00) 사용
+      1. 번들 (unit_qty >= 2) — 88코드/쿠팡바코드 무관
+      2. 단품(unit_qty=1) + 쿠팡 자체 발급 'S0…' 바코드
+         (단품 + 88코드는 제조사 라벨 그대로 사용 — 별도 출력 X)
     """
     if sku.unit_qty and sku.unit_qty >= 2:
         return True
-    bc, kind = derive_attached_barcode(sku)
-    return kind == "쿠팡바코드"
+    if sku.coupang_barcode and sku.coupang_barcode.startswith("S0"):
+        return True
+    return False
 
 
 def verify(
