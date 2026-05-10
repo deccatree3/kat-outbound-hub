@@ -173,11 +173,42 @@ def _render_kr_action(kr_orders):
                 f"ResultMsg={last_result['msg']})"
             )
 
-    btn_label = f"🚚 KR {len(kr_orders)}건 배송준비로 전환 (발송예정일 {today_str})"
+    # ─── 🧪 테스트 모드 — 특정 주문번호만 전환 ─────
+    with st.expander("🧪 테스트 — 특정 주문번호만 선택해서 전환", expanded=False):
+        st.caption(
+            "전체 KR 주문 대신 선택한 주문번호만 SetSellerCheckYN_V2 호출. "
+            "API 동작 검증용."
+        )
+        # multiselect — 라벨에 장바구니번호도 같이 노출
+        opts_kr = []
+        opt_label_map = {}
+        for q in kr_orders:
+            ono = str(q.get('주문번호', '')).strip()
+            cno = str(q.get('장바구니번호', '')).strip()
+            pname = (q.get('상품명') or '')[:30]
+            if ono:
+                opts_kr.append(ono)
+                opt_label_map[ono] = f"{ono} · 장바구니 {cno} · {pname}"
+        picked = st.multiselect(
+            "테스트할 주문번호 선택",
+            options=opts_kr,
+            format_func=lambda o: opt_label_map.get(o, o),
+            key="kr_test_pick",
+        )
+
+    use_test = bool(picked)
+    target_order_nos = picked if use_test else [
+        str(q.get('주문번호', '')).strip() for q in kr_orders
+        if str(q.get('주문번호', '')).strip()
+    ]
+
+    btn_label = (
+        f"🧪 테스트 — {len(target_order_nos)}건 배송준비로 전환 (발송예정일 {today_str})"
+        if use_test else
+        f"🚚 KR {len(target_order_nos)}건 배송준비로 전환 (발송예정일 {today_str})"
+    )
     if st.button(btn_label, type="primary", width="stretch", key="kr_send_ready_btn"):
-        order_nos = [str(q.get('주문번호', '')).strip() for q in kr_orders
-                     if str(q.get('주문번호', '')).strip()]
-        if not order_nos:
+        if not target_order_nos:
             st.error("주문번호 없음 — 호출 중단")
             return
         try:
@@ -185,9 +216,9 @@ def _render_kr_action(kr_orders):
         except Exception as ex:
             st.error(f"SAK 발급 실패: {ex}")
             return
-        with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(order_nos)}건)..."):
+        with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(target_order_nos)}건)..."):
             try:
-                result = qapi.set_seller_check_yn(sak, order_nos, today_yyyymmdd)
+                result = qapi.set_seller_check_yn(sak, target_order_nos, today_yyyymmdd)
             except Exception as ex:
                 st.error(f"API 호출 실패: {ex}")
                 return
@@ -195,12 +226,12 @@ def _render_kr_action(kr_orders):
         if result['ok']:
             # 성공 시 처리된 KR 주문 session 에서 제거 (재요청 방지) — JP/미매핑/충돌은 유지
             qsm_rows = st.session_state.get('cu_qsm_rows', [])
-            kr_order_set = set(order_nos)
+            kr_order_set = set(target_order_nos)
             remaining = [q for q in qsm_rows
                          if str(q.get('주문번호', '')).strip() not in kr_order_set]
             st.session_state['cu_qsm_rows'] = remaining
             st.success(
-                f"✅ {len(order_nos)}건 배송준비 전이 완료. "
+                f"✅ {len(target_order_nos)}건 배송준비 전이 완료. "
                 "이후 KSE OMS 국내가 자동 수집 — 우리 시스템에서 추가 작업 X."
             )
             st.rerun()
