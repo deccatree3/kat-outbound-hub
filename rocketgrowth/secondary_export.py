@@ -25,6 +25,22 @@ from rocketgrowth.coupang_result import LabelInfo
 from rocketgrowth.pallet_assign import PalletAssignment, PalletEntry
 
 
+# 에이지샷 1호 인박스 → 에이지샷 9호 max fit (정리.xlsx Sheet3)
+_AGETSHOT_OUTBOX_CAPACITY = 100
+
+
+def _is_agetshot_bundle_secondary(it: "SecondaryItem") -> bool:
+    """에이지샷 번들 SKU 식별. _helpers.is_agetshot_bundle 의 SecondaryItem 버전."""
+    pname = it.product_name or ''
+    oname = it.option_name or ''
+    if '에이지샷' in pname and ('2개' in oname or '3개' in oname):
+        return True
+    wname = it.wms_product_name or ''
+    if '에이지샷' in wname and (it.unit_qty in (2, 3)):
+        return True
+    return False
+
+
 # ============================================================================
 # 공통 데이터 구조
 # ============================================================================
@@ -439,6 +455,7 @@ def build_parcel_consolidation_list(
     work_date: date,
     company_short: str = "서현",
     sku_order: list[str] | None = None,
+    brand: str | None = None,
 ) -> bytes:
     """택배 취합리스트 엑셀 생성 (단일 FC).
 
@@ -468,31 +485,48 @@ def build_parcel_consolidation_list(
     even_box_fill = PatternFill("solid", fgColor="FBE2D5")  # 짝수 아웃박스NO 행 (옅은 빨강)
 
     # ─── 박스 단위 분할 ─────
-    # SKU별 박스 qty 리스트 + 매칭 SKU
-    sku_to_boxes: dict[str, tuple[SecondaryItem, list[int]]] = {}
+    # SKU별 박스 entry 리스트 (qty, inbox, outbox) + 매칭 SKU
+    # 일반 SKU: box_qty 기준 분할, 인박스/아웃박스 = '-'
+    # 에이지샷 번들 (캐처스 only): 100단위 분할, 인박스='에이지샷 1호', 아웃박스 best-fit
+    from outputs.packing.boxes import select_outbox_for as _select_outbox
+
+    sku_to_boxes: dict[str, tuple[SecondaryItem, list[tuple[int, str, str]]]] = {}
     for it in items:
         if (it.inbound_qty or 0) <= 0:
             continue
-        bq = max(int(it.box_qty or 1), 1)
         q = int(it.inbound_qty)
-        if q <= bq:
-            comps = [(q, 1)]
+        is_agetshot = (brand == 'cachers') and _is_agetshot_bundle_secondary(it)
+        if is_agetshot:
+            # 1번들 = 1 에이지샷 1호 인박스, 100단위 = 1 에이지샷 9호 아웃박스
+            full = q // _AGETSHOT_OUTBOX_CAPACITY
+            rem = q % _AGETSHOT_OUTBOX_CAPACITY
+            entries: list[tuple[int, str, str]] = []
+            for _ in range(full):
+                obox, _fit = _select_outbox('에이지샷 1호', _AGETSHOT_OUTBOX_CAPACITY)
+                entries.append((_AGETSHOT_OUTBOX_CAPACITY, '에이지샷 1호', obox or '-'))
+            if rem > 0:
+                obox, _fit = _select_outbox('에이지샷 1호', rem)
+                entries.append((rem, '에이지샷 1호', obox or '-'))
+            entries.sort(key=lambda e: e[0])
         else:
-            full = q // bq
-            rem = q % bq
-            if rem == 0:
-                comps = [(bq, full)]
+            bq = max(int(it.box_qty or 1), 1)
+            if q <= bq:
+                comps = [(q, 1)]
             else:
-                comps = [(bq, full), (rem, 1)]
-        # Expand to individual boxes
-        boxes_qty: list[int] = []
-        for per_box, num_boxes in comps:
-            boxes_qty.extend([per_box] * num_boxes)
-        # 같은 SKU 내 수량 적은 것 먼저
-        boxes_qty.sort()
+                full = q // bq
+                rem = q % bq
+                if rem == 0:
+                    comps = [(bq, full)]
+                else:
+                    comps = [(bq, full), (rem, 1)]
+            box_qtys: list[int] = []
+            for per_box, num_boxes in comps:
+                box_qtys.extend([per_box] * num_boxes)
+            box_qtys.sort()
+            entries = [(qty, '-', '-') for qty in box_qtys]
         # 매칭 키 = 부착바코드 (단품/번들 모두 부착문서에 표기되는 값)
         key = it.coupang_barcode or it.own_wms_barcode or str(it.coupang_option_id)
-        sku_to_boxes[key] = (it, boxes_qty)
+        sku_to_boxes[key] = (it, entries)
 
     # ─── SKU 순서 결정 (부착문서 SKU 순서 우선) ─────
     ordered_keys: list[str] = []
@@ -508,9 +542,9 @@ def build_parcel_consolidation_list(
     box_rows: list[dict] = []
     box_no = 1
     for key in ordered_keys:
-        it, boxes_qty = sku_to_boxes[key]
+        it, entries = sku_to_boxes[key]
         prod_name = (it.wms_product_name or it.product_name or "").strip()
-        for qty in boxes_qty:
+        for qty, inbox, outbox in entries:
             box_rows.append({
                 "fc": fc_name,
                 "option_id": it.coupang_option_id,
@@ -519,8 +553,8 @@ def build_parcel_consolidation_list(
                 "attached_barcode": it.coupang_barcode or it.own_wms_barcode or "",
                 "qty": qty,
                 "expiry": it.expiry_date,
-                "in_box": "-",
-                "out_box": "-",
+                "in_box": inbox,
+                "out_box": outbox,
                 "out_box_no": box_no,
             })
             box_no += 1

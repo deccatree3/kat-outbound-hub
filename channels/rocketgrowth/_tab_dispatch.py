@@ -117,6 +117,7 @@ def render(brand: str):
             cons = build_parcel_consolidation_list(
                 data.sec_items, fc, arr, brand_company,
                 sku_order=getattr(data.attachment, 'sku_order', None),
+                brand=brand,
             )
         with dc[0]:
             st.download_button(
