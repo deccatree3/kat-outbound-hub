@@ -145,6 +145,12 @@ class AttachmentMeta:
     box_barcode: str | None = None    # MRN9946685
     total_pallets: int = 0            # 페이지 수
     pallets: list[dict[str, Any]] = field(default_factory=list)  # [{no, label, page}]
+    # 택배 부착문서 전용
+    is_parcel: bool = False
+    sku_order: list[str] = field(default_factory=list)  # 부착문서 SKU 나열 순서
+    total_boxes: int = 0              # 페이지 수 (택배 1박스/페이지)
+    shipment_id: str | None = None    # 'PBL0099303906' 같은 쉽먼트번호
+    inbound_id: str | None = None     # 19자리 입고번호
 
 
 _FC_LINE = re.compile(r"([가-힣\d]+)\(?(\d+)?\)?\s*\[로켓그로스\]\s*팔레트\s*(\S+)")
@@ -155,6 +161,11 @@ _FC_NAME_LINE = re.compile(r"^([가-힣\d]+)\((\d+)\)\s*\[로켓그로")
 _MILKRUN_LINE = re.compile(r"^(\d{6,})\s+(\d{4}-\d{2}-\d{2})")
 _BOX_BARCODE = re.compile(r"^(MRN\d+)")
 _COMPANY_LINE = re.compile(r"(주식회사\s*[가-힣\w]+|㈜\s*[가-힣\w]+)")
+
+# 택배 부착문서 전용 패턴
+_PARCEL_FC_LINE = re.compile(r"^([가-힣\d]+)\s*\[([A-Z\d]+)\]\s*$")  # '안산3 [SAN3]'
+_SKU_BARCODE_LINE = re.compile(r"^[S]?\d{12,14}$")  # 단품 13자리 또는 S+12~13자리
+_PARCEL_SHIPMENT_LINE = re.compile(r"^(PBL\d+)$")
 
 
 def parse_attachment_doc(pdf_input: str | Path | bytes | BytesIO) -> AttachmentMeta:
@@ -241,6 +252,81 @@ def parse_attachment_doc(pdf_input: str | Path | bytes | BytesIO) -> AttachmentM
     else:
         meta.total_pallets = 0
 
+    return meta
+
+
+def parse_parcel_attachment_doc(pdf_input: str | Path | bytes | BytesIO) -> AttachmentMeta:
+    """택배 (쉽먼트) 부착문서 PDF 파싱.
+
+    구조 (각 페이지 = 1 박스, 단일 FC):
+      - 1줄: '*모든 박스 겉면에 ...'
+      - 2줄: 'FC명 [FC_CODE]' (예: '안산3 [SAN3]')
+      - '입고번호/Inbound ID  상품 정보/Product info.' 헤더
+      - 그 아래 라인들: SKU 바코드들 (13자리 또는 S+12~13자리) + Inbound ID (16+자리)
+      - '쉽먼트번호/Shipment ID' 헤더 → 'PBL...' 값
+      - '요청ID/ITR numbers' → 짧은 숫자
+      - 회사명 (주식회사 ...)
+      - 박스 번호 (001, 002, ...)
+
+    SKU 나열 순서 == 박스 NO 순서 (사용자 검증). 같은 SKU 중 수량 적은 것 먼저는
+    별도 정렬 단계에서 처리.
+    """
+    meta = AttachmentMeta(is_parcel=True)
+
+    if isinstance(pdf_input, (bytes, bytearray)):
+        pdf_input = BytesIO(pdf_input)
+
+    sku_order_seen: list[str] = []
+    sku_order_set: set[str] = set()
+
+    with pdfplumber.open(pdf_input) as pdf:
+        meta.total_boxes = len(pdf.pages)
+
+        for page in pdf.pages:
+            text = page.extract_text() or ""
+            lines = [l.strip() for l in text.split("\n") if l.strip()]
+
+            in_product_section = False
+            for line in lines:
+                # FC: '안산3 [SAN3]'
+                m = _PARCEL_FC_LINE.match(line)
+                if m and not meta.fc_name:
+                    meta.fc_name = m.group(1)
+                    meta.fc_code = m.group(2)
+                    continue
+
+                # '상품 정보/Product info.' 섹션 시작
+                if "Product info" in line or ("상품 정보" in line and "Inbound" in line):
+                    in_product_section = True
+                    continue
+
+                # '쉽먼트번호/Shipment ID' 섹션 시작 → 상품 정보 종료
+                if "Shipment ID" in line or "쉽먼트번호" in line:
+                    in_product_section = False
+                    continue
+
+                if in_product_section:
+                    # SKU 바코드 vs Inbound ID 구분 (길이로)
+                    if _SKU_BARCODE_LINE.match(line):
+                        if line not in sku_order_set:
+                            sku_order_set.add(line)
+                            sku_order_seen.append(line)
+                    elif line.isdigit() and len(line) >= 16:
+                        if not meta.inbound_id:
+                            meta.inbound_id = line
+
+                # 쉽먼트번호 (PBL...)
+                m = _PARCEL_SHIPMENT_LINE.match(line)
+                if m and not meta.shipment_id:
+                    meta.shipment_id = m.group(1)
+                    continue
+
+                # 회사명
+                m = _COMPANY_LINE.search(line)
+                if m and not meta.company_name:
+                    meta.company_name = m.group(1).strip()
+
+    meta.sku_order = sku_order_seen
     return meta
 
 

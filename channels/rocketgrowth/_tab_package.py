@@ -26,6 +26,7 @@ from sqlalchemy import desc, select
 from rocketgrowth.config import load_config
 from rocketgrowth.coupang_result import (
     parse_attachment_doc, parse_barcode_labels, parse_invoice_doc,
+    parse_parcel_attachment_doc,
 )
 from rocketgrowth.db import get_session
 from rocketgrowth.models import (
@@ -468,7 +469,11 @@ def render(brand: str):
         save_plan_files(plan.id, new_pdfs)
 
     labels_parsed = parse_barcode_labels(lb)
-    attachment = parse_attachment_doc(ab)
+    # 운송방식별 부착문서 파서 분기
+    if (plan.shipment_type or 'milkrun') == 'parcel':
+        attachment = parse_parcel_attachment_doc(ab)
+    else:
+        attachment = parse_attachment_doc(ab)
     invoice = parse_invoice_doc(ib) if ib else None
 
     # 메타 입력 UI 가 제거됨 — 첨부문서 파싱 결과로 자동 보정

@@ -13,7 +13,9 @@ import streamlit as st
 from sqlalchemy import desc, select
 
 from rocketgrowth.config import load_config
-from rocketgrowth.coupang_result import parse_attachment_doc, parse_invoice_doc
+from rocketgrowth.coupang_result import (
+    parse_attachment_doc, parse_invoice_doc, parse_parcel_attachment_doc,
+)
 from rocketgrowth.db import get_session
 from rocketgrowth.models import (
     CoupangProduct, InboundPlan, InboundPlanItem, WmsProduct,
@@ -148,7 +150,12 @@ def build_dispatch_data(brand: str, brand_company: str, plan: InboundPlan) -> Di
         )
         return None
 
-    attachment = parse_attachment_doc(attach_bytes)
+    # 운송방식별 부착문서 파서 분기
+    is_parcel_ship = (plan.shipment_type or 'milkrun') == 'parcel'
+    if is_parcel_ship:
+        attachment = parse_parcel_attachment_doc(attach_bytes)
+    else:
+        attachment = parse_attachment_doc(attach_bytes)
     invoice = parse_invoice_doc(invoice_bytes) if invoice_bytes else None
 
     # SecondaryItem 빌드

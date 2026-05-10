@@ -10,7 +10,7 @@ import streamlit as st
 
 from rocketgrowth.secondary_export import (
     build_consolidation_list, build_pallet_loading_list,
-    update_inventory_movement,
+    build_parcel_consolidation_list, update_inventory_movement,
 )
 
 from channels.rocketgrowth._helpers import section_note
@@ -57,10 +57,17 @@ def render(brand: str):
     else:
         dc = st.columns(2)
     try:
-        cons = build_consolidation_list(
-            data.sec_items, data.pa, fc, arr, brand_company,
-            data.invoice.order_id if data.invoice and data.invoice.order_id else data.attachment.milkrun_id,
-        )
+        if is_milkrun:
+            cons = build_consolidation_list(
+                data.sec_items, data.pa, fc, arr, brand_company,
+                data.invoice.order_id if data.invoice and data.invoice.order_id else data.attachment.milkrun_id,
+            )
+        else:
+            # 택배: 부착문서 SKU 순서 기반 박스 NO 자동 부여
+            cons = build_parcel_consolidation_list(
+                data.sec_items, fc, arr, brand_company,
+                sku_order=getattr(data.attachment, 'sku_order', None),
+            )
         with dc[0]:
             st.download_button(
                 "📥 취합리스트", data=cons,
@@ -137,16 +144,25 @@ def render(brand: str):
             key=f"disp_{brand}_dl_lb_{plan.id}",
         )
     with dpc[2]:
-        attach_label = "팔레트부착" if is_milkrun else "박스부착"
+        if is_milkrun:
+            attach_filename = f"밀크런_물류부착문서1 (팔레트부착문서)_{fc}_{datesuf}.pdf"
+            attach_label = "팔레트부착"
+        else:
+            # 택배: 쉽먼트_물류부착문서_{FC}_{date}.pdf
+            attach_filename = f"쉽먼트_물류부착문서_{fc}_{datesuf}.pdf"
+            attach_label = "박스부착"
         st.download_button(
             f"📥 물류부착문서({attach_label})", data=data.attach_bytes,
-            file_name=f"{ship_prefix}_물류부착문서1 ({attach_label}문서)_{fc}_{datesuf}.pdf",
+            file_name=attach_filename,
             mime="application/pdf", width="stretch", type="primary",
             key=f"disp_{brand}_dl_ab_{plan.id}",
         )
 
     if not is_milkrun:
-        st.info("📦 택배 박스 라벨 출력 양식은 후속 단계에서 추가 예정.")
+        st.caption(
+            "📦 택배: 박스 NO 는 부착문서 SKU 나열 순서 기준 자동 부여 "
+            "(같은 SKU 내 수량 적은 박스가 먼저)."
+        )
 
     # 다음 단계 (송장 후처리 탭으로 이동)
     st.divider()

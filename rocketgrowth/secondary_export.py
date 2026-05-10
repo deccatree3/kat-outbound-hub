@@ -426,6 +426,179 @@ def build_consolidation_list(
 
 
 # ============================================================================
+# 1b) 택배 취합리스트 (단일 FC)
+# ============================================================================
+def build_parcel_consolidation_list(
+    items: list[SecondaryItem],
+    fc_name: str,
+    work_date: date,
+    company_short: str = "서현",
+    sku_order: list[str] | None = None,
+) -> bytes:
+    """택배 취합리스트 엑셀 생성 (단일 FC).
+
+    구조 (sample 기반):
+      - Row 1 (col H~J): 'FC' | 'SKU' | '총 수량'
+      - Row 2: fc_name | sku_count | total_qty
+      - Row 6: 'total' | sku_count | total_qty
+      - Row 8 (col A): '■ 상품목록' / Row 8 (col L): '■ 번들작업표'
+      - Row 9: 컬럼 헤더
+      - Row 10+: 박스별 데이터 (좌) + 번들 작업표 (우)
+
+    박스 NO 부여:
+      - sku_order (부착문서 SKU 나열 순서) 따라 정렬
+      - 같은 SKU 내 여러 박스: 수량 적은 것 먼저
+      - 1, 2, 3, ... 순차 부여
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "상품리스트"
+
+    bold = Font(bold=True)
+
+    # ─── 박스 단위 분할 ─────
+    # SKU별 박스 qty 리스트 + 매칭 SKU
+    sku_to_boxes: dict[str, tuple[SecondaryItem, list[int]]] = {}
+    for it in items:
+        if (it.inbound_qty or 0) <= 0:
+            continue
+        bq = max(int(it.box_qty or 1), 1)
+        q = int(it.inbound_qty)
+        if q <= bq:
+            comps = [(q, 1)]
+        else:
+            full = q // bq
+            rem = q % bq
+            if rem == 0:
+                comps = [(bq, full)]
+            else:
+                comps = [(bq, full), (rem, 1)]
+        # Expand to individual boxes
+        boxes_qty: list[int] = []
+        for per_box, num_boxes in comps:
+            boxes_qty.extend([per_box] * num_boxes)
+        # 같은 SKU 내 수량 적은 것 먼저
+        boxes_qty.sort()
+        # 매칭 키 = 부착바코드 (단품/번들 모두 부착문서에 표기되는 값)
+        key = it.coupang_barcode or it.own_wms_barcode or str(it.coupang_option_id)
+        sku_to_boxes[key] = (it, boxes_qty)
+
+    # ─── SKU 순서 결정 (부착문서 SKU 순서 우선) ─────
+    ordered_keys: list[str] = []
+    if sku_order:
+        for sku in sku_order:
+            if sku in sku_to_boxes and sku not in ordered_keys:
+                ordered_keys.append(sku)
+    for k in sku_to_boxes:
+        if k not in ordered_keys:
+            ordered_keys.append(k)
+
+    # ─── 박스 NO 순차 부여 ─────
+    box_rows: list[dict] = []
+    box_no = 1
+    for key in ordered_keys:
+        it, boxes_qty = sku_to_boxes[key]
+        prod_name = (it.wms_product_name or it.product_name or "").strip()
+        for qty in boxes_qty:
+            box_rows.append({
+                "fc": fc_name,
+                "option_id": it.coupang_option_id,
+                "product_name": prod_name,
+                "wms_barcode": it.own_wms_barcode or "",
+                "attached_barcode": it.coupang_barcode or it.own_wms_barcode or "",
+                "qty": qty,
+                "expiry": it.expiry_date,
+                "in_box": "-",
+                "out_box": "-",
+                "out_box_no": box_no,
+            })
+            box_no += 1
+
+    # ─── 번들작업표 (번들 SKU 만, 각 1행, 총 수량) ─────
+    bundle_rows: list[dict] = []
+    for it in items:
+        if (it.inbound_qty or 0) <= 0:
+            continue
+        is_bundle = (
+            it.coupang_barcode and it.own_wms_barcode
+            and it.coupang_barcode != it.own_wms_barcode
+        )
+        if is_bundle:
+            bundle_rows.append({
+                "wms_barcode": it.own_wms_barcode or "",
+                "attached_barcode": it.coupang_barcode or "",
+                "product_name": (it.wms_product_name or it.product_name or "").strip(),
+                "qty": int(it.inbound_qty),
+                "expiry": it.expiry_date,
+            })
+
+    # ===== Row 1 (col H~J): 요약 헤더 =====
+    for col, val in [(8, "FC"), (9, "SKU"), (10, "총 수량")]:
+        c = ws.cell(1, col, val)
+        c.font = bold
+    sku_count = len({r["option_id"] for r in box_rows})
+    total_qty = sum(r["qty"] for r in box_rows)
+    # Row 2: 데이터
+    ws.cell(2, 8, fc_name)
+    ws.cell(2, 9, sku_count)
+    ws.cell(2, 10, total_qty)
+    # Row 6: total
+    ws.cell(6, 8, "total").font = bold
+    ws.cell(6, 9, sku_count).font = bold
+    ws.cell(6, 10, total_qty).font = bold
+
+    # ===== Row 8: 섹션 마커 =====
+    ws.cell(8, 1, "■ 상품목록").font = bold
+    ws.cell(8, 12, "■ 번들작업표").font = bold
+
+    # ===== Row 9: 컬럼 헤더 =====
+    main_headers = [
+        "FC", "옵션ID", "상품명", "바코드(WMS)", "바코드(부착)",
+        "수량", "소비기한", "인박스", "아웃박스", "아웃박스NO",
+    ]
+    for i, h in enumerate(main_headers, start=1):
+        ws.cell(9, i, h).font = bold
+    bundle_headers = ["바코드(WMS)", "바코드(부착)", "상품명", "수량", "소비기한"]
+    for i, h in enumerate(bundle_headers, start=12):
+        ws.cell(9, i, h).font = bold
+
+    # ===== Row 10+: 좌측 상품목록 =====
+    for ri, r in enumerate(box_rows, start=10):
+        ws.cell(ri, 1, r["fc"])
+        ws.cell(ri, 2, r["option_id"])
+        ws.cell(ri, 3, r["product_name"])
+        ws.cell(ri, 4, r["wms_barcode"])
+        ws.cell(ri, 5, r["attached_barcode"])
+        ws.cell(ri, 6, r["qty"])
+        if r["expiry"]:
+            ws.cell(ri, 7, r["expiry"])
+            ws.cell(ri, 7).number_format = "YYYY-MM-DD"
+        ws.cell(ri, 8, r["in_box"])
+        ws.cell(ri, 9, r["out_box"])
+        ws.cell(ri, 10, r["out_box_no"])
+
+    # ===== Row 10+: 우측 번들작업표 =====
+    for ri, r in enumerate(bundle_rows, start=10):
+        ws.cell(ri, 12, r["wms_barcode"])
+        ws.cell(ri, 13, r["attached_barcode"])
+        ws.cell(ri, 14, r["product_name"])
+        ws.cell(ri, 15, r["qty"])
+        if r["expiry"]:
+            ws.cell(ri, 16, r["expiry"])
+            ws.cell(ri, 16).number_format = "YYYY-MM-DD"
+
+    # 컬럼 폭 조정
+    widths = {1: 12, 2: 14, 3: 40, 4: 18, 5: 18, 6: 8, 7: 14, 8: 8, 9: 10, 10: 12,
+              11: 4, 12: 18, 13: 18, 14: 40, 15: 8, 16: 14}
+    for col, w in widths.items():
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ============================================================================
 # 2) 팔레트적재리스트
 # ============================================================================
 def build_pallet_loading_list(
