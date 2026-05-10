@@ -582,15 +582,30 @@ def render(brand: str):
         movement_inbound_total=mvt_total,
         invoice=invoice,
     )
-    if report.overall == "ok":
+    # 택배는 '팔레트수 일치' 제외 (팔레트 미사용) — overall 도 필터된 체크 기준 재계산
+    _STATUS_ICON = {"ok": "✅", "warning": "⚠️", "fail": "❌"}
+    _PARCEL_EXCLUDE = {"팔레트수 일치"}
+    _checks = [
+        c for c in report.checks
+        if not (_is_parcel_now and c.name in _PARCEL_EXCLUDE)
+    ]
+    if _is_parcel_now:
+        _statuses = [c.status for c in _checks]
+        if any(s == "fail" for s in _statuses):
+            _effective_overall = "fail"
+        elif any(s == "warning" for s in _statuses):
+            _effective_overall = "warning"
+        else:
+            _effective_overall = "ok"
+    else:
+        _effective_overall = report.overall
+
+    if _effective_overall == "ok":
         st.success("✅ 검수 통과")
-    elif report.overall == "warning":
+    elif _effective_overall == "warning":
         st.warning("⚠️ 일부 항목 확인 필요")
     else:
         st.error("❌ 검수 실패")
-
-    # 검수 요약 — 전체 체크 항목 (원본 프로젝트와 동일)
-    _STATUS_ICON = {"ok": "✅", "warning": "⚠️", "fail": "❌"}
     summary_rows = [
         {
             "검수 항목": chk.name,
@@ -602,7 +617,7 @@ def render(brand: str):
                 )
             ),
         }
-        for chk in report.checks
+        for chk in _checks
     ]
     st.dataframe(
         pd.DataFrame(summary_rows),
@@ -684,7 +699,7 @@ def render(brand: str):
     st.divider()
 
     # 검수 통과(ok 또는 warning) 일 때만 버튼 영역 노출. fail 이면 숨김.
-    _verification_passed = report.overall in ("ok", "warning")
+    _verification_passed = _effective_overall in ("ok", "warning")
 
     if not _verification_passed:
         st.warning("❌ 검수 실패 — 위 검수 이슈를 해결한 후 입고생성 확정을 진행할 수 있습니다.")
