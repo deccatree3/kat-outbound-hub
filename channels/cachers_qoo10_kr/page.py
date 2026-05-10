@@ -167,6 +167,49 @@ def _render_pending_mappings(unknown_rows, mappings):
                         st.error("매핑 등록 실패 (DB 연결 확인)")
 
 
+def _render_kr_result_view(brief_content: bytes) -> None:
+    """탭 2 — 국내 출고 분류 결과 (읽기 전용 표시, action 없음).
+
+    탭 1 에서 확정한 brief 의 KR 매핑 주문을 표로 노출. 배송상태 변경 액션은
+    탭 1 에서만 수행 — 여기는 결과 확인용.
+    """
+    from qoo10 import generator as qgen
+    from channels.cachers_qoo10._tab_new_orders import _classify
+    from channels import _db_cache as _cache
+
+    try:
+        qsm_rows = qgen.parse_qsm_csv(brief_content)
+    except Exception as ex:
+        st.error(f"brief CSV 파싱 실패: {ex}")
+        return
+
+    CHANNEL_JP = 'qoo10_japan'
+    CHANNEL_KR = 'cachers_qoo10_kr'
+    jp_map = _cache.load_mapping(CHANNEL_JP, active_only=True)
+    kr_map = _cache.load_mapping(CHANNEL_KR, active_only=True)
+    _jp, kr_orders, _unk, _conf = _classify(qsm_rows, jp_map, kr_map)
+
+    st.markdown("### 📦 국내 출고 분류 결과")
+    if not kr_orders:
+        st.info("📦 이 brief 에 KR 매핑 주문 없음.")
+        return
+
+    st.caption(
+        f"KR 활성 매핑 {len(kr_orders)} 건. 배송상태 변경은 탭 1 에서 수행. "
+        "이후 KSE OMS 국내가 자동 수집 → 아래 KSE OMS xlsx 업로드."
+    )
+    df = pd.DataFrame([{
+        '주문번호': q.get('주문번호', ''),
+        '장바구니번호': q.get('장바구니번호', ''),
+        '상품명': (q.get('상품명') or '')[:40],
+        '옵션': (q.get('옵션정보') or '')[:30],
+        '수량': q.get('수량', 1),
+    } for q in kr_orders[:50]])
+    st.dataframe(df, hide_index=True, width="stretch")
+    if len(kr_orders) > 50:
+        st.caption(f"… 50/{len(kr_orders)} 행 표시")
+
+
 def render_page():
     _map.ensure_schema()
     st.markdown(
@@ -188,9 +231,13 @@ def render_page():
         st.caption(
             f"📋 발주계획 #{picked['id']} · "
             f"{wd.strftime('%Y-%m-%d') if wd else '—'} / {sq}차 · "
-            f"{picked.get('cart_count', 0)}건 — 컨텍스트 표시 "
-            "(국내 출고 배송상태 변경은 탭 1 에서 수행)."
+            f"{picked.get('cart_count', 0)}건"
         )
+        # 국내 출고 분류 결과 (읽기 전용 — 배송상태 변경 액션은 탭 1)
+        brief_content = st.session_state.get('qoo10_brief_bytes')
+        if brief_content:
+            st.markdown("---")
+            _render_kr_result_view(brief_content)
     st.markdown("---")
 
     uploaded_files = st.file_uploader(
