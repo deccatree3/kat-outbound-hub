@@ -103,6 +103,9 @@ def render_work_session_selector(channel: str, key_prefix: str,
     if sel == NEW_OPTION_KEY:
         # 신규 = 오늘 / next_seq 자동. (수동 override UI 제거 — 드롭다운 라벨이
         # 이미 '오늘 / N차 자동' 으로 안내.)
+        # 과거 작업 삭제는 expander 로 노출 (드롭다운 전환 없이 접근 가능).
+        if history:
+            _render_history_delete_expander(history, channel, key_prefix, adapter)
         return {
             'work_date': today,
             'sequence': int(next_seq),
@@ -128,6 +131,61 @@ def render_work_session_selector(channel: str, key_prefix: str,
             'is_new': False,
             'existing_meta': meta,
         }
+
+
+def _render_history_delete_expander(history: List[Dict], channel: str,
+                                     key_prefix: str,
+                                     adapter: WorkSessionAdapter) -> None:
+    """과거 작업 일괄 삭제 expander — 신규 모드에서 노출.
+
+    각 row: 라벨 표시 + 삭제 체크박스. 체크박스 모두 체크 후 '🗑 선택 삭제' 버튼.
+    """
+    with st.expander(f"🗑 과거 작업 삭제 ({len(history)}건)", expanded=False):
+        st.caption("체크 후 아래 '선택 삭제' 버튼 — DB에서 즉시 삭제됨 (복구 불가).")
+        to_delete: List[tuple[datetime.date, int]] = []
+        for h in history:
+            wd, seq = h['work_date'], h['sequence']
+            wt = h.get('work_time')
+            time_str = wt.strftime('%H:%M') if wt else ''
+            n = h['row_count']
+            src = (h.get('source_filename') or '')
+            src_short = (src[:30] + '…') if len(src) > 30 else src
+            head = f"{wd.strftime('%Y-%m-%d')} / {seq}차"
+            if time_str:
+                head += f" - {time_str}"
+            label = f"{head} — {n}행" + (f" · {src_short}" if src_short else '')
+            chk_key = f"{key_prefix}_histdel_chk_{wd.isoformat()}_{seq}"
+            if st.checkbox(label, key=chk_key, value=False):
+                to_delete.append((wd, seq))
+        btn_key = f"{key_prefix}_histdel_btn"
+        if st.button(
+            f"🗑 선택 삭제 ({len(to_delete)}건)",
+            key=btn_key,
+            disabled=(not to_delete),
+            type="primary",
+            width="stretch",
+        ):
+            ok_count = 0
+            fail = []
+            for wd, seq in to_delete:
+                if adapter.delete_one(wd, seq, channel):
+                    ok_count += 1
+                    st.session_state.pop(
+                        f"{key_prefix}_histdel_chk_{wd.isoformat()}_{seq}", None,
+                    )
+                else:
+                    fail.append((wd, seq))
+            if ok_count:
+                st.success(f"✅ {ok_count}건 삭제됨.")
+            if fail:
+                st.error(
+                    "삭제 실패: "
+                    + ", ".join(f"{wd.strftime('%Y-%m-%d')}/{seq}차" for wd, seq in fail)
+                )
+            if ok_count:
+                # selectbox state 도 초기화 (삭제된 row 선택 시 stale 방지)
+                st.session_state.pop(f"{key_prefix}_session_sel", None)
+                st.rerun()
 
 
 def _render_delete_action(channel: str, work_date: datetime.date, sequence: int,
