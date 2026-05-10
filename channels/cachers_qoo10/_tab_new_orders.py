@@ -209,6 +209,8 @@ def _collect_via_api(work_date=None, sequence=None):
         # 미확정 — 하단 '주문수집 확정' 버튼 클릭 시 DB 저장
         st.session_state.pop('qoo10_brief_id', None)
         st.session_state.pop('qoo10_tab1_confirmed', None)
+        st.session_state.pop('cu_kr_transitioned', None)
+        st.session_state.pop('cu_kr_last_result', None)
         st.success(f"✅ {len(qsm_rows)}건 가져옴 — 하단 '주문수집 확정' 버튼으로 저장")
         st.rerun()
 
@@ -240,6 +242,8 @@ def _collect_via_csv(work_date=None, sequence=None):
                 # 미확정 — 하단 '주문수집 확정' 버튼 클릭 시 DB 저장
                 st.session_state.pop('qoo10_brief_id', None)
                 st.session_state.pop('qoo10_tab1_confirmed', None)
+                st.session_state.pop('cu_kr_transitioned', None)
+                st.session_state.pop('cu_kr_last_result', None)
 
     det_ok = bool(st.session_state.get('qoo10_detail_bytes'))
     brief_ok = bool(st.session_state.get('qoo10_brief_bytes'))
@@ -271,6 +275,7 @@ def _collect_via_csv(work_date=None, sequence=None):
 
 def _clear_collected_state():
     for k in ('cu_qsm_rows', 'cu_collect_mode', 'cu_kr_last_result',
+              'cu_kr_transitioned',
               'qoo10_detail_bytes', 'qoo10_detail_name',
               'qoo10_brief_bytes', 'qoo10_brief_name', 'qoo10_brief_id',
               'qoo10_brief_work_date', 'qoo10_brief_sequence',
@@ -343,6 +348,9 @@ def render():
     # 국내 출고 분기 상세 표는 탭 2 에 있음. 여기는 액션 버튼만 노출.
 
     # ─── 국내 출고 배송상태 변경 (주문수집 확정 위) ─────
+    # 성공 시 cu_qsm_rows 는 그대로 두고 cu_kr_transitioned 플래그만 set.
+    # brief 는 수집 시점의 전체(4건) 그대로 저장 → 탭 2/3 가 분류 결과 표시.
+    kr_done = bool(st.session_state.get('cu_kr_transitioned'))
     if kr_orders:
         today = kst_today()
         today_str = today.strftime('%Y-%m-%d')
@@ -351,49 +359,46 @@ def render():
                      if str(q.get('주문번호', '')).strip()]
 
         st.markdown("---")
-        last_result = st.session_state.get('cu_kr_last_result')
-        if last_result:
-            if last_result['ok']:
-                st.success(
-                    f"✅ 직전 호출 성공: {last_result['count']}건 배송상태 변경 완료. "
-                    f"(ResultMsg: {last_result['msg']})"
-                )
-            else:
+        if kr_done:
+            last_result = st.session_state.get('cu_kr_last_result') or {}
+            st.success(
+                f"✅ 배송상태 변경 완료 — {last_result.get('count', len(order_nos))}건. "
+                f"({last_result.get('msg', 'SUCCESS')})"
+            )
+        else:
+            last_result = st.session_state.get('cu_kr_last_result')
+            if last_result and not last_result['ok']:
                 st.error(
                     f"❌ 직전 호출 실패 (ResultCode={last_result['code']}, "
                     f"ResultMsg={last_result['msg']})"
                 )
-        btn = f"🚚 국내 출고 {len(order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
-        if st.button(btn, type="primary", width="stretch",
-                     key="cu_kr_send_ready_btn_tab1"):
-            try:
-                sak = qapi.get_sak()
-            except Exception as ex:
-                st.error(f"SAK 발급 실패: {ex}")
-                return
-            with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(order_nos)}건)..."):
+            btn = f"🚚 국내 출고 {len(order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
+            if st.button(btn, type="primary", width="stretch",
+                         key="cu_kr_send_ready_btn_tab1"):
                 try:
-                    result = qapi.set_seller_check_yn(sak, order_nos, today_yyyymmdd)
+                    sak = qapi.get_sak()
                 except Exception as ex:
-                    st.error(f"API 호출 실패: {ex}")
+                    st.error(f"SAK 발급 실패: {ex}")
                     return
-            st.session_state['cu_kr_last_result'] = result
-            if result['ok']:
-                # 처리된 KR 주문은 session 에서 제거
-                remaining = [
-                    q for q in qsm_rows
-                    if str(q.get('주문번호', '')).strip() not in set(order_nos)
-                ]
-                st.session_state['cu_qsm_rows'] = remaining
-                st.success(
-                    f"✅ {len(order_nos)}건 배송상태 변경 완료. "
-                    "이후 KSE OMS 국내가 자동 수집."
-                )
-                st.rerun()
-            else:
-                st.error(
-                    f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']})."
-                )
+                with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(order_nos)}건)..."):
+                    try:
+                        result = qapi.set_seller_check_yn(sak, order_nos, today_yyyymmdd)
+                    except Exception as ex:
+                        st.error(f"API 호출 실패: {ex}")
+                        return
+                st.session_state['cu_kr_last_result'] = result
+                if result['ok']:
+                    # cu_qsm_rows 는 그대로 — brief 는 수집 시점 전체 유지.
+                    st.session_state['cu_kr_transitioned'] = True
+                    st.success(
+                        f"✅ {len(order_nos)}건 배송상태 변경 완료. "
+                        "이후 KSE OMS 국내가 자동 수집."
+                    )
+                    st.rerun()
+                else:
+                    st.error(
+                        f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']})."
+                    )
 
     # ─── 페이지 하단 — 주문수집 확정 + 수집 초기화 ─────
     # 확정 여부는 탭 1 전용 플래그(qoo10_tab1_confirmed) 로 추적. qoo10_brief_id 는
@@ -405,7 +410,7 @@ def render():
         st.success(f"📋 주문수집 확정됨 — brief #{confirmed_bid} (2/3 탭 발주계획 드롭다운에 노출).")
     else:
         # KR 매핑 미처리 시 비활성. KR 없음 또는 배송상태 변경 완료 시 활성.
-        confirm_disabled = bool(kr_orders)
+        confirm_disabled = bool(kr_orders) and not kr_done
         if st.button(
             "📋 주문수집 확정", type="primary", width="stretch", key="cu_confirm_collect",
             disabled=confirm_disabled,
