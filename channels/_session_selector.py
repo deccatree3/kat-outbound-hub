@@ -76,7 +76,7 @@ def render_work_session_selector(channel: str, key_prefix: str,
 
     def _format(opt):
         if opt == NEW_OPTION_KEY:
-            return f"➕ 신규 작업  (오늘 / {next_seq}차 자동)"
+            return f"➕ 신규 작업  (오늘 / {next_seq}차)"
         wd, seq = opt
         h = history_by_key.get((wd, seq))
         n = h['row_count'] if h else '?'

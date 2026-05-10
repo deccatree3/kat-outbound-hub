@@ -17,30 +17,11 @@ from db import mapping as _m
 from qoo10 import api_client as qapi
 from qoo10 import generator as qgen
 from utils.timezone import kst_today
-from channels._session_selector import (
-    WorkSessionAdapter,
-    render_work_session_selector,
-    is_session_blocked,
-)
 from channels import _db_cache as _cache
 
 
 CHANNEL_JP = 'qoo10_japan'
 CHANNEL_KR = 'cachers_qoo10_kr'
-
-
-def _qoo10_brief_adapter() -> WorkSessionAdapter:
-    """Qoo10 일본 brief 용 adapter (qoo10_pending_brief)."""
-    def _delete(wd, sq, ch):
-        ok = qgen.delete_brief_by_key(wd, sq)
-        if ok:
-            _cache.invalidate_all()
-        return ok
-    return WorkSessionAdapter(
-        list_history=lambda ch: _cache.qoo10_brief_keys(),
-        next_sequence=lambda ch, wd: _cache.qoo10_next_brief_sequence(wd),
-        delete_one=_delete,
-    )
 
 
 def _classify(qsm_rows, jp_map, kr_map):
@@ -304,12 +285,26 @@ def render():
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
 
     if not qsm_rows:
-        # 작업일/차수 selector (다른 채널과 동일 UI)
-        session_info = render_work_session_selector(
-            CHANNEL_JP, key_prefix='qoo10_brief',
-            adapter=_qoo10_brief_adapter(),
+        # 발주계획 picker (탭 1/2/3 통일 UI — 탭 1 만 '+ 신규 작업' 옵션 포함)
+        from channels.cachers_qoo10._brief_picker import render_brief_picker
+        result = render_brief_picker(
+            key_prefix='cu_tab1', allow_new=True,
+            title="발주계획 선택",
         )
-        blocked = is_session_blocked(session_info)
+        if result is None:
+            st.info("위에서 '+ 신규 작업' 또는 기존 발주계획 선택.")
+            return
+        if not result.get('is_new'):
+            # 기존 brief 선택 시: 이미 수집된 batch — 탭 2/3 에서 후속 작업.
+            st.info(
+                f"📋 발주계획 #{result['id']} 는 이미 수집됨. "
+                "탭 2/3 에서 후속 작업 진행 (배송상태 변경/일본 출고 등)."
+            )
+            return
+
+        # 신규 작업 모드
+        work_date = result['work_date']
+        sequence = result['sequence']
 
         # 수집 모드 선택
         mode_options = (["자동 (QSM API)", "수동 (CSV 2개 업로드)"]
@@ -320,18 +315,10 @@ def render():
             help=None if api_available else
                  "Qoo10 API 자격증명이 등록되지 않아 자동 수집 비활성화됨",
         )
-        if blocked:
-            st.button(
-                "🔄 수집 — 같은 작업일/차수 이미 존재 (삭제 후 재시도)",
-                disabled=True, width="stretch", key="cu_collect_blocked",
-            )
-            return
         if mode.startswith("자동"):
-            _collect_via_api(work_date=session_info['work_date'],
-                             sequence=session_info['sequence'])
+            _collect_via_api(work_date=work_date, sequence=sequence)
         else:
-            _collect_via_csv(work_date=session_info['work_date'],
-                             sequence=session_info['sequence'])
+            _collect_via_csv(work_date=work_date, sequence=sequence)
         return
 
     # 수집 완료 — 분류 결과

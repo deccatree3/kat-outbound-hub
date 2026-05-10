@@ -104,8 +104,8 @@ def _tab_jp_outbound():
 def render_page():
     tab_new, tab_kr, tab_jp = st.tabs([
         "📤 1. 신규주문 처리",
-        "🇰🇷 2. 국내 출고",
-        "🇯🇵 3. 일본 출고",
+        "2. 국내 출고",
+        "3. 일본 출고",
     ])
     with tab_new:
         _tab_new_orders()
