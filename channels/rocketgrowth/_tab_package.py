@@ -385,10 +385,17 @@ def render(brand: str):
 
     # ─── ③ 쿠팡 결과물 PDF 업로드 + 검수 ──────────────────
     st.subheader("② 쿠팡 입고생성 결과물 검수")
-    section_note(
-        "쿠팡 결과물 PDF 3종을 업로드하세요. "
-        "바코드 라벨 다운로드 시 소비기한 표기 체크 필수 (번들 상품만 적용)."
-    )
+    _is_parcel_now = (plan.shipment_type or 'milkrun') == 'parcel'
+    if _is_parcel_now:
+        section_note(
+            "쿠팡 결과물 PDF 업로드 — <b>바코드 라벨</b> + <b>부착문서</b> 필수. "
+            "<b>동봉문서는 박스 내 복수 SKU 혼적 시에만 필요</b> (혼적 미운영 시 미업로드)."
+        )
+    else:
+        section_note(
+            "쿠팡 결과물 PDF 3종을 업로드하세요. "
+            "바코드 라벨 다운로드 시 소비기한 표기 체크 필수 (번들 상품만 적용)."
+        )
 
     pdf_up = st.file_uploader(
         "쿠팡 입고생성 결과물 PDF (3개 이내)",
@@ -421,8 +428,10 @@ def render(brand: str):
         invoice_pdf.name = n
 
     # PDF 상태 — 이전 업로드된 파일이 있으면 명시
-    def _pdf_disp(name, file_obj, db_key):
+    def _pdf_disp(name, file_obj, db_key, optional=False):
         if file_obj is None:
+            if optional:
+                return f"— {name} 미업로드 (선택)"
             return f"❌ {name} 미업로드"
         fname = getattr(file_obj, 'name', '?')
         prev = (db_key in plan_files
@@ -435,16 +444,20 @@ def render(brand: str):
         src = " (이전 저장됨)" if prev else " (방금 업로드)"
         return f"✅ {name}: `{fname}`{src}"
 
+    # 동봉문서: 택배는 항상 옵션 (혼적 시만 필요), 밀크런도 사실상 옵션
     st.caption("📎 PDF 상태:")
     for line in [
         _pdf_disp("바코드 라벨", label_pdf, "label_pdf"),
         _pdf_disp("부착 문서", attach_pdf, "attach_pdf"),
-        _pdf_disp("동봉 문서", invoice_pdf, "invoice_pdf"),
+        _pdf_disp("동봉 문서", invoice_pdf, "invoice_pdf", optional=True),
     ]:
         st.caption(line)
 
     if not (label_pdf and attach_pdf):
-        st.info("바코드 라벨 PDF + 부착 문서 PDF 업로드 필요. 동봉 문서는 혼적 박스 있을 때만.")
+        if _is_parcel_now:
+            st.info("바코드 라벨 PDF + 부착 문서 PDF 업로드 필요. 동봉 문서는 혼적 박스 있을 때만 (택배는 보통 미운영).")
+        else:
+            st.info("바코드 라벨 PDF + 부착 문서 PDF 업로드 필요. 동봉 문서는 혼적 박스 있을 때만.")
         return
 
     lb = label_pdf.getvalue() if hasattr(label_pdf, 'getvalue') else label_pdf.read()
