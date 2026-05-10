@@ -663,44 +663,78 @@ def render(brand: str):
         exp_ok = None
         if inv_match and inv_match.expiry and sku.expected_expiry:
             exp_ok = (inv_match.expiry == sku.expected_expiry)
+        # 라벨 인쇄 여부 (단순 존재)
+        label_present_ok: Any = "—" if not expects_label else (label_info is not None)
+        # 라벨 수량 일치 (count == inbound_qty)
         if not expects_label:
-            label_ok = "—"
+            label_count_ok: Any = "—"
+            label_count_actual: Any = "—"
         elif label_info is None:
-            label_ok = False
+            label_count_ok = False
+            label_count_actual = 0
         else:
-            label_ok = (label_info.count == sku.inbound_qty)
+            label_count_ok = (label_info.count == sku.inbound_qty)
+            label_count_actual = label_info.count
+        # 라벨 소비기한 일치
         if not expects_label:
-            label_exp_ok = "—"
+            label_exp_ok: Any = "—"
         elif label_info is None or label_info.expiry is None:
             label_exp_ok = False
         else:
             label_exp_ok = (label_info.expiry == sku.expected_expiry)
 
-        check_rows.append({
-            "옵션ID": sku.coupang_option_id,
-            "SKU ID": sku.sku_id,
-            "상품명": sku.product_name or "",
-            "수량": sku.inbound_qty,
-            "소비기한": sku.expected_expiry,
-            "거래명세서 수량": inv_match.confirmed_qty if inv_match else None,
-            "상품일치": "✅" if name_ok else ("—" if name_ok is None else "❌"),
-            "발주수량": "✅" if qty_ok else ("—" if qty_ok is None else "❌"),
-            "소비기한 일치": "✅" if exp_ok else ("—" if exp_ok is None else "❌"),
-            "라벨 인쇄": "✅" if label_ok is True else ("—" if label_ok == "—" else "❌"),
-            "라벨 소비기한": "✅" if label_exp_ok is True else ("—" if label_exp_ok == "—" else "❌"),
-        })
+        if _is_parcel_now:
+            # 택배: 라벨 정보 위주 (수량/소비기한 검증은 거래명세서 없어 생략)
+            check_rows.append({
+                "옵션ID": sku.coupang_option_id,
+                "SKU ID": sku.sku_id,
+                "상품명": sku.product_name or "",
+                "수량": sku.inbound_qty,
+                "소비기한": sku.expected_expiry,
+                "라벨 인쇄": "—" if label_present_ok == "—" else ("✅" if label_present_ok else "❌"),
+                "라벨 수량": label_count_actual,
+                "라벨 수량 일치": "—" if label_count_ok == "—" else ("✅" if label_count_ok else "❌"),
+                "라벨 소비기한": "—" if label_exp_ok == "—" else ("✅" if label_exp_ok else "❌"),
+            })
+        else:
+            check_rows.append({
+                "옵션ID": sku.coupang_option_id,
+                "SKU ID": sku.sku_id,
+                "상품명": sku.product_name or "",
+                "수량": sku.inbound_qty,
+                "소비기한": sku.expected_expiry,
+                "거래명세서 수량": inv_match.confirmed_qty if inv_match else None,
+                "상품일치": "✅" if name_ok else ("—" if name_ok is None else "❌"),
+                "발주수량": "✅" if qty_ok else ("—" if qty_ok is None else "❌"),
+                "소비기한 일치": "✅" if exp_ok else ("—" if exp_ok is None else "❌"),
+                "라벨 인쇄": "✅" if label_count_ok is True else ("—" if label_count_ok == "—" else "❌"),
+                "라벨 소비기한": "✅" if label_exp_ok is True else ("—" if label_exp_ok == "—" else "❌"),
+            })
 
-    st.dataframe(
-        pd.DataFrame(check_rows),
-        width="stretch", hide_index=True,
-        column_config={
+    if _is_parcel_now:
+        _detail_cfg = {
+            "옵션ID": st.column_config.NumberColumn("옵션ID", format="%d"),
+            "SKU ID": st.column_config.NumberColumn("SKU ID", format="%d"),
+            "상품명": st.column_config.TextColumn("상품명", width="large"),
+            "수량": st.column_config.NumberColumn("수량", format="%d"),
+            "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),
+            "라벨 수량": st.column_config.TextColumn(
+                "라벨 수량", help="실제 라벨 PDF 카운트 (단품은 — 표시)",
+            ),
+        }
+    else:
+        _detail_cfg = {
             "옵션ID": st.column_config.NumberColumn("옵션ID", format="%d"),
             "SKU ID": st.column_config.NumberColumn("SKU ID", format="%d"),
             "상품명": st.column_config.TextColumn("상품명", width="large"),
             "수량": st.column_config.NumberColumn("수량", format="%d"),
             "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),
             "거래명세서 수량": st.column_config.NumberColumn("거래명세서 수량", format="%d"),
-        },
+        }
+    st.dataframe(
+        pd.DataFrame(check_rows),
+        width="stretch", hide_index=True,
+        column_config=_detail_cfg,
     )
 
     # ─── 입고생성 확정 + 다음 단계 (탭 2 마지막, 검수 통과 시 노출) ───
