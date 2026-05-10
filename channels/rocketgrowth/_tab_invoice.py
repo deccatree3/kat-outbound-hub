@@ -18,6 +18,8 @@ from outputs.eza.builder import (
     build_eza_waybill_from_triples,
 )
 from outputs.daone.builder import build_daone_xlsx
+from rocketgrowth.db import get_session
+from rocketgrowth.models import InboundPlan
 from rocketgrowth.secondary_export import build_order_form
 
 from channels.rocketgrowth._helpers import section_note
@@ -39,6 +41,35 @@ CACHERS_INFO = {
     'phone1': '02-0000-0000',
     'phone2': '',
 }
+
+
+def _render_complete_button(brand: str, plan):
+    """탭 4 마지막 — 모든 작업 완료 시 status=completed 로 변경."""
+    st.divider()
+    is_done = (plan.status or "") == "completed"
+    if is_done:
+        st.button(
+            "🏁 완료됨",
+            disabled=True, width="stretch",
+            key=f"inv_{brand}_complete_done_{plan.id}",
+            help=f"plan #{plan.id} status=completed",
+        )
+    else:
+        if st.button(
+            "🏁 완료",
+            type="primary", width="stretch",
+            key=f"inv_{brand}_complete_{plan.id}",
+            help="모든 출고 후 처리 작업 완료. 상태 -> completed.",
+        ):
+            try:
+                with get_session() as _cs:
+                    _p = _cs.get(InboundPlan, plan.id)
+                    _p.status = "completed"
+                    _cs.commit()
+                st.success(f"🏁 완료 (plan #{plan.id})")
+                st.rerun()
+            except Exception as ex:
+                st.error(f"완료 처리 실패: {ex}")
 
 
 def _sec_items_to_daone_rows(sec_items, fc_name, brand_company, milkrun_id, arrival_date):
@@ -170,6 +201,7 @@ def render(brand: str):
             "내부 시스템(또는 직접 출고 채널)에 송장번호 등록. "
             "쿠팡 송장 업로드 양식은 Phase F 후속에서 추가 예정."
         )
+        _render_complete_button(brand, plan)
         return
 
     # 네뉴: 이지어드민 송장 양식 생성
@@ -187,6 +219,7 @@ def render(brand: str):
 
     if not daone_file:
         st.caption("⚠️ 다원 채번 파일 업로드 대기 중.")
+        _render_complete_button(brand, plan)
         return
 
     # 택배사 입력 (default = CJ대한통운)
@@ -251,3 +284,5 @@ def render(brand: str):
         "🚧 **쿠팡 송장 업로드**: 쿠팡 Wing 의 파일 업로드 방식 확인 후 "
         "Phase F 후속 단계에서 양식 추가 예정."
     )
+
+    _render_complete_button(brand, plan)

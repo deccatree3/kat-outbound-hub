@@ -8,6 +8,8 @@ from __future__ import annotations
 
 import streamlit as st
 
+from rocketgrowth.db import get_session
+from rocketgrowth.models import InboundPlan
 from rocketgrowth.secondary_export import (
     build_consolidation_list, build_order_form, build_pallet_loading_list,
     build_parcel_consolidation_list, build_parcel_eza_order_form,
@@ -215,27 +217,55 @@ def render(brand: str):
             "(같은 SKU 내 수량 적은 박스가 먼저)."
         )
 
-    # 다음 단계 (송장 후처리 탭으로 이동)
+    # 출고요청 확정 + 다음 단계
     st.divider()
     import streamlit.components.v1 as components
-    if st.button(
-        "다음 단계 →",
-        key=f"disp_{brand}_goto_invoice_{plan.id}",
-        type="primary",
-        width="stretch",
-        help="송장 후처리 탭으로 자동 이동.",
-    ):
-        st.session_state[f"rg_{brand}_pending_invoice_pick"] = plan.id
-        # tab index: 0=발주계획, 1=쿠팡입고생성, 2=물류센터출고요청, 3=송장후처리
-        components.html(
-            """
-            <script>
-            const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
-            if (tabs.length > 3) {
-                tabs[3].click();
-                window.parent.scrollTo({top: 0, behavior: 'smooth'});
-            }
-            </script>
-            """,
-            height=0,
-        )
+    _already_verified = (plan.status or "") in ("verified", "completed")
+    btm_cols = st.columns(2)
+    with btm_cols[0]:
+        if _already_verified:
+            st.button(
+                "✅ 출고요청 확정됨",
+                disabled=True, width="stretch",
+                key=f"disp_{brand}_verify_done_{plan.id}",
+                help=f"plan #{plan.id} status={plan.status}",
+            )
+        else:
+            if st.button(
+                "출고요청 확정",
+                type="primary", width="stretch",
+                key=f"disp_{brand}_verify_{plan.id}",
+                help="물류센터에 출고 요청 완료. 상태 -> verified (발주확정).",
+            ):
+                try:
+                    with get_session() as _vs:
+                        _p = _vs.get(InboundPlan, plan.id)
+                        _p.status = "verified"
+                        _vs.commit()
+                    st.success(f"✅ 출고요청 확정 완료 (plan #{plan.id})")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"확정 실패: {ex}")
+    with btm_cols[1]:
+        if st.button(
+            "다음 단계 →",
+            key=f"disp_{brand}_goto_invoice_{plan.id}",
+            type="primary" if _already_verified else "secondary",
+            disabled=(not _already_verified),
+            width="stretch",
+            help="출고 후 처리 탭으로 자동 이동 (출고요청 확정 후 활성).",
+        ):
+            st.session_state[f"rg_{brand}_pending_invoice_pick"] = plan.id
+            # tab index: 0=발주계획, 1=쿠팡입고생성, 2=물류센터출고요청, 3=송장후처리
+            components.html(
+                """
+                <script>
+                const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+                if (tabs.length > 3) {
+                    tabs[3].click();
+                    window.parent.scrollTo({top: 0, behavior: 'smooth'});
+                }
+                </script>
+                """,
+                height=0,
+            )
