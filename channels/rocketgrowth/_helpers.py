@@ -300,7 +300,7 @@ STATUS_LABELS = {
     "draft": "📝 임시저장",
     "qty_confirmed": "📋 수량확정",
     "inbound_confirmed": "📦 입고확정",
-    "verified": "✅ 발주확정",
+    "verified": "🚚 출고요청 확정",
     "completed": "🏁 완료",
 }
 
@@ -353,7 +353,7 @@ def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
     - draft             → 📝 임시저장
     - qty_confirmed     → 📋 수량확정
     - inbound_confirmed → 📦 입고확정
-    - verified          → ✅ 발주확정
+    - verified          → 🚚 출고요청 확정
     - completed         → 🏁 완료
 
     has_attach_pdf 파라미터는 호환성을 위해 유지 (현재 라벨에 영향 없음).
@@ -362,7 +362,7 @@ def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
     if s == "inbound_confirmed":
         return "📦 입고확정"
     if s == "verified":
-        return "✅ 발주확정"
+        return "🚚 출고요청 확정"
     if s == "completed":
         return "🏁 완료"
     if s == "qty_confirmed":
