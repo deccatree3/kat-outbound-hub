@@ -631,33 +631,41 @@ def render(brand: str):
         movement_inbound_total=mvt_total,
         invoice=invoice,
     )
-    # 검수 항목 필터/리네임 — 택배는 라벨 관련 3항목만 (사용자 명시)
+    # 검수 항목 필터/리네임
     _STATUS_ICON = {"ok": "✅", "warning": "⚠️", "fail": "❌"}
     _PARCEL_RENAME = {
-        # verification.py CheckItem.name → 사용자 표시명
+        # 택배 — 라벨 관련 3항목
         "라벨 추가(잘못 들어감)": "상품 일치",
         "라벨 누락": "번들 라벨 인쇄",
         "라벨 소비기한 표기": "번들 라벨 소비기한 포함",
     }
+    _MILKRUN_RENAME = {
+        # 밀크런 — 6항목 (원본 프로젝트 동일)
+        "거래명세서 SKU별 수량 일치": "발주수량 일치",
+        "팔레트수 일치": "팔레트수 일치",
+        "총 박스수": "박스수 일치",
+        "거래명세서 소비기한 일치": "소비기한 일치",
+        "라벨 누락": "라벨 인쇄 여부",
+        "라벨 소비기한 표기": "라벨 소비기한 일치",
+    }
     if _is_parcel_now:
-        _checks_pairs = [
-            (_PARCEL_RENAME[c.name], c)
-            for c in report.checks if c.name in _PARCEL_RENAME
-        ]
-        _checks = [c for _, c in _checks_pairs]
+        _rename_map = _PARCEL_RENAME
     else:
-        _checks_pairs = [(c.name, c) for c in report.checks]
-        _checks = list(report.checks)
-    if _is_parcel_now:
-        _statuses = [c.status for c in _checks]
-        if any(s == "fail" for s in _statuses):
-            _effective_overall = "fail"
-        elif any(s == "warning" for s in _statuses):
-            _effective_overall = "warning"
-        else:
-            _effective_overall = "ok"
+        _rename_map = _MILKRUN_RENAME
+    _checks_pairs = [
+        (_rename_map[c.name], c)
+        for c in report.checks if c.name in _rename_map
+    ]
+    _checks = [c for _, c in _checks_pairs]
+
+    # overall 재계산 (필터된 체크 기준)
+    _statuses = [c.status for c in _checks]
+    if any(s == "fail" for s in _statuses):
+        _effective_overall = "fail"
+    elif any(s == "warning" for s in _statuses):
+        _effective_overall = "warning"
     else:
-        _effective_overall = report.overall
+        _effective_overall = "ok"
 
     if _effective_overall == "ok":
         st.success("✅ 검수 통과")
@@ -665,16 +673,13 @@ def render(brand: str):
         st.warning("⚠️ 일부 항목 확인 필요")
     else:
         st.error("❌ 검수 실패")
+
+    # 요약 (2 cols: 항목 / 일치 여부)
+    st.markdown("##### 요약")
     summary_rows = [
         {
-            "검수 항목": display_name,
-            "상태": _STATUS_ICON.get(chk.status, "?"),
-            "상세": (
-                chk.detail or (
-                    f"기대 {chk.expected} / 실제 {chk.actual}"
-                    if (chk.expected is not None or chk.actual is not None) else ""
-                )
-            ),
+            "항목": display_name,
+            "일치 여부": _STATUS_ICON.get(chk.status, "?"),
         }
         for display_name, chk in _checks_pairs
     ]
@@ -682,11 +687,13 @@ def render(brand: str):
         pd.DataFrame(summary_rows),
         width="stretch", hide_index=True,
         column_config={
-            "검수 항목": st.column_config.TextColumn("검수 항목", width="medium"),
-            "상태": st.column_config.TextColumn("상태", width="small"),
-            "상세": st.column_config.TextColumn("상세", width="large"),
+            "항목": st.column_config.TextColumn("항목", width="medium"),
+            "일치 여부": st.column_config.TextColumn("일치 여부", width="small"),
         },
     )
+
+    # 상세 헤더
+    st.markdown("##### 상세")
 
     # SKU 별 검수 결과 — 거래명세서 매칭 인덱스
     inv_by_bc: dict[str, Any] = {}
