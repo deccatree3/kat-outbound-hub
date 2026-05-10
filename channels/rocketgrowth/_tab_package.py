@@ -582,13 +582,21 @@ def render(brand: str):
         movement_inbound_total=mvt_total,
         invoice=invoice,
     )
-    # 택배는 '팔레트수 일치' 제외 (팔레트 미사용) — overall 도 필터된 체크 기준 재계산
+    # 검수 항목 필터 — 택배는 라벨 + FC/입고일 관련만 (수량/거래명세서/팔레트 X)
     _STATUS_ICON = {"ok": "✅", "warning": "⚠️", "fail": "❌"}
-    _PARCEL_EXCLUDE = {"팔레트수 일치"}
-    _checks = [
-        c for c in report.checks
-        if not (_is_parcel_now and c.name in _PARCEL_EXCLUDE)
-    ]
+    _PARCEL_ALLOW = {
+        "라벨 누락",                    # 번들 품목 라벨 인쇄 여부
+        "라벨 추가(잘못 들어감)",        # 상품 식별 (잘못된 라벨)
+        "라벨 수량 일치",
+        "라벨 소비기한 표기",
+        "번들 제품 개수↔라벨 제품 개수",
+        "FC 정보",
+        "도착예정일",
+    }
+    if _is_parcel_now:
+        _checks = [c for c in report.checks if c.name in _PARCEL_ALLOW]
+    else:
+        _checks = list(report.checks)
     if _is_parcel_now:
         _statuses = [c.status for c in _checks]
         if any(s == "fail" for s in _statuses):
