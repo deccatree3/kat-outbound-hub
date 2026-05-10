@@ -118,17 +118,19 @@ def render(brand: str):
     if data is None:
         return
 
-    # ─── ① 화주별 출고요청 (네뉴=이지어드민 / 캐처스=다원) ────
-    # 단, 네뉴+택배는 탭 3 ① 이지어드민 수동 발주 로 이동 — 안내만 표시
-    _is_parcel_now = not data.is_milkrun
-    if brand == 'nenu' and _is_parcel_now:
+    # 택배는 탭 4 에서 할 일 없음 — 단순 안내 + 완료 버튼만
+    if not data.is_milkrun:
         st.info(
-            "ℹ️ 택배 + 네뉴 — 이지어드민 발주서는 **탭 3 (물류센터 출고 요청) ① 이지어드민 수동 발주** "
-            "에서 다운로드해 주세요. 이 탭은 ② 다원 송장 채번 만 진행."
+            "📦 **택배 출고**: 탭 4 에서 별도 작업 없음. "
+            "채번된 송장번호는 Wing에 등록해주세요."
         )
-        st.divider()
-        # ② 가 아닌 그대로 ② 다원 송장 채번 으로 진행 (아래 코드 변동 없음)
-    elif brand == 'nenu':
+        _render_complete_button(brand, plan)
+        return
+
+    # ─── 이하 밀크런 흐름 ─────────────────────────────────
+    # ─── ① 화주별 출고요청 (네뉴=이지어드민 / 캐처스=다원) ────
+    _is_parcel_now = False  # 위에서 이미 분기됨, 가독성 위해 유지
+    if brand == 'nenu':
         st.subheader(f"① 화주별 출고요청 — {brand_company}")
         section_note(
             "네뉴(서현커머스): 이지어드민 발주서양식 다운로드 → 이지어드민 업로드 → "
