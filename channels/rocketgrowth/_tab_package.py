@@ -582,20 +582,22 @@ def render(brand: str):
         movement_inbound_total=mvt_total,
         invoice=invoice,
     )
-    # 검수 항목 필터 — 택배는 라벨 + FC/입고일 관련만 (수량/거래명세서/팔레트 X)
+    # 검수 항목 필터/리네임 — 택배는 라벨 관련 3항목만 (사용자 명시)
     _STATUS_ICON = {"ok": "✅", "warning": "⚠️", "fail": "❌"}
-    _PARCEL_ALLOW = {
-        "라벨 누락",                    # 번들 품목 라벨 인쇄 여부
-        "라벨 추가(잘못 들어감)",        # 상품 식별 (잘못된 라벨)
-        "라벨 수량 일치",
-        "라벨 소비기한 표기",
-        "번들 제품 개수↔라벨 제품 개수",
-        "FC 정보",
-        "도착예정일",
+    _PARCEL_RENAME = {
+        # verification.py CheckItem.name → 사용자 표시명
+        "라벨 추가(잘못 들어감)": "상품 일치",
+        "라벨 누락": "번들 라벨 인쇄",
+        "라벨 소비기한 표기": "번들 라벨 소비기한 포함",
     }
     if _is_parcel_now:
-        _checks = [c for c in report.checks if c.name in _PARCEL_ALLOW]
+        _checks_pairs = [
+            (_PARCEL_RENAME[c.name], c)
+            for c in report.checks if c.name in _PARCEL_RENAME
+        ]
+        _checks = [c for _, c in _checks_pairs]
     else:
+        _checks_pairs = [(c.name, c) for c in report.checks]
         _checks = list(report.checks)
     if _is_parcel_now:
         _statuses = [c.status for c in _checks]
@@ -616,7 +618,7 @@ def render(brand: str):
         st.error("❌ 검수 실패")
     summary_rows = [
         {
-            "검수 항목": chk.name,
+            "검수 항목": display_name,
             "상태": _STATUS_ICON.get(chk.status, "?"),
             "상세": (
                 chk.detail or (
@@ -625,7 +627,7 @@ def render(brand: str):
                 )
             ),
         }
-        for chk in _checks
+        for display_name, chk in _checks_pairs
     ]
     st.dataframe(
         pd.DataFrame(summary_rows),
@@ -692,7 +694,6 @@ def render(brand: str):
                 "수량": sku.inbound_qty,
                 "소비기한": sku.expected_expiry,
                 "라벨 인쇄": "—" if label_present_ok == "—" else ("✅" if label_present_ok else "❌"),
-                "라벨 수량": label_count_actual,
                 "라벨 수량 일치": "—" if label_count_ok == "—" else ("✅" if label_count_ok else "❌"),
                 "라벨 소비기한": "—" if label_exp_ok == "—" else ("✅" if label_exp_ok else "❌"),
             })
@@ -718,9 +719,6 @@ def render(brand: str):
             "상품명": st.column_config.TextColumn("상품명", width="large"),
             "수량": st.column_config.NumberColumn("수량", format="%d"),
             "소비기한": st.column_config.DateColumn("소비기한", format="YYYY-MM-DD"),
-            "라벨 수량": st.column_config.TextColumn(
-                "라벨 수량", help="실제 라벨 PDF 카운트 (단품은 — 표시)",
-            ),
         }
     else:
         _detail_cfg = {
