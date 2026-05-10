@@ -128,8 +128,12 @@ def _select_plan(brand: str, brand_company: str) -> InboundPlan | None:
         if target is not None:
             st.session_state[sel_key] = target
             st.session_state[active_key] = pending
-    # 안전망: selectbox state 가 어떤 이유로 lost 되었으면 active_key 에서 복원
-    elif sel_key not in st.session_state and active_key in st.session_state:
+    # 안전망: selectbox state 가 lost (없거나 sentinel) 이고 active_key 있으면 복원
+    elif (
+        (sel_key not in st.session_state
+         or st.session_state.get(sel_key) == SENTINEL)
+        and active_key in st.session_state
+    ):
         prev_id = st.session_state[active_key]
         target = next((i for i, p in enumerate(plans) if p.id == prev_id), None)
         if target is not None:
@@ -143,11 +147,11 @@ def _select_plan(brand: str, brand_company: str) -> InboundPlan | None:
         key=sel_key,
     )
     if sel == SENTINEL:
-        # 사용자가 직접 sentinel 선택 시 active 도 clear (재선택 가능)
-        st.session_state.pop(active_key, None)
+        # active_key 는 유지 — Streamlit 위젯 상태가 우연히 sentinel 로 빠져도
+        # 다음 render 에서 안전망(sel_key not in state 일 때)이 복원하도록.
+        # 사용자가 진짜 다른 plan 선택 시 active_key 는 selected.id 로 갱신.
         return None
     selected = plans[sel]
-    # 선택 추적 — 후속 rerun 에서 picker state 복원 가능
     st.session_state[active_key] = selected.id
     return selected
 

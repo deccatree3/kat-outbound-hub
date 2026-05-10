@@ -74,7 +74,11 @@ def select_dispatch_plan(brand: str, brand_company: str, key_suffix: str = "") -
         if target is not None:
             st.session_state[sel_key] = target
             st.session_state[active_key] = pending
-    elif sel_key not in st.session_state and active_key in st.session_state:
+    elif (
+        (sel_key not in st.session_state
+         or st.session_state.get(sel_key) == SENTINEL)
+        and active_key in st.session_state
+    ):
         prev_id = st.session_state[active_key]
         target = next((i for i, p in enumerate(plans) if p.id == prev_id), None)
         if target is not None:
@@ -88,7 +92,6 @@ def select_dispatch_plan(brand: str, brand_company: str, key_suffix: str = "") -
         key=sel_key,
     )
     if sel == SENTINEL:
-        st.session_state.pop(active_key, None)
         return None
     selected = plans[sel]
     st.session_state[active_key] = selected.id
