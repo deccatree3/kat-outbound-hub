@@ -9,7 +9,7 @@ from __future__ import annotations
 import streamlit as st
 
 from rocketgrowth.secondary_export import (
-    build_consolidation_list, build_pallet_loading_list,
+    build_consolidation_list, build_order_form, build_pallet_loading_list,
     build_parcel_consolidation_list, update_inventory_movement,
 )
 
@@ -33,7 +33,38 @@ def render(brand: str):
     if data is None:
         return
 
-    st.subheader(f"① 물류센터 전달 파일 ({data.ship_label})")
+    # 택배 + 네뉴: ① 이지어드민 수동 발주 / ② 물류센터 전달 파일
+    # 그 외 (밀크런 또는 택배+캐처스): ① 물류센터 전달 파일 만
+    _show_eza_order_first = (not data.is_milkrun) and (brand == 'nenu')
+    _files_section_no = "②" if _show_eza_order_first else "①"
+
+    if _show_eza_order_first:
+        st.subheader("① 이지어드민 수동 발주")
+        section_note(
+            "택배는 다원 자동연동이 없어 이지어드민에 수동 등록 필요.<br>"
+            "아래 발주서 다운로드 → 이지어드민 업로드 → 이지어드민↔다원 연동으로 발주 전달."
+        )
+        try:
+            order_xlsx = build_order_form(
+                data.sec_items, data.fc, str(data.order_base).strip(),
+                pallet_assignment=data.pa,
+            )
+            st.download_button(
+                "📥 이지어드민 발주서양식",
+                data=order_xlsx,
+                file_name=(
+                    f"{data.ship_prefix}재고차감_로켓그로스({brand_company}커머스)"
+                    f"발주서양식_{data.datesuf}.xlsx"
+                ),
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch", type="primary",
+                key=f"disp_{brand}_dl_eaorder_{plan.id}",
+            )
+        except Exception as ex:
+            st.error(f"이지어드민 발주서 생성 실패: {ex}")
+        st.divider()
+
+    st.subheader(f"{_files_section_no} 물류센터 전달 파일 ({data.ship_label})")
     if data.is_milkrun:
         section_note(
             "아래 파일 다운로드 → 메일 송부.<br>"

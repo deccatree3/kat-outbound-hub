@@ -88,8 +88,17 @@ def render(brand: str):
         return
 
     # ─── ① 화주별 출고요청 (네뉴=이지어드민 / 캐처스=다원) ────
-    st.subheader(f"① 화주별 출고요청 — {brand_company}")
-    if brand == 'nenu':
+    # 단, 네뉴+택배는 탭 3 ① 이지어드민 수동 발주 로 이동 — 안내만 표시
+    _is_parcel_now = not data.is_milkrun
+    if brand == 'nenu' and _is_parcel_now:
+        st.info(
+            "ℹ️ 택배 + 네뉴 — 이지어드민 발주서는 **탭 3 (물류센터 출고 요청) ① 이지어드민 수동 발주** "
+            "에서 다운로드해 주세요. 이 탭은 ② 다원 송장 채번 만 진행."
+        )
+        st.divider()
+        # ② 가 아닌 그대로 ② 다원 송장 채번 으로 진행 (아래 코드 변동 없음)
+    elif brand == 'nenu':
+        st.subheader(f"① 화주별 출고요청 — {brand_company}")
         section_note(
             "네뉴(서현커머스): 이지어드민 발주서양식 다운로드 → 이지어드민 업로드 → "
             "이지어드민↔다원 자동연동으로 다원에 발주 전달 (재고차감)."
@@ -112,7 +121,9 @@ def render(brand: str):
             )
         except Exception as ex:
             st.error(f"이지어드민 발주서 생성 실패: {ex}")
+        st.divider()
     else:
+        st.subheader(f"① 화주별 출고요청 — {brand_company}")
         section_note(
             "캐처스: 다원 출고요청서.xlsx 다운로드 → 다원에 직접 업로드 (수기). "
             "이지어드민 미사용 (캐처스 ↔ 다원 자동연동 없음)."
