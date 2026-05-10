@@ -651,10 +651,16 @@ def render(brand: str):
         emfg = None
         if it.wms_short_expiry and shl:
             emfg = it.wms_short_expiry - timedelta(days=int(shl) - 1)
+        # 상품명 = WMS 제품명 (own → parent → 쿠팡 폴백)
+        _wms_name = (
+            (wp.product_name if wp and wp.product_name else None)
+            or (pwp.product_name if pwp and pwp.product_name else None)
+        )
+        _display_name = _wms_name or (cm.product_name if cm else it.product_name)
         planned.append(PlannedSku(
             coupang_option_id=it.coupang_option_id,
             sku_id=cm.sku_id if cm else None,
-            product_name=cm.product_name if cm else it.product_name,
+            product_name=_display_name,
             option_name=cm.option_name if cm else it.option_name,
             own_wms_barcode=own,
             parent_wms_barcode=pbc, unit_qty=uq,
