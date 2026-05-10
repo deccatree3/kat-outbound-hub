@@ -101,40 +101,13 @@ def render_work_session_selector(channel: str, key_prefix: str,
     )
 
     if sel == NEW_OPTION_KEY:
-        c_d, c_s = st.columns([1, 1])
-        wd_key = f"{key_prefix}_new_work_date"
-        seq_key = f"{key_prefix}_new_sequence"
-
-        def _refresh_seq():
-            wd = st.session_state.get(wd_key, today)
-            st.session_state[seq_key] = adapter.next_sequence(channel, wd)
-
-        work_date = c_d.date_input(
-            "작업일", value=today, key=wd_key, on_change=_refresh_seq,
-        )
-        # 첫 렌더링 시 session_state 에 값 없으면 default = next_seq (계산된 today 기준)
-        if seq_key not in st.session_state:
-            st.session_state[seq_key] = int(next_seq)
-        sequence = c_s.number_input(
-            "차수", min_value=1, step=1, key=seq_key,
-        )
-        # 신규 모드에서 사용자가 입력한 (작업일, 차수) 가 이미 존재하면 얼럿 + 삭제 옵션
-        existing_meta = history_by_key.get((work_date, int(sequence)))
-        if existing_meta:
-            st.warning(
-                f"⚠️ **이미 등록된 작업** — {work_date.strftime('%Y-%m-%d')} / "
-                f"{int(sequence)}차 / {channel} (현재 {existing_meta['row_count']}행"
-                + (f" · {existing_meta['source_filename']}"
-                   if existing_meta.get('source_filename') else '')
-                + "). 저장 시 **덮어쓰기** 됩니다."
-            )
-            _render_delete_action(channel, work_date, int(sequence),
-                                  key_prefix, suffix="new_collide", adapter=adapter)
+        # 신규 = 오늘 / next_seq 자동. (수동 override UI 제거 — 드롭다운 라벨이
+        # 이미 '오늘 / N차 자동' 으로 안내.)
         return {
-            'work_date': work_date,
-            'sequence': int(sequence),
+            'work_date': today,
+            'sequence': int(next_seq),
             'is_new': True,
-            'existing_meta': existing_meta,
+            'existing_meta': None,
         }
     else:
         wd, seq = sel
