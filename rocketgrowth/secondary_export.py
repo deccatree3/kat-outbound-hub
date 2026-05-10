@@ -388,7 +388,12 @@ def build_consolidation_list(
             ws.merge_cells(start_row=first, end_row=last, start_column=10, end_column=10)
 
     # ===== 우측 번들 데이터 (R9~ col 14-18) =====
-    bundle_items = [it for it in items if it.unit_qty and it.unit_qty >= 2 and it.boxes > 0]
+    # 번들 SKU = unit_qty >= 2 + 입고수량 > 0. (boxes 가 아닌 inbound_qty 기준 —
+    # qty<box_qty 인 번들도 포함되도록.)
+    bundle_items = [
+        it for it in items
+        if it.unit_qty and it.unit_qty >= 2 and (it.inbound_qty or 0) > 0
+    ]
     bundle_items.sort(key=lambda x: x.product_name or "")
     rb = 9
     for it in bundle_items:
@@ -521,14 +526,13 @@ def build_parcel_consolidation_list(
             box_no += 1
 
     # ─── 번들작업표 (번들 SKU 만, 각 1행, 총 수량) ─────
+    # 번들 판정 = unit_qty >= 2. (이전 휴리스틱 'coupang_barcode != own_wms_barcode' 은
+    # 단품인데 두 바코드가 다른 SKU 를 잘못 번들로 분류하는 문제 있어 제거.)
     bundle_rows: list[dict] = []
     for it in items:
         if (it.inbound_qty or 0) <= 0:
             continue
-        is_bundle = (
-            it.coupang_barcode and it.own_wms_barcode
-            and it.coupang_barcode != it.own_wms_barcode
-        )
+        is_bundle = bool(it.unit_qty and it.unit_qty >= 2)
         if is_bundle:
             bundle_rows.append({
                 "wms_barcode": it.own_wms_barcode or "",
@@ -847,9 +851,11 @@ def update_inventory_movement(
             sv.tabSelected = other_ws.title == ws.title
 
     # 번들 입고수량 매핑
+    # 필터 기준 = inbound_qty > 0. (이전 'boxes > 0' 은 qty<box_qty 인 번들 — 예: qty=5,
+    # box_qty=50 — 을 boxes=0 이라 누락시킴.)
     bundle_qty_by_bc: dict[str, int] = {}
     for it in items:
-        if it.boxes <= 0:
+        if (it.inbound_qty or 0) <= 0:
             continue
         if it.unit_qty and it.unit_qty >= 2 and it.own_wms_barcode:
             bundle_qty_by_bc[str(it.own_wms_barcode)] = it.inbound_qty
@@ -859,7 +865,7 @@ def update_inventory_movement(
     # D에 값이 있는 바코드 = 번들 바코드
     relevant_barcodes: set[str] = set(bundle_qty_by_bc.keys())  # 번들 자신
     for it in items:
-        if it.boxes <= 0:
+        if (it.inbound_qty or 0) <= 0:
             continue
         if it.unit_qty and it.unit_qty >= 2 and it.parent_wms_barcode:
             relevant_barcodes.add(str(it.parent_wms_barcode))  # 번들의 부모
