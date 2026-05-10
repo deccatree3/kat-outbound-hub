@@ -33,7 +33,7 @@ from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
 from sqlalchemy import desc
 
 from channels.rocketgrowth._helpers import (
-    QTY_LOCKED_STATUSES, derive_substatus_label, ni, load_plan_files,
+    QTY_LOCKED_STATUSES, derive_substatus_label, jump_to_tab, ni, load_plan_files,
     resolve_parent_barcode, save_plan, section_note,
 )
 
@@ -289,7 +289,6 @@ def _render_saved_plan_view(brand: str, brand_company: str, plan_id: int):
 
     # 다음 단계 버튼 (탭 2 결과물 패키지로 이동)
     st.divider()
-    import streamlit.components.v1 as components
     if st.button(
         "다음 단계 →",
         key=f"rg_{brand}_savedview_next_{plan_id}",
@@ -300,18 +299,7 @@ def _render_saved_plan_view(brand: str, brand_company: str, plan_id: int):
         # 탭 2 의 plan picker 가 이 plan_id 를 자동 선택
         st.session_state[f'rg_{brand}_pending_pkg_pick'] = plan_id
         st.session_state[f'rg_{brand}_last_saved_plan_id'] = plan_id
-        components.html(
-            """
-            <script>
-            const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
-            if (tabs.length > 1) {
-                tabs[1].click();
-                window.parent.scrollTo({top: 0, behavior: 'smooth'});
-            }
-            </script>
-            """,
-            height=0,
-        )
+        jump_to_tab(1)
 
 
 def render(brand: str):
@@ -1359,7 +1347,6 @@ def render(brand: str):
             st.dataframe(pd.DataFrame(missing), width="stretch", hide_index=True)
 
     # 다음 단계 (결과물 패키지 탭으로 이동) — 스크롤 없이 탭 전환
-    import streamlit.components.v1 as components
     if st.button(
         "다음 단계 →",
         key=f"rg_{brand}_goto_pack",
@@ -1369,18 +1356,7 @@ def render(brand: str):
     ):
         if last_saved:
             st.session_state[f"rg_{brand}_pending_pkg_pick"] = last_saved
-        components.html(
-            """
-            <script>
-            const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
-            if (tabs.length > 1) {
-                tabs[1].click();
-                window.parent.scrollTo({top: 0, behavior: 'smooth'});
-            }
-            </script>
-            """,
-            height=0,
-        )
+        jump_to_tab(1)
 
     # 새 작업 시작 버튼
     if st.button(

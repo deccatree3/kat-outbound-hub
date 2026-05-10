@@ -16,7 +16,7 @@ from rocketgrowth.secondary_export import (
     update_inventory_movement,
 )
 
-from channels.rocketgrowth._helpers import get_fc_info, section_note
+from channels.rocketgrowth._helpers import get_fc_info, jump_to_tab, section_note
 from channels.rocketgrowth._dispatch_helpers import (
     _BRAND_TO_COMPANY, build_dispatch_data, render_context_bar, select_dispatch_plan,
 )
@@ -219,7 +219,6 @@ def render(brand: str):
 
     # 출고요청 확정 + 다음 단계
     st.divider()
-    import streamlit.components.v1 as components
     _already_verified = (plan.status or "") in ("verified", "completed")
     btm_cols = st.columns(2)
     with btm_cols[0]:
@@ -256,16 +255,4 @@ def render(brand: str):
             help="출고 후 처리 탭으로 자동 이동 (출고요청 확정 후 활성).",
         ):
             st.session_state[f"rg_{brand}_pending_invoice_pick"] = plan.id
-            # tab index: 0=발주계획, 1=쿠팡입고생성, 2=물류센터출고요청, 3=송장후처리
-            components.html(
-                """
-                <script>
-                const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
-                if (tabs.length > 3) {
-                    tabs[3].click();
-                    window.parent.scrollTo({top: 0, behavior: 'smooth'});
-                }
-                </script>
-                """,
-                height=0,
-            )
+            jump_to_tab(3)

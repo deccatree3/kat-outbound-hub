@@ -370,6 +370,44 @@ def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
     return "📝 임시저장"
 
 
+def jump_to_tab(tab_index: int) -> None:
+    """JS injection 으로 Streamlit 탭 자동 전환.
+
+    문제 — 단순 components.html 호출 시:
+    - iframe srcdoc 이 동일하면 streamlit/브라우저가 iframe 재로드 X → JS 미실행
+    - 페이지 로딩 중 tabs DOM 미준비 시 querySelectorAll 0개
+
+    해결:
+    - nonce (time.time_ns) 로 매 호출마다 srcdoc 다르게 → iframe 강제 재렌더
+    - setTimeout 재시도 (tabs 미준비 시 100ms 마다 재시도, 30회 max)
+    """
+    import time
+    import streamlit.components.v1 as components
+    nonce = time.time_ns()
+    components.html(
+        f"""
+        <script>
+        // nonce={nonce}
+        let _tries = 0;
+        function _tryClickTab() {{
+            _tries += 1;
+            try {{
+                const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
+                if (tabs.length > {tab_index}) {{
+                    tabs[{tab_index}].click();
+                    window.parent.scrollTo({{top: 0, behavior: 'smooth'}});
+                    return;
+                }}
+            }} catch (e) {{ /* parent access blocked */ }}
+            if (_tries < 30) setTimeout(_tryClickTab, 100);
+        }}
+        _tryClickTab();
+        </script>
+        """,
+        height=0,
+    )
+
+
 def section_note(text: str) -> None:
     """섹션 헤더 아래 안내 — 좌측 파란 테두리 + 옅은 파란 배경."""
     import streamlit as st

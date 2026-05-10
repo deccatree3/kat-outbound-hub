@@ -42,7 +42,7 @@ from rocketgrowth.verification import (
 )
 
 from channels.rocketgrowth._helpers import (
-    STATUS_LABELS, derive_substatus_label, get_fc_info, load_plan_files,
+    STATUS_LABELS, derive_substatus_label, get_fc_info, jump_to_tab, load_plan_files,
     resolve_parent_barcode, save_plan_files, section_note, upsert_fc_info,
 )
 
@@ -874,7 +874,6 @@ def render(brand: str):
                     except Exception as ex:
                         st.error(f"입고확정 실패: {ex}")
         with btn_cols[1]:
-            import streamlit.components.v1 as components
             if st.button(
                 "다음 단계 →",
                 disabled=(not already_confirmed),
@@ -884,16 +883,5 @@ def render(brand: str):
                 key=f"pkg_{brand}_goto_dispatch_{plan.id}",
             ):
                 st.session_state[f"rg_{brand}_pending_dispatch_pick"] = plan.id
-                components.html(
-                    """
-                    <script>
-                    const tabs = window.parent.document.querySelectorAll('button[role="tab"]');
-                    if (tabs.length > 2) {
-                        tabs[2].click();
-                        window.parent.scrollTo({top: 0, behavior: 'smooth'});
-                    }
-                    </script>
-                    """,
-                    height=0,
-                )
+                jump_to_tab(2)
 
