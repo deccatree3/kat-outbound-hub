@@ -309,21 +309,19 @@ QTY_LOCKED_STATUSES = {"inbound_confirmed", "verified", "completed"}
 
 
 def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
-    """plan 의 status + 시그널을 종합한 세부 상태 라벨.
+    """plan 의 status 라벨.
 
     상태 흐름:
       draft → qty_confirmed → inbound_confirmed → verified → completed
 
-    우선순위: status 우선. inbound_confirmed 이상은 status 라벨로 확정.
-    has_attach_pdf 시그널은 draft/qty_confirmed 단계에서만 '검수 진행중' 으로 격상.
+    매핑 (status 단순 매핑, attach 시그널 무시):
+    - draft             → 📝 임시저장
+    - qty_confirmed     → 📋 수량확정
+    - inbound_confirmed → 📦 입고확정
+    - verified          → ✅ 발주확정
+    - completed         → 🏁 완료
 
-    - inbound_confirmed             → 📦 입고확정
-    - verified                      → ✅ 발주확정
-    - completed                     → 🏁 완료
-    - qty_confirmed + attach 없음   → 📋 수량확정
-    - qty_confirmed + attach 있음   → 📝 검수 진행중
-    - draft         + attach 없음   → 📝 임시저장
-    - draft         + attach 있음   → 📝 검수 진행중
+    has_attach_pdf 파라미터는 호환성을 위해 유지 (현재 라벨에 영향 없음).
     """
     s = plan.status or "draft"
     if s == "inbound_confirmed":
@@ -332,9 +330,6 @@ def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
         return "✅ 발주확정"
     if s == "completed":
         return "🏁 완료"
-    # draft / qty_confirmed
-    if has_attach_pdf:
-        return "📝 검수 진행중"
     if s == "qty_confirmed":
         return "📋 수량확정"
     return "📝 임시저장"
