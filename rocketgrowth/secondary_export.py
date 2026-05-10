@@ -1202,22 +1202,57 @@ class OrderSearchRow:
     qty: int
 
 
-def parse_order_search_file(content: bytes) -> list[OrderSearchRow]:
-    """확장주문검색_*.xls 파싱.
+def _normalize_cell_str(value) -> str:
+    """xlrd 셀 → 문자열. 숫자(float) 셀은 int 변환 ('796902.0'→'796902').
+    텍스트 셀은 strip 후 그대로 (Python float() 가 underscore 를 천단위 구분자로
+    해석하지 않도록 string 변환 시 float 시도 금지 — 예: '131128510_1')."""
+    if value in ('', None):
+        return ''
+    if isinstance(value, (int, float)):
+        try:
+            return str(int(value))
+        except (ValueError, TypeError):
+            return str(value)
+    return str(value).strip()
 
-    컬럼 인덱스: 6=관리번호, 7=주문번호, 8=판매상품명, 9=바코드, 10=상품수량
+
+def parse_order_search_file(content: bytes) -> list[OrderSearchRow]:
+    """확장주문검색_*.xls 파싱 (header-based lookup).
+
+    컬럼 매핑 (alias 폴백):
+      mgmt_no (관리번호) ← '관리번호' (legacy) / '고객주문번호' (신 양식)
+      order_no (주문번호) ← '주문번호' (legacy) / '출하의뢰항번' (신 양식)
+      product_name ← '판매상품명' / '판매처 상품명' / '상품명'
+      barcode ← '바코드'
+      qty ← '상품수량' / '주문수량'
     """
     import xlrd
     wb = xlrd.open_workbook(file_contents=content)
     ws = wb.sheet_by_index(0)
+    if ws.nrows < 2:
+        return []
+    headers = [str(ws.cell_value(0, c)).strip() for c in range(ws.ncols)]
+
+    def find_idx(*names):
+        for n in names:
+            if n in headers:
+                return headers.index(n)
+        return None
+
+    mgmt_i = find_idx('관리번호', '고객주문번호')
+    order_i = find_idx('주문번호', '출하의뢰항번')
+    pname_i = find_idx('판매상품명', '판매처 상품명', '상품명')
+    bc_i = find_idx('바코드')
+    qty_i = find_idx('상품수량', '주문수량')
+
     rows: list[OrderSearchRow] = []
     for r in range(1, ws.nrows):
-        mgmt = str(ws.cell_value(r, 6)).strip() if ws.ncols > 6 else ""
-        order_no = str(ws.cell_value(r, 7)).strip() if ws.ncols > 7 else ""
-        pname = str(ws.cell_value(r, 8)).strip() if ws.ncols > 8 else ""
-        bc = str(ws.cell_value(r, 9)).strip() if ws.ncols > 9 else ""
+        mgmt = _normalize_cell_str(ws.cell_value(r, mgmt_i)) if mgmt_i is not None else ""
+        order_no = _normalize_cell_str(ws.cell_value(r, order_i)) if order_i is not None else ""
+        pname = _normalize_cell_str(ws.cell_value(r, pname_i)) if pname_i is not None else ""
+        bc = _normalize_cell_str(ws.cell_value(r, bc_i)) if bc_i is not None else ""
         try:
-            qty = int(float(ws.cell_value(r, 10))) if ws.ncols > 10 and ws.cell_value(r, 10) != "" else 0
+            qty = int(float(ws.cell_value(r, qty_i))) if qty_i is not None and ws.cell_value(r, qty_i) != "" else 0
         except (ValueError, TypeError):
             qty = 0
         if not order_no and not mgmt:

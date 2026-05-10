@@ -179,23 +179,6 @@ def build_eza_waybill_from_triples(triples: List[tuple]) -> bytes:
     return buf.getvalue()
 
 
-def build_eza_shipping_bulk_from_triples(triples: List[tuple]) -> bytes:
-    """[(carrier, waybill, order_no), ...] → 이지어드민 배송일괄처리양식.xlsx.
-
-    1컬럼 (A: 송장번호) 만 포함. xlsxwriter (이지어드민 호환).
-    """
-    import xlsxwriter
-    buf = io.BytesIO()
-    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
-    ws = wb.add_worksheet("Sheet1")
-    ws.write_string(0, 0, "송장번호")
-    for i, (_, waybill, _) in enumerate(triples, start=1):
-        ws.write_string(i, 0, str(waybill))
-    wb.close()
-    buf.seek(0)
-    return buf.getvalue()
-
-
 def build_eza_waybill_xlsx(daone_invoice_xls_bytes: bytes,
                            carrier: str = EZA_WAYBILL_DEFAULT_CARRIER) -> tuple[bytes, Dict]:
     """다원 채번.xls 단일 파일 → 이지어드민 송장 양식.xlsx (하위 호환)."""

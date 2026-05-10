@@ -12,16 +12,15 @@ from datetime import date as _date
 
 import streamlit as st
 
-from outputs.eza.builder import (
-    EZA_WAYBILL_DEFAULT_CARRIER,
-    parse_daone_invoice_xls,
-    build_eza_shipping_bulk_from_triples,
-    build_eza_waybill_from_triples,
-)
 from outputs.daone.builder import build_daone_xlsx
 from rocketgrowth.db import get_session
 from rocketgrowth.models import InboundPlan
-from rocketgrowth.secondary_export import build_order_form
+from rocketgrowth.secondary_export import (
+    build_invoice_upload_form,
+    build_order_form,
+    build_shipping_bulk_form,
+    parse_order_search_file,
+)
 
 from channels.rocketgrowth._helpers import section_note
 from channels.rocketgrowth._dispatch_helpers import (
@@ -207,67 +206,55 @@ def render(brand: str):
         _render_complete_button(brand, plan)
         return
 
-    # 네뉴: 이지어드민 송장 양식 생성
+    # 네뉴: 확장주문검색 → 배송일괄처리양식 + 송장업로드양식 생성
     section_note(
-        "다원에서 채번된 송장 파일 (.xls) 업로드 → 이지어드민 송장 업로드 양식 자동 생성. "
-        "이지어드민에 업로드하면 EZA↔다원 자동연동으로 쿠팡까지 흐름."
+        "이지어드민에서 확장주문검색 .xls 다운로드 → 업로드 → "
+        "두 양식 (배송일괄처리 / 송장업로드) 자동 생성.<br>"
+        "송장번호는 <b>관리번호(=고객주문번호) + '000000'</b> 으로 generate."
     )
 
-    daone_file = st.file_uploader(
-        "다원 채번 파일 (.xls)",
+    order_file = st.file_uploader(
+        "확장주문검색 파일 (.xls)",
         type=['xls'],
-        key=f"inv_{brand}_daone_{plan.id}",
-        help="다원에서 송장번호 채번해서 보내주는 .xls 파일",
+        key=f"inv_{brand}_ordersearch_{plan.id}",
+        help="이지어드민 확장주문검색에서 다운로드한 .xls 파일 (송장번호 컬럼 비어있어도 OK)",
     )
 
-    if not daone_file:
-        st.caption("⚠️ 다원 채번 파일 업로드 대기 중.")
+    if not order_file:
+        st.caption("⚠️ 확장주문검색 파일 업로드 대기 중.")
         _render_complete_button(brand, plan)
         return
 
-    # 택배사 입력 (default = CJ대한통운)
-    cols = st.columns([2, 1])
-    with cols[0]:
-        carrier = st.text_input(
-            "택배사",
-            value=EZA_WAYBILL_DEFAULT_CARRIER,
-            key=f"inv_{brand}_carrier_{plan.id}",
-            help="이지어드민 송장 양식의 A 컬럼에 채울 택배사명",
-        )
-    with cols[1]:
-        st.caption("기본: CJ대한통운")
-
     try:
-        triples, skipped = parse_daone_invoice_xls(
-            daone_file.getvalue(),
-            default_carrier=carrier or EZA_WAYBILL_DEFAULT_CARRIER,
-        )
+        order_rows = parse_order_search_file(order_file.getvalue())
     except Exception as ex:
-        st.error(f"다원 채번 파일 파싱 실패: {ex}")
+        st.error(f"확장주문검색 파일 파싱 실패: {ex}")
         return
 
-    if not triples:
-        st.warning("📭 채번된 송장이 없습니다. 파일 내용 확인 필요.")
+    if not order_rows:
+        st.warning("📭 데이터가 없습니다. 파일 내용 확인 필요.")
+        _render_complete_button(brand, plan)
         return
 
-    # 메트릭
-    mc1, mc2 = st.columns(2)
-    mc1.metric("✅ 송장 기입", len(triples))
-    mc2.metric("⏭ 스킵 (송장/주문 빈값)", skipped,
-               help="다원 채번 파일에서 송장번호 또는 주문번호가 빈 행")
+    st.metric("✅ 인식된 행", len(order_rows))
 
     # 미리보기
-    with st.expander(f"미리보기 ({len(triples)} 행)", expanded=False):
+    with st.expander(f"미리보기 ({len(order_rows)} 행)", expanded=False):
         import pandas as pd
-        st.dataframe(
-            pd.DataFrame(triples, columns=['택배사', '송장번호', '관리번호(주문번호)']),
-            width="stretch", hide_index=True,
-        )
+        prev = pd.DataFrame([{
+            '관리번호(고객주문번호)': r.mgmt_no,
+            '주문번호(출하의뢰항번)': r.order_no,
+            '상품명': r.product_name,
+            '바코드': r.barcode,
+            '수량': r.qty,
+            '송장번호(generate)': f"{r.mgmt_no}000000" if r.mgmt_no else '',
+        } for r in order_rows])
+        st.dataframe(prev, width="stretch", hide_index=True)
 
-    # 이지어드민 양식 2종 생성: 배송일괄처리양식 + 송장업로드양식
+    # 두 양식 생성
     try:
-        xlsx_waybill = build_eza_waybill_from_triples(triples)
-        xlsx_bulk = build_eza_shipping_bulk_from_triples(triples)
+        xlsx_bulk = build_shipping_bulk_form(order_rows)
+        xlsx_waybill = build_invoice_upload_form(order_rows)
     except Exception as ex:
         st.error(f"이지어드민 양식 생성 실패: {ex}")
         return
@@ -284,7 +271,7 @@ def render(brand: str):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary", width="stretch",
             key=f"inv_{brand}_dl_bulk_{plan.id}",
-            help="1컬럼 (송장번호). 이지어드민 → 배송 일괄처리 양식 업로드.",
+            help="1컬럼 (송장번호 = 관리번호+'000000'). 이지어드민 → 배송 일괄처리 양식 업로드.",
         )
     with dlc2:
         st.download_button(
@@ -294,16 +281,7 @@ def render(brand: str):
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary", width="stretch",
             key=f"inv_{brand}_dl_waybill_{plan.id}",
-            help="택배사/송장번호/주문번호. 이지어드민 → 송장 일괄 등록 양식 업로드.",
+            help="택배사 / 송장번호 / 관리번호 (3컬럼). 이지어드민 → 송장 일괄 등록 양식 업로드.",
         )
-    st.caption(
-        "📤 이지어드민 — 두 양식을 순서대로 업로드. "
-        "**배송일괄처리** 먼저, 그 후 **송장업로드** (또는 운영 정책에 맞춰)."
-    )
-
-    st.info(
-        "🚧 **쿠팡 송장 업로드**: 쿠팡 Wing 의 파일 업로드 방식 확인 후 "
-        "Phase F 후속 단계에서 양식 추가 예정."
-    )
 
     _render_complete_button(brand, plan)
