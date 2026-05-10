@@ -334,15 +334,31 @@ def render(brand: str):
         qty = int(i.inbound_qty_final or 0)
         expiry = i.wms_short_expiry
         if _is_agetshot_for(i):
-            # 에이지샷 번들: 1번들=1인박스, 100/아웃박스. box인입 표기 = FREE
-            n_box = _math.ceil(qty / AGETSHOT_BOX_CAPACITY) if qty > 0 else 0
-            plan_rows.append({
-                "상품명": name,
-                "상품수": qty,
-                "box인입": "FREE" if qty > 0 else "0",
-                "박스수": n_box,
-                "소비기한": expiry,
-            })
+            # 에이지샷 번들: 100 단위로 행 분할. 각 행 박스수=1.
+            # 예: 105 -> [100, 5] = 2행, 박스수=1 each
+            if qty <= 0:
+                plan_rows.append({
+                    "상품명": name, "상품수": qty,
+                    "box인입": "0", "박스수": 0,
+                    "소비기한": expiry,
+                })
+            else:
+                full = qty // AGETSHOT_BOX_CAPACITY
+                rem = qty % AGETSHOT_BOX_CAPACITY
+                for _ in range(full):
+                    plan_rows.append({
+                        "상품명": name, "상품수": qty,
+                        "box인입": str(AGETSHOT_BOX_CAPACITY),  # "100"
+                        "박스수": 1,
+                        "소비기한": expiry,
+                    })
+                if rem > 0:
+                    plan_rows.append({
+                        "상품명": name, "상품수": qty,
+                        "box인입": str(rem),
+                        "박스수": 1,
+                        "소비기한": expiry,
+                    })
         else:
             for per_box, num_boxes in _box_compositions(qty, i.box_qty):
                 plan_rows.append({
