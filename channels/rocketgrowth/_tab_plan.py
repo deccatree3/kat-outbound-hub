@@ -168,6 +168,7 @@ def _render_plan_picker(brand: str, brand_company: str) -> int | None:
     NEW = "__new__"
     options: list = [NEW] + plan_ids
 
+    _SHIP_LABELS = {'milkrun': '밀크런', 'parcel': '택배'}
     def _label(opt):
         if opt == NEW:
             return "+ 신규 계획"
@@ -177,7 +178,11 @@ def _render_plan_picker(brand: str, brand_company: str) -> int | None:
         sub = derive_substatus_label(p, has_attach_pdf=(p.id in has_attach))
         date_str = str(p.plan_date or "")
         fc_str = f" · FC {p.fc_name}" if p.fc_name else ""
-        return f"#{p.id} {sub} · {date_str}{fc_str}"
+        ship_str = (
+            f" · {_SHIP_LABELS.get(p.shipment_type, p.shipment_type)}"
+            if p.shipment_type else ""
+        )
+        return f"#{p.id} {sub} · {date_str}{fc_str}{ship_str}"
 
     sel = st.selectbox(
         "발주 계획 선택",

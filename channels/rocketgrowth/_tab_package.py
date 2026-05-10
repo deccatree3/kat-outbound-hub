@@ -108,10 +108,15 @@ def _select_plan(brand: str, brand_company: str) -> InboundPlan | None:
     SENTINEL = -1
     labels = {SENTINEL: "— 발주계획 선택 —"}
     for i, p in enumerate(plans):
+        ship_str = (
+            f" · {SHIPMENT_LABELS.get(p.shipment_type, p.shipment_type)}"
+            if p.shipment_type else ""
+        )
         labels[i] = (
             f"#{p.id} {derive_substatus_label(p, has_attach_pdf=(p.id in has_attach))} · "
             f"{p.company_name} · {p.arrival_date or p.plan_date or ''}"
             + (f" · {p.fc_name}" if p.fc_name else "")
+            + ship_str
         )
 
     # 다른 탭의 '다음 단계 →' 가 set 한 pending plan 이 있으면 selectbox 에 1회 적용
