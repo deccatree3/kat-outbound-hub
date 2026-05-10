@@ -1095,6 +1095,102 @@ def build_order_form(
 
 
 # ============================================================================
+# 4b) 택배용 이지어드민 발주서 (박스 단위)
+# ============================================================================
+def _parcel_box_assignments(
+    items: list[SecondaryItem],
+    sku_order: list[str] | None = None,
+) -> list[tuple[SecondaryItem, int, int]]:
+    """택배 박스 분할 + NO 부여. (item, qty_in_box, box_no) 리스트 반환.
+
+    build_parcel_consolidation_list 와 동일한 알고리즘.
+    """
+    sku_to_boxes: dict[str, tuple[SecondaryItem, list[int]]] = {}
+    for it in items:
+        if (it.inbound_qty or 0) <= 0:
+            continue
+        bq = max(int(it.box_qty or 1), 1)
+        q = int(it.inbound_qty)
+        if q <= bq:
+            comps = [(q, 1)]
+        else:
+            full = q // bq
+            rem = q % bq
+            if rem == 0:
+                comps = [(bq, full)]
+            else:
+                comps = [(bq, full), (rem, 1)]
+        boxes_qty: list[int] = []
+        for per_box, num_boxes in comps:
+            boxes_qty.extend([per_box] * num_boxes)
+        boxes_qty.sort()  # 같은 SKU 내 수량 적은 것 먼저
+        key = it.coupang_barcode or it.own_wms_barcode or str(it.coupang_option_id)
+        sku_to_boxes[key] = (it, boxes_qty)
+
+    ordered_keys: list[str] = []
+    if sku_order:
+        for sku in sku_order:
+            if sku in sku_to_boxes and sku not in ordered_keys:
+                ordered_keys.append(sku)
+    for k in sku_to_boxes:
+        if k not in ordered_keys:
+            ordered_keys.append(k)
+
+    rows: list[tuple[SecondaryItem, int, int]] = []
+    box_no = 1
+    for key in ordered_keys:
+        it, boxes_qty = sku_to_boxes[key]
+        for qty in boxes_qty:
+            rows.append((it, qty, box_no))
+            box_no += 1
+    return rows
+
+
+def build_parcel_eza_order_form(
+    items: list[SecondaryItem],
+    fc_name: str,
+    fc_address: str,
+    fc_phone: str,
+    itr_id: str,
+    sku_order: list[str] | None = None,
+) -> bytes:
+    """택배 입고 시 이지어드민 발주서 생성 (박스 단위).
+
+    각 박스 = 1행. 컬럼: 순서/주문번호/상품명/수량/수령인/연락처/주소/비고
+    - 주문번호 = '{itr_id}_{box_no}'
+    - 수령인 = '[택배]로켓그로스_{fc_name}_{box_no}'  (수령인 같으면 합포장 시스템)
+    - 연락처/주소 = CoupangFcInfo 의 phone/address
+    - 박스 NO 순서 = 부착문서 SKU 순서 + 같은 SKU 내 수량 적은 것 먼저
+    """
+    import xlsxwriter  # noqa: WPS433
+
+    box_rows = _parcel_box_assignments(items, sku_order=sku_order)
+
+    buf = BytesIO()
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    ws = wb.add_worksheet("Sheet1")
+
+    headers = ["순서", "주문번호", "상품명", "수량", "수령인", "연락처", "주소", "비고"]
+    for c, h in enumerate(headers):
+        ws.write_string(0, c, h)
+
+    for seq, (it, qty, box_no) in enumerate(box_rows, start=1):
+        name = it.wms_product_name or it.product_name or ""
+        ws.write_number(seq, 0, seq)
+        ws.write_string(seq, 1, f"{itr_id}_{box_no}" if itr_id else f"_{box_no}")
+        ws.write_string(seq, 2, name)
+        ws.write_number(seq, 3, qty)
+        ws.write_string(seq, 4, f"[택배]로켓그로스_{fc_name}_{box_no}")
+        ws.write_string(seq, 5, fc_phone)
+        ws.write_string(seq, 6, fc_address)
+        # 비고: 빈값
+
+    wb.close()
+    buf.seek(0)
+    return buf.getvalue()
+
+
+# ============================================================================
 # 5) 재고차감 — 확장주문검색 파싱 / 검수 / 3차결과물 생성
 # ============================================================================
 @dataclass

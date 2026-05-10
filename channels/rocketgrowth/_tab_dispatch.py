@@ -10,10 +10,11 @@ import streamlit as st
 
 from rocketgrowth.secondary_export import (
     build_consolidation_list, build_order_form, build_pallet_loading_list,
-    build_parcel_consolidation_list, update_inventory_movement,
+    build_parcel_consolidation_list, build_parcel_eza_order_form,
+    update_inventory_movement,
 )
 
-from channels.rocketgrowth._helpers import section_note
+from channels.rocketgrowth._helpers import get_fc_info, section_note
 from channels.rocketgrowth._dispatch_helpers import (
     _BRAND_TO_COMPANY, build_dispatch_data, render_context_bar, select_dispatch_plan,
 )
@@ -42,26 +43,42 @@ def render(brand: str):
         st.subheader("① 이지어드민 수동 발주")
         section_note(
             "택배는 다원 자동연동이 없어 이지어드민에 수동 등록 필요.<br>"
-            "아래 발주서 다운로드 → 이지어드민 업로드 → 이지어드민↔다원 연동으로 발주 전달."
+            "아래 발주서 다운로드 → 이지어드민 업로드 → 이지어드민↔다원 연동으로 발주 전달.<br>"
+            "박스 단위 (각 박스 = 1행, 수령인이 같으면 합포장)."
         )
-        try:
-            order_xlsx = build_order_form(
-                data.sec_items, data.fc, str(data.order_base).strip(),
-                pallet_assignment=data.pa,
+        # FC 정보 조회 (탭 2 검수 단계에서 입력되어 있어야 함)
+        _fc_info = get_fc_info(data.fc) if data.fc else None
+        if _fc_info is None:
+            st.error(
+                f"❌ FC '{data.fc}' 정보가 등록되어 있지 않습니다. "
+                "탭 2 검수 단계에서 FC 정보를 먼저 등록해 주세요."
             )
-            st.download_button(
-                "📥 이지어드민 발주서양식",
-                data=order_xlsx,
-                file_name=(
-                    f"{data.ship_prefix}재고차감_로켓그로스({brand_company}커머스)"
-                    f"발주서양식_{data.datesuf}.xlsx"
-                ),
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                width="stretch", type="primary",
-                key=f"disp_{brand}_dl_eaorder_{plan.id}",
-            )
-        except Exception as ex:
-            st.error(f"이지어드민 발주서 생성 실패: {ex}")
+        else:
+            try:
+                _itr_id = (
+                    getattr(data.attachment, 'itr_id', None)
+                    or data.order_base or ""
+                )
+                order_xlsx = build_parcel_eza_order_form(
+                    data.sec_items,
+                    fc_name=data.fc,
+                    fc_address=_fc_info.address,
+                    fc_phone=_fc_info.phone,
+                    itr_id=_itr_id,
+                    sku_order=getattr(data.attachment, 'sku_order', None),
+                )
+                st.download_button(
+                    "📥 이지어드민 발주서양식 (택배)",
+                    data=order_xlsx,
+                    file_name=(
+                        f"{brand_company}_이지어드민_발주서_{data.fc}_{data.datesuf}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch", type="primary",
+                    key=f"disp_{brand}_dl_eaorder_{plan.id}",
+                )
+            except Exception as ex:
+                st.error(f"이지어드민 발주서 생성 실패: {ex}")
         st.divider()
 
     st.subheader(f"{_files_section_no} 물류센터 전달 파일 ({data.ship_label})")

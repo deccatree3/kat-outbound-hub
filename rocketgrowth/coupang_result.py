@@ -151,6 +151,7 @@ class AttachmentMeta:
     total_boxes: int = 0              # 페이지 수 (택배 1박스/페이지)
     shipment_id: str | None = None    # 'PBL0099303906' 같은 쉽먼트번호
     inbound_id: str | None = None     # 19자리 입고번호
+    itr_id: str | None = None         # '131139976' 요청ID/ITR numbers (이지어드민 주문번호 prefix)
 
 
 _FC_LINE = re.compile(r"([가-힣\d]+)\(?(\d+)?\)?\s*\[로켓그로스\]\s*팔레트\s*(\S+)")
@@ -287,6 +288,7 @@ def parse_parcel_attachment_doc(pdf_input: str | Path | bytes | BytesIO) -> Atta
             lines = [l.strip() for l in text.split("\n") if l.strip()]
 
             in_product_section = False
+            in_itr_section = False
             for line in lines:
                 # FC: '안산3 [SAN3]'
                 m = _PARCEL_FC_LINE.match(line)
@@ -305,6 +307,11 @@ def parse_parcel_attachment_doc(pdf_input: str | Path | bytes | BytesIO) -> Atta
                     in_product_section = False
                     continue
 
+                # '요청ID/ITR numbers' 섹션 — 다음 숫자 라인이 itr_id
+                if "ITR numbers" in line or "요청ID" in line:
+                    in_itr_section = True
+                    continue
+
                 if in_product_section:
                     # SKU 바코드 vs Inbound ID 구분 (길이로)
                     if _SKU_BARCODE_LINE.match(line):
@@ -314,6 +321,17 @@ def parse_parcel_attachment_doc(pdf_input: str | Path | bytes | BytesIO) -> Atta
                     elif line.isdigit() and len(line) >= 16:
                         if not meta.inbound_id:
                             meta.inbound_id = line
+
+                if in_itr_section:
+                    # itr_id 는 6~12자리 숫자 (예: 131139976)
+                    if line.isdigit() and 6 <= len(line) <= 12:
+                        if not meta.itr_id:
+                            meta.itr_id = line
+                        in_itr_section = False
+                        continue
+                    # 비숫자 또는 길이 다르면 ITR 모드 종료
+                    if not line.isdigit():
+                        in_itr_section = False
 
                 # 쉽먼트번호 (PBL...)
                 m = _PARCEL_SHIPMENT_LINE.match(line)
