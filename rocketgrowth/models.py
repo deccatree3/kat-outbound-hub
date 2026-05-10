@@ -288,6 +288,25 @@ class PlanFile(Base):
     )
 
 
+class CoupangFcInfo(Base):
+    """쿠팡 FC 정보 — 택배 출고 시 다원 출고요청서/이지어드민 발주서 등에 사용."""
+
+    __tablename__ = "coupang_fc_info"
+
+    fc_name: Mapped[str] = mapped_column(String(64), primary_key=True)  # '안산3'
+    fc_code: Mapped[str | None] = mapped_column(String(32))             # 'SAN3'
+    address: Mapped[str] = mapped_column(Text, nullable=False)
+    postal_code: Mapped[str] = mapped_column(String(10), nullable=False)
+    phone: Mapped[str] = mapped_column(String(32), nullable=False)
+    note: Mapped[str | None] = mapped_column(Text)
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now()
+    )
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime(timezone=True), server_default=func.now(), onupdate=func.now()
+    )
+
+
 class ActivityLog(Base):
     __tablename__ = "activity_log"
 

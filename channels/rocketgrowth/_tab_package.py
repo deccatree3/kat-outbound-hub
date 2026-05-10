@@ -42,8 +42,8 @@ from rocketgrowth.verification import (
 )
 
 from channels.rocketgrowth._helpers import (
-    STATUS_LABELS, derive_substatus_label, load_plan_files, resolve_parent_barcode,
-    save_plan_files, section_note,
+    STATUS_LABELS, derive_substatus_label, get_fc_info, load_plan_files,
+    resolve_parent_barcode, save_plan_files, section_note, upsert_fc_info,
 )
 
 
@@ -493,6 +493,43 @@ def render(brand: str):
     else:
         attachment = parse_attachment_doc(ab)
     invoice = parse_invoice_doc(ib) if ib else None
+
+    # 택배: 부착문서에서 추출한 FC 정보가 DB 에 있는지 확인 → 없으면 입력 받음
+    if (
+        (plan.shipment_type or 'milkrun') == 'parcel'
+        and attachment.fc_name
+    ):
+        _fc_info = get_fc_info(attachment.fc_name)
+        if _fc_info is None:
+            st.warning(
+                f"⚠️ FC **{attachment.fc_name}** 정보가 등록되어 있지 않습니다. "
+                "아래 정보를 입력하고 저장해 주세요. (저장 후 검수 계속 진행)"
+            )
+            with st.form(f"fc_info_form_{plan.id}_{attachment.fc_name}"):
+                fc1, fc2, fc3 = st.columns([2, 1, 1])
+                with fc1:
+                    new_addr = st.text_input("주소", placeholder="경기 안산시 ...")
+                with fc2:
+                    new_zip = st.text_input("우편번호", placeholder="15500")
+                with fc3:
+                    new_phone = st.text_input("전화번호", placeholder="031-...")
+                if st.form_submit_button(f"💾 FC '{attachment.fc_name}' 정보 저장", type="primary"):
+                    if new_addr.strip() and new_zip.strip() and new_phone.strip():
+                        try:
+                            upsert_fc_info(
+                                attachment.fc_name,
+                                address=new_addr.strip(),
+                                postal_code=new_zip.strip(),
+                                phone=new_phone.strip(),
+                                fc_code=getattr(attachment, 'fc_code', None),
+                            )
+                            st.success(f"✅ FC '{attachment.fc_name}' 정보 저장 완료")
+                            st.rerun()
+                        except Exception as ex:
+                            st.error(f"FC 정보 저장 실패: {ex}")
+                    else:
+                        st.error("주소/우편번호/전화번호 모두 입력 필요")
+            return  # FC 정보 입력 전엔 검수 진행 차단
 
     # 메타 입력 UI 가 제거됨 — 첨부문서 파싱 결과로 자동 보정
     if attachment.fc_name:

@@ -304,6 +304,41 @@ STATUS_LABELS = {
     "completed": "🏁 완료",
 }
 
+
+def get_fc_info(fc_name: str):
+    """쿠팡 FC 정보 조회. 없으면 None."""
+    from rocketgrowth.models import CoupangFcInfo
+    with get_session() as s:
+        return s.execute(
+            select(CoupangFcInfo).where(CoupangFcInfo.fc_name == fc_name)
+        ).scalar_one_or_none()
+
+
+def upsert_fc_info(
+    fc_name: str, address: str, postal_code: str, phone: str,
+    fc_code: str | None = None, note: str | None = None,
+) -> None:
+    """쿠팡 FC 정보 upsert."""
+    from rocketgrowth.models import CoupangFcInfo
+    with get_session() as s:
+        existing = s.execute(
+            select(CoupangFcInfo).where(CoupangFcInfo.fc_name == fc_name)
+        ).scalar_one_or_none()
+        if existing:
+            existing.address = address
+            existing.postal_code = postal_code
+            existing.phone = phone
+            if fc_code is not None:
+                existing.fc_code = fc_code
+            if note is not None:
+                existing.note = note
+        else:
+            s.add(CoupangFcInfo(
+                fc_name=fc_name, address=address, postal_code=postal_code,
+                phone=phone, fc_code=fc_code, note=note,
+            ))
+        s.commit()
+
 # 입고확정 이상이면 수량 잠금 (탭 1 수량확정 버튼 disabled)
 QTY_LOCKED_STATUSES = {"inbound_confirmed", "verified", "completed"}
 
