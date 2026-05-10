@@ -138,7 +138,7 @@ def render(brand: str):
             if not is_milkrun:
                 st.caption("동봉문서 N/A (택배 + 혼적 박스 없음)")
             else:
-                st.caption("동봉문서 미업로드 (혼적 박스 없는 경우)")
+                st.warning("⚠️ 밀크런 — 동봉문서 누락 (필수)")
     with dpc[1]:
         st.download_button(
             "📥 제품 바코드라벨", data=data.label_bytes,

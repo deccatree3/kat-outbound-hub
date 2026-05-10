@@ -444,12 +444,12 @@ def render(brand: str):
         src = " (이전 저장됨)" if prev else " (방금 업로드)"
         return f"✅ {name}: `{fname}`{src}"
 
-    # 동봉문서: 택배는 항상 옵션 (혼적 시만 필요), 밀크런도 사실상 옵션
+    # 동봉문서: 밀크런 필수 / 택배는 옵션 (혼적 시만 필요, 운영 상 미운영)
     st.caption("📎 PDF 상태:")
     for line in [
         _pdf_disp("바코드 라벨", label_pdf, "label_pdf"),
         _pdf_disp("부착 문서", attach_pdf, "attach_pdf"),
-        _pdf_disp("동봉 문서", invoice_pdf, "invoice_pdf", optional=True),
+        _pdf_disp("동봉 문서", invoice_pdf, "invoice_pdf", optional=_is_parcel_now),
     ]:
         st.caption(line)
 
@@ -457,7 +457,12 @@ def render(brand: str):
         if _is_parcel_now:
             st.info("바코드 라벨 PDF + 부착 문서 PDF 업로드 필요. 동봉 문서는 혼적 박스 있을 때만 (택배는 보통 미운영).")
         else:
-            st.info("바코드 라벨 PDF + 부착 문서 PDF 업로드 필요. 동봉 문서는 혼적 박스 있을 때만.")
+            st.info("바코드 라벨 PDF + 부착 문서 PDF + 동봉 문서 PDF 모두 업로드 필요 (밀크런).")
+        return
+
+    # 밀크런: 동봉 문서도 필수
+    if not _is_parcel_now and not invoice_pdf:
+        st.warning("⚠️ 밀크런은 동봉 문서 PDF 도 필수 — 업로드 후 진행 가능.")
         return
 
     lb = label_pdf.getvalue() if hasattr(label_pdf, 'getvalue') else label_pdf.read()
