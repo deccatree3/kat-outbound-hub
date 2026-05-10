@@ -918,6 +918,12 @@ def render(brand: str):
         axis=1,
     )
 
+    # box인입 표시 컬럼 — 에이지샷 번들 (캐처스): 'FREE' / 일반: str(box_qty)
+    allocated_df["box_qty_display"] = allocated_df.apply(
+        lambda r: "FREE" if r.get("is_agetshot") else str(int(r["box_qty"] or 1)),
+        axis=1,
+    )
+
     view = allocated_df.copy()
     if search:
         import re as _re
@@ -937,7 +943,7 @@ def render(brand: str):
     display_cols = [
         "coupang_option_id", "urgency", "product_name",
         "orderable", "sales_7d", "sales_30d", "velocity", "days_until_stockout",
-        "box_qty", "inbound_basic_bundle", "basic_boxes",
+        "box_qty_display", "inbound_basic_bundle", "basic_boxes",
         "pool_remaining_base", "pool_remaining_bundle",
         "inbound_final", "confirmed_boxes",
         "selected_batch_expiry", "selected_status",
@@ -1018,7 +1024,10 @@ def render(brand: str):
             "days_until_stockout": st.column_config.NumberColumn(
                 "소진예상(일)", format="%.1f",
             ),
-            "box_qty": st.column_config.NumberColumn("box입인", format="%d"),
+            "box_qty_display": st.column_config.TextColumn(
+                "box입인",
+                help="박스 1개당 들어가는 상품 수. 에이지샷 번들 (캐처스): 'FREE' (인박스/아웃박스 룰).",
+            ),
             "inbound_basic_bundle": st.column_config.NumberColumn(
                 "입고권장", format="%d",
                 help="엔진 기본 추천 — 단품은 단품 수량, 번들은 번들 수량 (낱개 환산 X). 팔레트 꽉 채움 적용 전.",
