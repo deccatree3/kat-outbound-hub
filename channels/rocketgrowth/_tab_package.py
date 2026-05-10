@@ -371,10 +371,16 @@ def render(brand: str):
             pallet_map.setdefault(pn, []).append(
                 PalletEntry(key=it.coupang_option_id, name=it.product_name or "", boxes=boxes_it)
             )
+        # pallet_count: plan.total_pallets 우선 (저장 시 정확한 값) — 없으면 max(pallet_no)
+        # len(pallet_map) 은 distinct pallet_no 의 갯수라 비어있는 팔레트가 있을 시 부정확
+        _pallet_count = (
+            int(plan.total_pallets) if plan.total_pallets
+            else (max(pallet_map.keys()) if pallet_map else 0)
+        )
         pa = PalletAssignment(
             pallets=[pallet_map[k] for k in sorted(pallet_map.keys())],
             total_boxes=sum(e.boxes for p in pallet_map.values() for e in p),
-            pallet_count=len(pallet_map),
+            pallet_count=_pallet_count,
         )
     else:
         pa_items = [
