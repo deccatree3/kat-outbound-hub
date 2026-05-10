@@ -132,116 +132,6 @@ def _render_classify_result(jp, kr, unknown, conflicts):
         st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
 
 
-def _render_kr_action(kr_orders):
-    """KR 분기 — SetSellerCheckYN_V2 호출 (배송준비 stat=3 전이)."""
-    if not kr_orders:
-        return
-    st.markdown("---")
-    today = kst_today()
-    today_str = today.strftime('%Y-%m-%d')
-    today_yyyymmdd = today.strftime('%Y%m%d')
-
-    st.markdown("### 국내 출고 분기 (한국 다원 → KSE → 일본)")
-    st.caption(
-        f"KR 활성 매핑 {len(kr_orders)} 건 — 배송준비(stat=3) 전이 후 KSE OMS 국내가 "
-        f"자동 수집. 발송예정일은 KST 오늘 ({today_str})."
-    )
-
-    # 주문 미리보기
-    df = pd.DataFrame([{
-        '주문번호': q.get('주문번호', ''),
-        '장바구니번호': q.get('장바구니번호', ''),
-        '상품명': (q.get('상품명') or '')[:40],
-        '옵션': (q.get('옵션정보') or '')[:30],
-        '수량': q.get('수량', 1),
-    } for q in kr_orders[:50]])
-    st.dataframe(df, hide_index=True, width="stretch")
-    if len(kr_orders) > 50:
-        st.caption(f"… 50/{len(kr_orders)} 행 표시")
-
-    # 마지막 호출 결과가 있으면 표시
-    last_result = st.session_state.get('cu_kr_last_result')
-    if last_result:
-        if last_result['ok']:
-            st.success(
-                f"✅ 직전 호출 성공: {last_result['count']}건 배송준비 전이 완료. "
-                f"(ResultMsg: {last_result['msg']})"
-            )
-        else:
-            st.error(
-                f"❌ 직전 호출 실패 (ResultCode={last_result['code']}, "
-                f"ResultMsg={last_result['msg']})"
-            )
-
-    # ─── 🧪 테스트 모드 — 특정 주문번호만 전환 ─────
-    with st.expander("🧪 테스트 — 특정 주문번호만 선택해서 전환", expanded=False):
-        st.caption(
-            "전체 KR 주문 대신 선택한 주문번호만 SetSellerCheckYN_V2 호출. "
-            "API 동작 검증용."
-        )
-        # multiselect — 라벨에 장바구니번호도 같이 노출
-        opts_kr = []
-        opt_label_map = {}
-        for q in kr_orders:
-            ono = str(q.get('주문번호', '')).strip()
-            cno = str(q.get('장바구니번호', '')).strip()
-            pname = (q.get('상품명') or '')[:30]
-            if ono:
-                opts_kr.append(ono)
-                opt_label_map[ono] = f"{ono} · 장바구니 {cno} · {pname}"
-        picked = st.multiselect(
-            "테스트할 주문번호 선택",
-            options=opts_kr,
-            format_func=lambda o: opt_label_map.get(o, o),
-            key="kr_test_pick",
-        )
-
-    use_test = bool(picked)
-    target_order_nos = picked if use_test else [
-        str(q.get('주문번호', '')).strip() for q in kr_orders
-        if str(q.get('주문번호', '')).strip()
-    ]
-
-    btn_label = (
-        f"🧪 테스트 — 국내 출고 {len(target_order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
-        if use_test else
-        f"🚚 국내 출고 {len(target_order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
-    )
-    if st.button(btn_label, type="primary", width="stretch", key="kr_send_ready_btn"):
-        if not target_order_nos:
-            st.error("주문번호 없음 — 호출 중단")
-            return
-        try:
-            sak = qapi.get_sak()
-        except Exception as ex:
-            st.error(f"SAK 발급 실패: {ex}")
-            return
-        with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(target_order_nos)}건)..."):
-            try:
-                result = qapi.set_seller_check_yn(sak, target_order_nos, today_yyyymmdd)
-            except Exception as ex:
-                st.error(f"API 호출 실패: {ex}")
-                return
-        st.session_state['cu_kr_last_result'] = result
-        if result['ok']:
-            # 성공 시 처리된 KR 주문 session 에서 제거 (재요청 방지) — JP/미매핑/충돌은 유지
-            qsm_rows = st.session_state.get('cu_qsm_rows', [])
-            kr_order_set = set(target_order_nos)
-            remaining = [q for q in qsm_rows
-                         if str(q.get('주문번호', '')).strip() not in kr_order_set]
-            st.session_state['cu_qsm_rows'] = remaining
-            st.success(
-                f"✅ {len(target_order_nos)}건 배송준비 전이 완료. "
-                "이후 KSE OMS 국내가 자동 수집 — 우리 시스템에서 추가 작업 X."
-            )
-            st.rerun()
-        else:
-            st.error(
-                f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']}). "
-                "Qoo10 셀러 지원 또는 자격증명 만료 확인 필요."
-            )
-
-
 DEST_LABEL = {
     'jp': '일본',
     'kr': '국내',
@@ -459,9 +349,10 @@ def render():
 
     jp_orders, kr_orders, unknown_orders, both_active = _classify(qsm_rows, jp_map, kr_map)
     _render_classify_result(jp_orders, kr_orders, unknown_orders, both_active)
+    _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
+    # 국내 출고 분기 (KR 배송상태 변경) 는 탭 2 (🇰🇷 국내 출고) 로 이전.
 
-    _render_kr_action(kr_orders)
-    # ─── 주문수집 확정 (배송준비 전환 후, 상품별 출고처 위) ─────
+    # ─── 페이지 하단 — 주문수집 확정 + 수집 초기화 ─────
     st.markdown("---")
     brief_id = st.session_state.get('qoo10_brief_id')
     if brief_id:
@@ -490,10 +381,6 @@ def render():
                 except Exception as ex:
                     st.error(f"저장 실패: {ex}")
 
-    _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
-    # ↑ KR(국내) 배송준비 전환 → 주문수집 확정 → 상품별 출고처(참고).
-
-    st.markdown("---")
     if st.button("🗑 수집 초기화 (재수집)", key="cu_reset_btn"):
         _clear_collected_state()
         st.rerun()
