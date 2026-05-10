@@ -203,9 +203,9 @@ def _render_kr_action(kr_orders):
     ]
 
     btn_label = (
-        f"🧪 테스트 — {len(target_order_nos)}건 배송준비로 전환 (발송예정일 {today_str})"
+        f"🧪 테스트 — 국내 출고 {len(target_order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
         if use_test else
-        f"🚚 KR {len(target_order_nos)}건 배송준비로 전환 (발송예정일 {today_str})"
+        f"🚚 국내 출고 {len(target_order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
     )
     if st.button(btn_label, type="primary", width="stretch", key="kr_send_ready_btn"):
         if not target_order_nos:
