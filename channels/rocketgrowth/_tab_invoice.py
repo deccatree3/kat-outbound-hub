@@ -133,8 +133,7 @@ def render(brand: str):
     if brand == 'nenu':
         st.subheader("① 이지어드민 발주")
         section_note(
-            "네뉴(서현커머스): 이지어드민 발주서양식 다운로드 → 이지어드민 업로드 → "
-            "이지어드민↔다원 자동연동으로 다원에 발주 전달 (재고차감)."
+            "이지어드민 발주서양식 다운로드 → 이지어드민 수동 발주"
         )
         try:
             order_xlsx = build_order_form(
