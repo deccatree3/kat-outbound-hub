@@ -121,9 +121,17 @@ def _select_plan(brand: str, brand_company: str) -> InboundPlan | None:
 
     # 다른 탭의 '다음 단계 →' 가 set 한 pending plan 이 있으면 selectbox 에 1회 적용
     sel_key = f"pkg_{brand_company}_plan_select"
+    active_key = f"pkg_{brand_company}_active_plan_id"  # 안전망: 선택된 plan_id 영속
     pending = st.session_state.pop(f"rg_{brand}_pending_pkg_pick", None)
     if pending is not None:
         target = next((i for i, p in enumerate(plans) if p.id == pending), None)
+        if target is not None:
+            st.session_state[sel_key] = target
+            st.session_state[active_key] = pending
+    # 안전망: selectbox state 가 어떤 이유로 lost 되었으면 active_key 에서 복원
+    elif sel_key not in st.session_state and active_key in st.session_state:
+        prev_id = st.session_state[active_key]
+        target = next((i for i, p in enumerate(plans) if p.id == prev_id), None)
         if target is not None:
             st.session_state[sel_key] = target
 
@@ -131,12 +139,17 @@ def _select_plan(brand: str, brand_company: str) -> InboundPlan | None:
         "발주 계획 선택",
         options=[SENTINEL] + list(range(len(plans))),
         format_func=lambda o: labels[o],
-        index=0,  # 사용자가 직접 진입한 경우 sentinel
+        index=0,
         key=sel_key,
     )
     if sel == SENTINEL:
+        # 사용자가 직접 sentinel 선택 시 active 도 clear (재선택 가능)
+        st.session_state.pop(active_key, None)
         return None
-    return plans[sel]
+    selected = plans[sel]
+    # 선택 추적 — 후속 rerun 에서 picker state 복원 가능
+    st.session_state[active_key] = selected.id
+    return selected
 
 
 SHIPMENT_LABELS = {'milkrun': '밀크런', 'parcel': '택배'}
