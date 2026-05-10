@@ -15,6 +15,7 @@ import streamlit as st
 from outputs.eza.builder import (
     EZA_WAYBILL_DEFAULT_CARRIER,
     parse_daone_invoice_xls,
+    build_eza_shipping_bulk_from_triples,
     build_eza_waybill_from_triples,
 )
 from outputs.daone.builder import build_daone_xlsx
@@ -263,24 +264,42 @@ def render(brand: str):
             width="stretch", hide_index=True,
         )
 
-    # 이지어드민 송장 양식 생성
+    # 이지어드민 양식 2종 생성: 배송일괄처리양식 + 송장업로드양식
     try:
-        xlsx_bytes = build_eza_waybill_from_triples(triples)
+        xlsx_waybill = build_eza_waybill_from_triples(triples)
+        xlsx_bulk = build_eza_shipping_bulk_from_triples(triples)
     except Exception as ex:
-        st.error(f"이지어드민 송장 양식 생성 실패: {ex}")
+        st.error(f"이지어드민 양식 생성 실패: {ex}")
         return
 
     today_str = _date.today().strftime('%Y%m%d')
-    out_name = f"이지어드민_송장업로드양식_로켓그로스({brand_company})_{today_str}.xlsx"
-    st.download_button(
-        f"📥 {out_name}",
-        data=xlsx_bytes,
-        file_name=out_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary", width="stretch",
-        key=f"inv_{brand}_dl_eza_{plan.id}",
+    name_bulk = f"이지어드민_배송일괄처리양식_로켓그로스({brand_company})_{today_str}.xlsx"
+    name_waybill = f"이지어드민_송장업로드양식_로켓그로스({brand_company})_{today_str}.xlsx"
+    dlc1, dlc2 = st.columns(2)
+    with dlc1:
+        st.download_button(
+            f"📥 배송일괄처리양식",
+            data=xlsx_bulk,
+            file_name=name_bulk,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", width="stretch",
+            key=f"inv_{brand}_dl_bulk_{plan.id}",
+            help="1컬럼 (송장번호). 이지어드민 → 배송 일괄처리 양식 업로드.",
+        )
+    with dlc2:
+        st.download_button(
+            f"📥 송장업로드양식",
+            data=xlsx_waybill,
+            file_name=name_waybill,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", width="stretch",
+            key=f"inv_{brand}_dl_waybill_{plan.id}",
+            help="택배사/송장번호/주문번호. 이지어드민 → 송장 일괄 등록 양식 업로드.",
+        )
+    st.caption(
+        "📤 이지어드민 — 두 양식을 순서대로 업로드. "
+        "**배송일괄처리** 먼저, 그 후 **송장업로드** (또는 운영 정책에 맞춰)."
     )
-    st.caption("📤 이지어드민 → 송장 일괄 등록 양식으로 업로드.")
 
     st.info(
         "🚧 **쿠팡 송장 업로드**: 쿠팡 Wing 의 파일 업로드 방식 확인 후 "

@@ -55,12 +55,17 @@ def _normalize_waybill(value) -> str:
 
 
 def _normalize_order_no(value) -> str:
+    """주문번호 정규화. 숫자 셀은 int 변환 (12345.0→'12345'),
+    텍스트 셀은 그대로 유지 (Python float() 가 underscore 를 천단위 구분자로
+    해석하지 않도록 string 변환 시 float 시도 금지 — 예: '130755679_1')."""
     if value in ('', None):
         return ''
-    try:
-        return str(int(float(value)))
-    except (ValueError, TypeError):
-        return str(value).strip()
+    if isinstance(value, (int, float)):
+        try:
+            return str(int(value))
+        except (ValueError, TypeError):
+            return str(value)
+    return str(value).strip()
 
 
 def parse_daone_invoice_xls(data: bytes,
@@ -68,6 +73,11 @@ def parse_daone_invoice_xls(data: bytes,
                             ) -> tuple[List[tuple], List[Dict]]:
     """다원 채번.xls → [(carrier, waybill, order_no), ...] + skip 리스트.
     다원 양식엔 택배사 컬럼이 없어 default_carrier 적용.
+
+    주문번호 매칭 우선순위:
+      '주문번호'     — legacy 일반판매
+      '고객주문번호' — 로켓그로스 밀크런 재고차감 (송장번호=고객주문번호+'000000')
+      '출하의뢰항번' — 로켓그로스 택배 (송장 후처리 단계 미사용이지만 fallback)
     """
     wb_in = xlrd.open_workbook(file_contents=data)
     ws_in = wb_in.sheet_by_index(0)
@@ -81,11 +91,11 @@ def parse_daone_invoice_xls(data: bytes,
                 return headers.index(n)
         return None
 
-    order_i = find_idx('주문번호')
+    order_i = find_idx('주문번호', '고객주문번호', '출하의뢰항번')
     waybill_i = find_idx('운송장번호', '송장번호')
     if order_i is None or waybill_i is None:
         raise RuntimeError(
-            f"다원 채번 파일에서 '주문번호' 또는 '운송장번호' 컬럼을 찾지 못함. "
+            f"다원 채번 파일에서 주문번호/고객주문번호/출하의뢰항번 또는 송장번호 컬럼을 찾지 못함. "
             f"실제 헤더: {headers}"
         )
 
@@ -166,6 +176,23 @@ def build_eza_waybill_from_triples(triples: List[tuple]) -> bytes:
 
     buf = io.BytesIO()
     wb_out.save(buf)
+    return buf.getvalue()
+
+
+def build_eza_shipping_bulk_from_triples(triples: List[tuple]) -> bytes:
+    """[(carrier, waybill, order_no), ...] → 이지어드민 배송일괄처리양식.xlsx.
+
+    1컬럼 (A: 송장번호) 만 포함. xlsxwriter (이지어드민 호환).
+    """
+    import xlsxwriter
+    buf = io.BytesIO()
+    wb = xlsxwriter.Workbook(buf, {"in_memory": True})
+    ws = wb.add_worksheet("Sheet1")
+    ws.write_string(0, 0, "송장번호")
+    for i, (_, waybill, _) in enumerate(triples, start=1):
+        ws.write_string(i, 0, str(waybill))
+    wb.close()
+    buf.seek(0)
     return buf.getvalue()
 
 
