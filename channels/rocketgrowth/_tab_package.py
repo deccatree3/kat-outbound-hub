@@ -128,16 +128,16 @@ def _select_plan(brand: str, brand_company: str) -> InboundPlan | None:
         if target is not None:
             st.session_state[sel_key] = target
             st.session_state[active_key] = pending
-    # 안전망: selectbox state 가 lost (없거나 sentinel) 이고 active_key 있으면 복원
-    elif (
-        (sel_key not in st.session_state
-         or st.session_state.get(sel_key) == SENTINEL)
-        and active_key in st.session_state
-    ):
+    elif active_key in st.session_state:
+        # active_key 가 set 되어 있으면 항상 sync (Streamlit widget state lost
+        # 케이스 대비 — sel_key 가 미존재/sentinel/유효값 무관 강제 동기화)
         prev_id = st.session_state[active_key]
         target = next((i for i, p in enumerate(plans) if p.id == prev_id), None)
         if target is not None:
-            st.session_state[sel_key] = target
+            cur = st.session_state.get(sel_key)
+            # 사용자가 명시적으로 다른 plan 으로 바꿨으면 (cur != target, cur != SENTINEL) 존중
+            if cur is None or cur == SENTINEL or cur == target:
+                st.session_state[sel_key] = target
 
     sel = st.selectbox(
         "발주 계획 선택",
