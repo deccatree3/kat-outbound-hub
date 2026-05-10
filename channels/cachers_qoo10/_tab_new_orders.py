@@ -411,9 +411,16 @@ def render():
     if brief_id:
         st.success(f"📋 주문수집 확정됨 — brief #{brief_id} (2/3 탭 발주계획 드롭다운에 노출).")
     else:
+        # KR 매핑 미처리 시 비활성. KR 없음 또는 배송상태 변경 완료 시 활성.
+        confirm_disabled = bool(kr_orders)
         if st.button(
             "📋 주문수집 확정", type="primary", width="stretch", key="cu_confirm_collect",
-            help="brief 를 DB 에 저장. 2/3 탭에서 이 batch 를 선택할 수 있게 됨.",
+            disabled=confirm_disabled,
+            help=(
+                "KR 매핑 주문의 배송상태 변경 완료 후 활성화됩니다."
+                if confirm_disabled else
+                "brief 를 DB 에 저장. 2/3 탭에서 이 batch 를 선택할 수 있게 됨."
+            ),
         ):
             content = st.session_state.get('qoo10_brief_bytes')
             fname = st.session_state.get('qoo10_brief_name')
