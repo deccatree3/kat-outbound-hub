@@ -44,6 +44,7 @@ CHANNELS = {
 ADMIN_PAGES = {
     "daone_combined": {"label": "🗂 통합 발주서", "desc": "채널별 저장 batch 모아 1개 다원 xlsx 다운로드"},
     "mapping": {"label": "🔧 상품 매핑", "desc": "전 채널 매핑 통합 관리 (조회/편집/삭제)"},
+    "rocketgrowth_master": {"label": "📋 로켓그로스 마스터", "desc": "WMS상품 + 쿠팡상품 마스터 다운로드/업로드 (전체 교체)"},
 }
 
 # ─── Sidebar ───
@@ -76,6 +77,9 @@ if admin_selected != '(없음)':
         render_page()
     elif admin_selected == 'mapping':
         from admin.mapping.page import render_page
+        render_page()
+    elif admin_selected == 'rocketgrowth_master':
+        from admin.rocketgrowth_master.page import render_page
         render_page()
 else:
     ch = CHANNELS[selected]
