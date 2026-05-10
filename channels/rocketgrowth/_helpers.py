@@ -370,6 +370,27 @@ def derive_substatus_label(plan, has_attach_pdf: bool = False) -> str:
     return "📝 임시저장"
 
 
+SHIPMENT_LABELS = {'milkrun': '밀크런', 'parcel': '택배'}
+
+
+def format_plan_label(plan, has_attach_pdf: bool = False) -> str:
+    """발주 계획 dropdown 라벨 (탭 1~4 공통).
+
+    형식: '#[번호] [상태] · [화주사]-[MM/DD 생성일] · 입고-[YYYY-MM-DD] · [FC] · [운송]'
+    값 없으면 '—' 표시.
+    """
+    sub = derive_substatus_label(plan, has_attach_pdf=has_attach_pdf)
+    company = plan.company_name or "—"
+    create_md = plan.plan_date.strftime("%m/%d") if plan.plan_date else "—"
+    arr_str = plan.arrival_date.strftime("%Y-%m-%d") if plan.arrival_date else "—"
+    fc_str = plan.fc_name or "—"
+    ship_str = SHIPMENT_LABELS.get(plan.shipment_type or "", plan.shipment_type or "—")
+    return (
+        f"#{plan.id} · {sub} · {company}-{create_md} · "
+        f"입고-{arr_str} · {fc_str} · {ship_str}"
+    )
+
+
 def is_agetshot_bundle(cp_master, wms_master) -> bool:
     """에이지샷 번들 SKU 식별 ([캐처스]로켓그로스 박스 계산용).
 

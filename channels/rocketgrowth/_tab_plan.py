@@ -34,7 +34,7 @@ from sqlalchemy import desc
 
 from channels.rocketgrowth._helpers import (
     AGETSHOT_BOX_CAPACITY, QTY_LOCKED_STATUSES, derive_substatus_label,
-    is_agetshot_bundle, jump_to_tab, ni, load_plan_files,
+    format_plan_label, is_agetshot_bundle, jump_to_tab, ni, load_plan_files,
     resolve_parent_barcode, save_plan, section_note,
 )
 
@@ -169,21 +169,13 @@ def _render_plan_picker(brand: str, brand_company: str) -> int | None:
     NEW = "__new__"
     options: list = [NEW] + plan_ids
 
-    _SHIP_LABELS = {'milkrun': '밀크런', 'parcel': '택배'}
     def _label(opt):
         if opt == NEW:
             return "+ 신규 계획"
         p = next((p for p in plans if p.id == opt), None)
         if not p:
             return f"#{opt}"
-        sub = derive_substatus_label(p, has_attach_pdf=(p.id in has_attach))
-        date_str = str(p.plan_date or "")
-        fc_str = f" · FC {p.fc_name}" if p.fc_name else ""
-        ship_str = (
-            f" · {_SHIP_LABELS.get(p.shipment_type, p.shipment_type)}"
-            if p.shipment_type else ""
-        )
-        return f"#{p.id} {sub} · {date_str}{fc_str}{ship_str}"
+        return format_plan_label(p, has_attach_pdf=(p.id in has_attach))
 
     sel = st.selectbox(
         "발주 계획 선택",

@@ -27,7 +27,7 @@ from rocketgrowth.pallet_assign import (
 from rocketgrowth.secondary_export import SecondaryItem
 
 from channels.rocketgrowth._helpers import (
-    derive_substatus_label, load_plan_files, resolve_parent_barcode,
+    derive_substatus_label, format_plan_label, load_plan_files, resolve_parent_barcode,
 )
 
 
@@ -57,12 +57,7 @@ def select_dispatch_plan(brand: str, brand_company: str, key_suffix: str = "") -
     SENTINEL = -1
     labels = {SENTINEL: "— 발주계획 선택 —"}
     for i, p in enumerate(plans):
-        labels[i] = (
-            f"#{p.id} {derive_substatus_label(p)} · "
-            f"{p.arrival_date or p.plan_date or ''}"
-            + (f" · {p.fc_name}" if p.fc_name else "")
-            + (f" · {SHIPMENT_LABELS.get(p.shipment_type or '', p.shipment_type or '')}")
-        )
+        labels[i] = format_plan_label(p)
 
     # 다른 탭의 '다음 단계 →' 가 set 한 pending plan 이 있으면 selectbox 에 1회 적용
     # key_suffix='dispatch' (탭 3) / 'invoice' (탭 4) 별로 분리
