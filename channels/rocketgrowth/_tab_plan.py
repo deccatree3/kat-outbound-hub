@@ -358,11 +358,12 @@ def render(brand: str):
         if selected_plan_obj is None:
             st.error(f"plan #{selected_plan_id} 을 찾지 못했습니다.")
             return
-        # verified/completed 는 read-only summary
-        if selected_plan_obj.status in ("verified", "completed"):
+        # completed 만 read-only summary
+        # (inbound_confirmed / verified 는 편집 화면 동일 — 수량 잠금)
+        if selected_plan_obj.status == "completed":
             _render_saved_plan_view(brand, brand_company, selected_plan_id)
             return
-        # qty_confirmed/draft 는 편집 가능
+        # qty_confirmed/draft 는 편집 가능, inbound_confirmed/verified 는 수량 잠금
         plan_files_db = load_plan_files(selected_plan_id)
         missing = [
             t for t in ("coupang_raw", "wms_raw", "template")
