@@ -227,6 +227,7 @@ def _collect_via_api(work_date=None, sequence=None):
         st.session_state['qoo10_brief_sequence'] = sequence
         # 미확정 — 하단 '주문수집 확정' 버튼 클릭 시 DB 저장
         st.session_state.pop('qoo10_brief_id', None)
+        st.session_state.pop('qoo10_tab1_confirmed', None)
         st.success(f"✅ {len(qsm_rows)}건 가져옴 — 하단 '주문수집 확정' 버튼으로 저장")
         st.rerun()
 
@@ -257,6 +258,7 @@ def _collect_via_csv(work_date=None, sequence=None):
                 st.session_state['qoo10_brief_sequence'] = sequence
                 # 미확정 — 하단 '주문수집 확정' 버튼 클릭 시 DB 저장
                 st.session_state.pop('qoo10_brief_id', None)
+                st.session_state.pop('qoo10_tab1_confirmed', None)
 
     det_ok = bool(st.session_state.get('qoo10_detail_bytes'))
     brief_ok = bool(st.session_state.get('qoo10_brief_bytes'))
@@ -290,7 +292,8 @@ def _clear_collected_state():
     for k in ('cu_qsm_rows', 'cu_collect_mode', 'cu_kr_last_result',
               'qoo10_detail_bytes', 'qoo10_detail_name',
               'qoo10_brief_bytes', 'qoo10_brief_name', 'qoo10_brief_id',
-              'qoo10_brief_work_date', 'qoo10_brief_sequence'):
+              'qoo10_brief_work_date', 'qoo10_brief_sequence',
+              'qoo10_tab1_confirmed'):
         st.session_state.pop(k, None)
 
 
@@ -406,10 +409,13 @@ def render():
                 )
 
     # ─── 페이지 하단 — 주문수집 확정 + 수집 초기화 ─────
+    # 확정 여부는 탭 1 전용 플래그(qoo10_tab1_confirmed) 로 추적. qoo10_brief_id 는
+    # 탭 2/3 picker 와 공유되어 false-positive ('확정됨') 표시 원인이라 사용 X.
     st.markdown("---")
-    brief_id = st.session_state.get('qoo10_brief_id')
-    if brief_id:
-        st.success(f"📋 주문수집 확정됨 — brief #{brief_id} (2/3 탭 발주계획 드롭다운에 노출).")
+    tab1_confirmed = st.session_state.get('qoo10_tab1_confirmed')
+    confirmed_bid = st.session_state.get('qoo10_brief_id') if tab1_confirmed else None
+    if confirmed_bid:
+        st.success(f"📋 주문수집 확정됨 — brief #{confirmed_bid} (2/3 탭 발주계획 드롭다운에 노출).")
     else:
         # KR 매핑 미처리 시 비활성. KR 없음 또는 배송상태 변경 완료 시 활성.
         confirm_disabled = bool(kr_orders)
@@ -435,6 +441,7 @@ def render():
                         work_date=wd_save, sequence=sq_save,
                     )
                     st.session_state['qoo10_brief_id'] = bid
+                    st.session_state['qoo10_tab1_confirmed'] = True
                     _cache.invalidate_all()
                     st.success(f"✅ 주문수집 확정 — brief #{bid}")
                     st.rerun()
