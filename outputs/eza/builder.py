@@ -55,12 +55,19 @@ def _normalize_waybill(value) -> str:
 
 
 def _normalize_order_no(value) -> str:
+    """주문번호 정규화. 숫자 셀은 int 변환 (12345.0→'12345'),
+    텍스트 셀은 그대로 유지 (예: '130755679_1' — Python float() 가 underscore 를
+    천단위 구분자로 해석하지 않도록 string 변환 시 float 시도 금지)."""
     if value in ('', None):
         return ''
-    try:
-        return str(int(float(value)))
-    except (ValueError, TypeError):
-        return str(value).strip()
+    if isinstance(value, (int, float)):
+        # xlrd 숫자 셀 (12345.0 → '12345')
+        try:
+            return str(int(value))
+        except (ValueError, TypeError):
+            return str(value)
+    # 텍스트 셀 — 변환 시도 없이 그대로 유지
+    return str(value).strip()
 
 
 def parse_daone_invoice_xls(data: bytes,
@@ -81,11 +88,12 @@ def parse_daone_invoice_xls(data: bytes,
                 return headers.index(n)
         return None
 
-    order_i = find_idx('주문번호')
+    # '주문번호' (일반판매 다원 채번) / '출하의뢰항번' (로켓그로스 택배 = '{itr_id}_{box_no}')
+    order_i = find_idx('주문번호', '출하의뢰항번')
     waybill_i = find_idx('운송장번호', '송장번호')
     if order_i is None or waybill_i is None:
         raise RuntimeError(
-            f"다원 채번 파일에서 '주문번호' 또는 '운송장번호' 컬럼을 찾지 못함. "
+            f"다원 채번 파일에서 '주문번호'/'출하의뢰항번' 또는 '운송장번호' 컬럼을 찾지 못함. "
             f"실제 헤더: {headers}"
         )
 
