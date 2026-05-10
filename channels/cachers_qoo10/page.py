@@ -30,67 +30,9 @@ def _tab_kr_outbound():
 
 
 def _render_resume_section():
-    """미완료 brief 목록 → 선택 시 brief만 session에 복원 (detail 없이도 송장 취합 가능).
-
-    오전에 출고요청서 생성/OMS 업로드 후, 오후에 와서 송장만 등록하는 시나리오 지원.
-    brief는 ① 단계에서 DB(`qoo10_pending_brief`)에 자동 저장됨.
-    """
-    from qoo10 import generator as qgen
-    try:
-        pending = qgen.list_pending_briefs(include_consumed=False, limit=10)
-    except Exception:
-        return
-    if not pending:
-        return
-
-    with st.expander(
-        f"🔄 기존 작업 이어서 ({len(pending)}건 미완료 brief — 오전 작업 → 오후 송장 등록)",
-        expanded=False,
-    ):
-        st.caption(
-            "출고요청서 생성 시 brief 가 자동 저장됨. "
-            "여기서 선택하면 detail 없이도 송장 취합/등록(③~⑤) 가능."
-        )
-        options = [None] + [p['id'] for p in pending]
-        def _make_label(p):
-            wd = p.get('work_date')
-            sq = p.get('sequence')
-            head = (f"{wd.strftime('%Y-%m-%d')} / {sq}차"
-                    if wd and sq else
-                    (p['created_at'].strftime('%m-%d %H:%M')
-                     if p['created_at'] else '시간미상'))
-            time_part = (f" - {p['created_at'].strftime('%H:%M')}"
-                         if p['created_at'] else '')
-            return (f"{head}{time_part} · 주문 {p['cart_count']}건"
-                    f" · {p['file_name']}")
-        label_map = {p['id']: _make_label(p) for p in pending}
-        sel = st.selectbox(
-            "미완료 brief 선택",
-            options=options,
-            format_func=lambda i: '(선택 안함)' if i is None else label_map[i],
-            key="cu_jp_resume_select",
-        )
-        if sel is not None and st.button(
-            "📥 이 작업 이어서 시작", key="cu_jp_resume_btn", type="primary",
-        ):
-            try:
-                content, fname = qgen.load_pending_brief(sel)
-            except Exception as ex:
-                st.error(f"로드 실패: {ex}")
-                return
-            st.session_state['qoo10_brief_bytes'] = content
-            st.session_state['qoo10_brief_name'] = fname
-            st.session_state['qoo10_brief_id'] = sel
-            # 선택한 brief 의 work_date/sequence 도 session 에 복원
-            sel_meta = next((p for p in pending if p['id'] == sel), None)
-            if sel_meta:
-                st.session_state['qoo10_brief_work_date'] = sel_meta.get('work_date')
-                st.session_state['qoo10_brief_sequence'] = sel_meta.get('sequence')
-            # detail 은 없음 → ③부터 진행
-            st.session_state.pop('qoo10_detail_bytes', None)
-            st.session_state.pop('qoo10_detail_name', None)
-            st.success(f"✅ {fname} 로드. 송장 취합부터 진행하세요.")
-            st.rerun()
+    """확정된 brief 드롭다운 — 선택 시 session 로드. (탭 1 '주문수집 확정' 한 batch)."""
+    from channels.cachers_qoo10._brief_picker import render_brief_picker
+    render_brief_picker(key_prefix='cu_jp', title="발주계획 선택")
 
 
 def _tab_jp_outbound():

@@ -568,7 +568,7 @@ _BRIEF_SCHEMA_ENSURED = False
 
 
 def _ensure_brief_schema():
-    """qoo10_pending_brief 에 work_date, sequence 컬럼 보장 (1회)."""
+    """qoo10_pending_brief 에 work_date, sequence, status 컬럼 보장 (1회)."""
     global _BRIEF_SCHEMA_ENSURED
     if _BRIEF_SCHEMA_ENSURED:
         return
@@ -582,6 +582,14 @@ def _ensure_brief_schema():
             cur.execute("""
                 ALTER TABLE qoo10_pending_brief
                     ADD COLUMN IF NOT EXISTS sequence INT
+            """)
+            cur.execute("""
+                ALTER TABLE qoo10_pending_brief
+                    ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'collected'
+            """)
+            # 기존 row 들도 'collected' 로 (NULL 만 갱신)
+            cur.execute("""
+                UPDATE qoo10_pending_brief SET status = 'collected' WHERE status IS NULL
             """)
         conn.commit()
         conn.close()
@@ -711,14 +719,14 @@ def save_pending_brief(content: bytes, file_name: str, cart_count: int,
 
 
 def list_pending_briefs(include_consumed: bool = False, limit: int = 20) -> List[Dict]:
-    """임시저장된 brief 목록"""
+    """임시저장된 brief 목록 (status 포함)."""
     _ensure_brief_schema()
     conn = pg.connect(autocommit=True)
     with conn.cursor() as cur:
         where = "" if include_consumed else "WHERE consumed_at IS NULL"
         cur.execute(f"""
             SELECT id, created_at, file_name, cart_count, disabled_count, consumed_at,
-                   work_date, sequence
+                   work_date, sequence, status
             FROM qoo10_pending_brief {where}
             ORDER BY work_date DESC NULLS LAST, sequence DESC NULLS LAST,
                      created_at DESC LIMIT %s
@@ -728,7 +736,7 @@ def list_pending_briefs(include_consumed: bool = False, limit: int = 20) -> List
     return [
         {'id': r[0], 'created_at': r[1], 'file_name': r[2],
          'cart_count': r[3], 'disabled_count': r[4] or 0, 'consumed_at': r[5],
-         'work_date': r[6], 'sequence': r[7]}
+         'work_date': r[6], 'sequence': r[7], 'status': r[8] or 'collected'}
         for r in rows
     ]
 

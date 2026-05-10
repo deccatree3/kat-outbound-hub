@@ -174,6 +174,24 @@ def render_page():
         "KSE OMS 주문내역.xlsx + (선택) 라벨.pdf 한 번에 업로드."
     )
 
+    # 발주계획 picker — 탭 1 에서 '주문수집 확정' 한 brief 노출
+    from channels.cachers_qoo10._brief_picker import render_brief_picker
+    picked = render_brief_picker(
+        key_prefix='cu_kr',
+        title="발주계획 선택 (탭 1 에서 확정한 batch)",
+        clear_detail_on_load=False,  # KR 탭은 detail/brief 만 표시용
+    )
+    if picked:
+        wd = picked.get('work_date')
+        sq = picked.get('sequence')
+        st.caption(
+            f"📋 발주계획 #{picked['id']} · "
+            f"{wd.strftime('%Y-%m-%d') if wd else '—'} / {sq}차 · "
+            f"{picked.get('cart_count', 0)}건 — 컨텍스트만 표시 "
+            "(실제 데이터는 아래 KSE OMS xlsx 업로드)."
+        )
+    st.markdown("---")
+
     uploaded_files = st.file_uploader(
         "KSE 어드민 파일 — 주문내역(.xlsx) + 쉽먼트 라벨(.pdf, 선택). 여러 개 가능",
         type=['xlsx', 'pdf'],

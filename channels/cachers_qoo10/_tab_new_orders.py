@@ -302,17 +302,11 @@ def _collect_via_api(work_date=None, sequence=None):
         st.session_state['qoo10_detail_name'] = f"API_DeliveryManagement_detail_{ts}.csv"
         st.session_state['qoo10_brief_bytes'] = brief_bytes
         st.session_state['qoo10_brief_name'] = f"API_DeliveryManagement_brief_{ts}.csv"
-        try:
-            bid = qgen.save_pending_brief(
-                brief_bytes, st.session_state['qoo10_brief_name'], len(api_orders),
-                work_date=work_date, sequence=sequence)
-            st.session_state['qoo10_brief_id'] = bid
-            st.session_state['qoo10_brief_work_date'] = work_date
-            st.session_state['qoo10_brief_sequence'] = sequence
-            _cache.invalidate_all()
-        except Exception as ex:
-            st.warning(f"brief 임시저장 실패 (세션 내에서는 사용 가능): {ex}")
-        st.success(f"✅ {len(qsm_rows)}건 가져옴")
+        st.session_state['qoo10_brief_work_date'] = work_date
+        st.session_state['qoo10_brief_sequence'] = sequence
+        # 미확정 — 하단 '주문수집 확정' 버튼 클릭 시 DB 저장
+        st.session_state.pop('qoo10_brief_id', None)
+        st.success(f"✅ {len(qsm_rows)}건 가져옴 — 하단 '주문수집 확정' 버튼으로 저장")
         st.rerun()
 
 
@@ -338,17 +332,10 @@ def _collect_via_csv(work_date=None, sequence=None):
             elif 'brief' in nm:
                 st.session_state['qoo10_brief_bytes'] = content
                 st.session_state['qoo10_brief_name'] = f.name
-                try:
-                    cnt = len(qgen.parse_qsm_csv(content))
-                    bid = qgen.save_pending_brief(
-                        content, f.name, cnt,
-                        work_date=work_date, sequence=sequence)
-                    st.session_state['qoo10_brief_id'] = bid
-                    st.session_state['qoo10_brief_work_date'] = work_date
-                    st.session_state['qoo10_brief_sequence'] = sequence
-                    _cache.invalidate_all()
-                except Exception as ex:
-                    st.warning(f"brief 임시저장 실패 (세션 내에서는 사용 가능): {ex}")
+                st.session_state['qoo10_brief_work_date'] = work_date
+                st.session_state['qoo10_brief_sequence'] = sequence
+                # 미확정 — 하단 '주문수집 확정' 버튼 클릭 시 DB 저장
+                st.session_state.pop('qoo10_brief_id', None)
 
     det_ok = bool(st.session_state.get('qoo10_detail_bytes'))
     brief_ok = bool(st.session_state.get('qoo10_brief_bytes'))
@@ -445,6 +432,35 @@ def render():
     _render_kr_action(kr_orders)
     _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
     # ↑ KR(국내) 먼저 처리(배송준비 전환). JP(일본) 분기는 일본 출고 탭에서 진행.
+
+    # ─── 주문수집 확정 ─────
+    st.markdown("---")
+    brief_id = st.session_state.get('qoo10_brief_id')
+    if brief_id:
+        st.success(f"📋 주문수집 확정됨 — brief #{brief_id} (2/3 탭 발주계획 드롭다운에 노출).")
+    else:
+        if st.button(
+            "📋 주문수집 확정", type="primary", width="stretch", key="cu_confirm_collect",
+            help="brief 를 DB 에 저장. 2/3 탭에서 이 batch 를 선택할 수 있게 됨.",
+        ):
+            content = st.session_state.get('qoo10_brief_bytes')
+            fname = st.session_state.get('qoo10_brief_name')
+            wd_save = st.session_state.get('qoo10_brief_work_date')
+            sq_save = st.session_state.get('qoo10_brief_sequence')
+            if not content or not fname:
+                st.error("brief 데이터 없음 — 재수집 필요.")
+            else:
+                try:
+                    bid = qgen.save_pending_brief(
+                        content, fname, len(qsm_rows),
+                        work_date=wd_save, sequence=sq_save,
+                    )
+                    st.session_state['qoo10_brief_id'] = bid
+                    _cache.invalidate_all()
+                    st.success(f"✅ 주문수집 확정 — brief #{bid}")
+                    st.rerun()
+                except Exception as ex:
+                    st.error(f"저장 실패: {ex}")
 
     st.markdown("---")
     if st.button("🗑 수집 초기화 (재수집)", key="cu_reset_btn"):
