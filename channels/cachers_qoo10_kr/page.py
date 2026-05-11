@@ -226,11 +226,7 @@ def _render_post_transition_check():
     from utils.timezone import kst_today
     import datetime as _dt
 
-    st.markdown("### 🔄 QSM 재수집 — 미출고 주문 확인 (배송준비/stat=3)")
-    st.caption(
-        "이전에 배송상태 변경했지만 송장 등록까지 못 간 주문을 다시 가져와서 분류. "
-        "오늘 테스트로 변경된 건 포함. 신규주문 (stat=2) 은 탭 1 흐름."
-    )
+    st.markdown("### 📊 분류 결과")
     if not qapi.has_credentials():
         st.warning("Qoo10 API 자격증명 없음 — 사이드바에서 등록 필요.")
         return
