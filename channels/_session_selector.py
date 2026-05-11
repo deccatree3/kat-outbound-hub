@@ -245,7 +245,7 @@ def render_save_button(channel: str,
         )
         return
     label = f"💾 통합 발주서에 저장 ({len(daone_rows)}행)"
-    if st.button(label, type="primary", width="stretch",
+    if st.button(label, type="secondary", width="stretch",
                  key=f"{key_prefix}_save_btn"):
         ok = _b.upsert(
             session_info['work_date'], session_info['sequence'], channel,

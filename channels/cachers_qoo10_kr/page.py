@@ -385,7 +385,7 @@ def render_page():
             data=packing_xlsx,
             file_name=packing_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-            type="secondary", width="stretch",
+            type="primary", width="stretch",
             key="kse_packing_download",
             help="패킹 작업 참고용 (인박스/아웃박스 + 색)",
         )
@@ -411,7 +411,7 @@ def render_page():
             data=uploaded_pdf.getvalue(),
             file_name=pdf_out_name,
             mime="application/pdf",
-            width="stretch",
+            type="primary", width="stretch",
             key="kse_pdf_download",
         )
         st.caption("📌 PDF 파일명 형식 사양 확정 후 업데이트 예정.")
