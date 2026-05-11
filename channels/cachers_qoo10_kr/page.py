@@ -232,7 +232,7 @@ def _render_post_transition_check():
 
     c1, c2 = st.columns([3, 1])
     with c1:
-        if st.button("🔄 QSM 재수집", type="primary", width="stretch",
+        if st.button("🔄 QSM 배송상태 현황 불러오기", type="primary", width="stretch",
                      key="post_tx_refetch"):
             today = kst_today()
             sd = (today - _dt.timedelta(days=30)).strftime('%Y%m%d')
