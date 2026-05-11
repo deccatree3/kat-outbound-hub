@@ -167,49 +167,6 @@ def _render_pending_mappings(unknown_rows, mappings):
                         st.error("매핑 등록 실패 (DB 연결 확인)")
 
 
-def _render_kr_result_view(brief_content: bytes) -> None:
-    """탭 2 — 국내 출고 분류 결과 (읽기 전용 표시, action 없음).
-
-    탭 1 에서 확정한 brief 의 KR 매핑 주문을 표로 노출. 배송상태 변경 액션은
-    탭 1 에서만 수행 — 여기는 결과 확인용.
-    """
-    from qoo10 import generator as qgen
-    from channels.cachers_qoo10._tab_new_orders import _classify
-    from channels import _db_cache as _cache
-
-    try:
-        qsm_rows = qgen.parse_qsm_csv(brief_content)
-    except Exception as ex:
-        st.error(f"brief CSV 파싱 실패: {ex}")
-        return
-
-    CHANNEL_JP = 'qoo10_japan'
-    CHANNEL_KR = 'cachers_qoo10_kr'
-    jp_map = _cache.load_mapping(CHANNEL_JP, active_only=True)
-    kr_map = _cache.load_mapping(CHANNEL_KR, active_only=True)
-    _jp, kr_orders, _unk, _conf = _classify(qsm_rows, jp_map, kr_map)
-
-    st.markdown("### 📦 국내 출고 분류 결과")
-    if not kr_orders:
-        st.info("📦 이 brief 에 KR 매핑 주문 없음.")
-        return
-
-    st.caption(
-        f"KR 활성 매핑 {len(kr_orders)} 건. 배송상태 변경은 탭 1 에서 수행. "
-        "이후 KSE OMS 국내가 자동 수집 → 아래 KSE OMS xlsx 업로드."
-    )
-    df = pd.DataFrame([{
-        '주문번호': q.get('주문번호', ''),
-        '장바구니번호': q.get('장바구니번호', ''),
-        '상품명': (q.get('상품명') or '')[:40],
-        '옵션': (q.get('옵션정보') or '')[:30],
-        '수량': q.get('수량', 1),
-    } for q in kr_orders[:50]])
-    st.dataframe(df, hide_index=True, width="stretch")
-    if len(kr_orders) > 50:
-        st.caption(f"… 50/{len(kr_orders)} 행 표시")
-
-
 def _render_post_transition_check():
     """탭 2 — QSM 재수집: stat=2 (신규주문) + stat=3 (배송준비) 합쳐서 분류.
 
@@ -327,35 +284,13 @@ def render_page():
     _map.ensure_schema()
     st.markdown(
         "Qoo10 일본 주문 중 **한국 다원 → KSE 한국 → 일본** 출고 분량. "
-        "탭 1 발주계획 확정 → KSE OMS xlsx 업로드 → 다원 발주서."
+        "QSM 배송상태 현황 → KSE OMS xlsx 업로드 → 다원 발주서."
     )
 
-    # QSM 재수집 (배송상태 변경 검증) — 탭 상단에 노출
+    # QSM 배송상태 현황 — 탭 상단
     _render_post_transition_check()
     st.markdown("---")
-
-    # 발주계획 picker — 탭 1 에서 '주문수집 확정' 한 brief 컨텍스트만 표시
-    # (배송상태 변경은 탭 1 에서만 수행 — 여기는 후속 KSE OMS 처리 단계.)
-    from channels.cachers_qoo10._brief_picker import render_brief_picker
-    picked = render_brief_picker(
-        key_prefix='cu_kr',
-        title="발주계획 선택",
-        clear_detail_on_load=False,
-    )
-    if picked:
-        wd = picked.get('work_date')
-        sq = picked.get('sequence')
-        st.caption(
-            f"📋 발주계획 #{picked['id']} · "
-            f"{wd.strftime('%Y-%m-%d') if wd else '—'} / {sq}차 · "
-            f"{picked.get('cart_count', 0)}건"
-        )
-        # 국내 출고 분류 결과 (읽기 전용 — 배송상태 변경 액션은 탭 1)
-        brief_content = st.session_state.get('qoo10_brief_bytes')
-        if brief_content:
-            st.markdown("---")
-            _render_kr_result_view(brief_content)
-    st.markdown("---")
+    # 발주계획 picker 는 제거 — KR 채널은 brief 저장/사용 안함 (JP 채널과 분리).
 
     uploaded_files = st.file_uploader(
         "KSE 어드민 파일 — 주문내역(.xlsx) + 쉽먼트 라벨(.pdf, 선택). 여러 개 가능",
