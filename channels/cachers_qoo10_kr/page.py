@@ -273,43 +273,31 @@ def _render_post_transition_check():
     jp_map = _cache.load_mapping(CHANNEL_JP, active_only=True)
     kr_map = _cache.load_mapping(CHANNEL_KR, active_only=True)
 
-    # 분류
-    kr_ready_rows = []     # 배송준비(국내 출고) = KR 매핑 + stat=3
-    jp_new_rows = []       # 신규주문(일본 출고) = JP 매핑 + stat=2
-    unknown_rows = []      # 미매핑
-    conflict_rows = []     # 양쪽 활성 (운영 오류)
-    other_rows = []        # 예외 (KR+stat=2, JP+stat=3 등)
+    # 메트릭 — stat 기준 (mapping 무관) + 미매핑/충돌은 mapping 기준
+    n_stat2 = sum(1 for q in rows if q.get('_stat') == '2')  # 신규주문 (일본 출고)
+    n_stat3 = sum(1 for q in rows if q.get('_stat') == '3')  # 배송준비 (국내 출고)
+
+    unknown_rows = []
+    conflict_rows = []
     for q in rows:
         name = (q.get('상품명') or '').strip()
         option = (q.get('옵션정보') or '').strip()
         key = (name, option)
-        stat = q.get('_stat')
         in_jp = key in jp_map
         in_kr = key in kr_map
         if in_jp and in_kr:
             conflict_rows.append(q)
-        elif in_kr and stat == '3':
-            kr_ready_rows.append(q)
-        elif in_jp and stat == '2':
-            jp_new_rows.append(q)
-        elif in_kr or in_jp:
-            other_rows.append(q)
-        else:
+        elif not in_jp and not in_kr:
             unknown_rows.append(q)
 
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("총 주문", len(rows))
-    c2.metric("배송준비(국내 출고)", len(kr_ready_rows))
-    c3.metric("신규주문(일본 출고)", len(jp_new_rows))
+    c2.metric("배송준비(국내 출고)", n_stat3)
+    c3.metric("신규주문(일본 출고)", n_stat2)
     c4.metric("🆕 미매핑", len(unknown_rows))
     c5.metric("⚠️ 충돌", len(conflict_rows),
               help="양쪽 채널 모두 활성 매핑 — 한쪽만 활성으로 토글 필요")
 
-    if other_rows:
-        st.warning(
-            f"⚠️ 예외 상태 {len(other_rows)}건 — KR 매핑인데 stat=2 (배송상태 변경 전) "
-            "또는 JP 매핑인데 stat=3 (이례). 운영 확인 필요."
-        )
     if conflict_rows:
         st.error(
             f"⚠️ 양쪽 채널 모두 활성 매핑 {len(conflict_rows)}건. "
