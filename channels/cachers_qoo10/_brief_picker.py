@@ -13,22 +13,13 @@ STATUS_LABELS = {
 
 
 def format_brief_label(brief: dict) -> str:
-    """발주계획 라벨 — '#[id] · [상태] · [YYYY-MM-DD] / [N]차 · [건수]건 · [파일명]'."""
+    """발주계획 라벨 — '#[id] · [상태] · [YYYY-MM-DD 생성일] · [건수]건'."""
     status = brief.get('status') or 'collected'
     status_label = STATUS_LABELS.get(status, status)
     wd = brief.get('work_date')
-    sq = brief.get('sequence')
     wd_str = wd.strftime('%Y-%m-%d') if wd else '—'
-    sq_str = f"{sq}차" if sq else '—'
     cnt = brief.get('cart_count', 0)
-    fname = brief.get('file_name', '')
-    fname_short = (fname[:30] + '…') if len(fname) > 30 else fname
-    return (
-        f"#{brief['id']} · {status_label} · "
-        f"{wd_str} / {sq_str} · "
-        f"{cnt}건"
-        + (f" · {fname_short}" if fname_short else "")
-    )
+    return f"#{brief['id']} · {status_label} · {wd_str} · {cnt}건"
 
 
 def _render_delete_expander(pending, key_prefix):
