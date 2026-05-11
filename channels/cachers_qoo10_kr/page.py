@@ -211,20 +211,19 @@ def _render_kr_result_view(brief_content: bytes) -> None:
 
 
 def _render_post_transition_check():
-    """탭 2 — QSM 재수집: 배송준비(stat=3) 미출고 주문 확인.
+    """탭 2 — QSM 재수집: stat=2 (신규주문) + stat=3 (배송준비) 합쳐서 분류.
 
-    배송상태 변경 후 (stat=2 → 3) 송장 등록까지 못 간 주문 (이전 일자에 배송상태
-    변경했지만 KSE/다원에서 출고 안 된 잔류분 + 오늘 테스트로 변경된 건) 을 조회.
-    탭 1 과 같은 분류 UI 로 노출.
+    국내 출고 대상 = KR 매핑 + stat=3 (배송상태 변경 후 미출고 잔류)
+    일본 출고 대상 = JP 매핑 + stat=2 (신규주문, 송장 등록 전)
     """
+    from collections import defaultdict
     from qoo10 import api_client as qapi
-    from channels.cachers_qoo10._tab_new_orders import (
-        _classify, _render_classify_result, _render_product_summary,
-        CHANNEL_JP, CHANNEL_KR,
-    )
     from channels import _db_cache as _cache
     from utils.timezone import kst_today
     import datetime as _dt
+
+    CHANNEL_JP = 'qoo10_japan'
+    CHANNEL_KR = 'cachers_qoo10_kr'
 
     st.markdown("### 📊 분류 결과")
     if not qapi.has_credentials():
@@ -238,14 +237,23 @@ def _render_post_transition_check():
             today = kst_today()
             sd = (today - _dt.timedelta(days=30)).strftime('%Y%m%d')
             ed = today.strftime('%Y%m%d')
-            with st.spinner("QSM API 조회 중 (stat=3 배송준비)..."):
+            with st.spinner("QSM API 조회 중 (stat=2, 3)..."):
                 try:
                     sak = qapi.get_sak()
-                    api_orders = qapi.fetch_orders(sak, sd, ed, "3")
+                    stat2_orders = qapi.fetch_orders(sak, sd, ed, "2")
+                    stat3_orders = qapi.fetch_orders(sak, sd, ed, "3")
                 except Exception as ex:
                     st.error(f"API 호출 실패: {ex}")
                     return
-            rows = [qapi.api_response_to_qsm_dict(o) for o in api_orders]
+            rows = []
+            for o in stat2_orders:
+                d = qapi.api_response_to_qsm_dict(o)
+                d['_stat'] = '2'
+                rows.append(d)
+            for o in stat3_orders:
+                d = qapi.api_response_to_qsm_dict(o)
+                d['_stat'] = '3'
+                rows.append(d)
             st.session_state['post_tx_qsm_rows'] = rows
             st.rerun()
     with c2:
@@ -258,15 +266,73 @@ def _render_post_transition_check():
     if rows is None:
         return
 
-    st.markdown(f"#### 📊 분류 결과 (배송준비/미출고 총 {len(rows)}건)")
     if not rows:
-        st.success("✅ 배송준비 0건 — 미출고 잔류 주문 없음.")
+        st.success("✅ 총 주문 0건.")
         return
+
     jp_map = _cache.load_mapping(CHANNEL_JP, active_only=True)
     kr_map = _cache.load_mapping(CHANNEL_KR, active_only=True)
-    jp, kr, unk, conf = _classify(rows, jp_map, kr_map)
-    _render_classify_result(jp, kr, unk, conf)
-    _render_product_summary(jp, kr, unk, conf)
+
+    # 분류
+    kr_ready_rows = []     # 배송준비(국내 출고) = KR 매핑 + stat=3
+    jp_new_rows = []       # 신규주문(일본 출고) = JP 매핑 + stat=2
+    unknown_rows = []      # 미매핑
+    conflict_rows = []     # 양쪽 활성 (운영 오류)
+    other_rows = []        # 예외 (KR+stat=2, JP+stat=3 등)
+    for q in rows:
+        name = (q.get('상품명') or '').strip()
+        option = (q.get('옵션정보') or '').strip()
+        key = (name, option)
+        stat = q.get('_stat')
+        in_jp = key in jp_map
+        in_kr = key in kr_map
+        if in_jp and in_kr:
+            conflict_rows.append(q)
+        elif in_kr and stat == '3':
+            kr_ready_rows.append(q)
+        elif in_jp and stat == '2':
+            jp_new_rows.append(q)
+        elif in_kr or in_jp:
+            other_rows.append(q)
+        else:
+            unknown_rows.append(q)
+
+    c1, c2, c3, c4, c5 = st.columns(5)
+    c1.metric("총 주문", len(rows))
+    c2.metric("배송준비(국내 출고)", len(kr_ready_rows))
+    c3.metric("신규주문(일본 출고)", len(jp_new_rows))
+    c4.metric("🆕 미매핑", len(unknown_rows))
+    c5.metric("⚠️ 충돌", len(conflict_rows),
+              help="양쪽 채널 모두 활성 매핑 — 한쪽만 활성으로 토글 필요")
+
+    if other_rows:
+        st.warning(
+            f"⚠️ 예외 상태 {len(other_rows)}건 — KR 매핑인데 stat=2 (배송상태 변경 전) "
+            "또는 JP 매핑인데 stat=3 (이례). 운영 확인 필요."
+        )
+    if conflict_rows:
+        st.error(
+            f"⚠️ 양쪽 채널 모두 활성 매핑 {len(conflict_rows)}건. "
+            "어드민 → 🔧 상품 매핑에서 한쪽만 활성으로 토글."
+        )
+    if unknown_rows:
+        by_key = defaultdict(list)
+        for q in unknown_rows:
+            k = ((q.get('상품명') or '').strip(), (q.get('옵션정보') or '').strip())
+            by_key[k].append(q)
+        rows_summary = []
+        for k, qs in by_key.items():
+            rows_summary.append({
+                '상품명': k[0],
+                '옵션': k[1] or '(없음)',
+                '영향 주문수': len(qs),
+                '대표 주문번호': qs[0].get('주문번호', ''),
+            })
+        st.error(
+            f"🆕 미매핑 — 주문 {len(unknown_rows)}건 / 키 {len(by_key)}개. "
+            "어드민 → 🔧 상품 매핑에서 등록 후 다시 가져오기."
+        )
+        st.dataframe(pd.DataFrame(rows_summary), hide_index=True, width="stretch")
 
 
 def render_page():
