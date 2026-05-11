@@ -210,12 +210,79 @@ def _render_kr_result_view(brief_content: bytes) -> None:
         st.caption(f"… 50/{len(kr_orders)} 행 표시")
 
 
+def _render_post_transition_check():
+    """탭 2 — QSM 재수집: 배송준비(stat=3) 미출고 주문 확인.
+
+    배송상태 변경 후 (stat=2 → 3) 송장 등록까지 못 간 주문 (이전 일자에 배송상태
+    변경했지만 KSE/다원에서 출고 안 된 잔류분 + 오늘 테스트로 변경된 건) 을 조회.
+    탭 1 과 같은 분류 UI 로 노출.
+    """
+    from qoo10 import api_client as qapi
+    from channels.cachers_qoo10._tab_new_orders import (
+        _classify, _render_classify_result, _render_product_summary,
+        CHANNEL_JP, CHANNEL_KR,
+    )
+    from channels import _db_cache as _cache
+    from utils.timezone import kst_today
+    import datetime as _dt
+
+    st.markdown("### 🔄 QSM 재수집 — 미출고 주문 확인 (배송준비/stat=3)")
+    st.caption(
+        "이전에 배송상태 변경했지만 송장 등록까지 못 간 주문을 다시 가져와서 분류. "
+        "오늘 테스트로 변경된 건 포함. 신규주문 (stat=2) 은 탭 1 흐름."
+    )
+    if not qapi.has_credentials():
+        st.warning("Qoo10 API 자격증명 없음 — 사이드바에서 등록 필요.")
+        return
+
+    c1, c2 = st.columns([3, 1])
+    with c1:
+        if st.button("🔄 QSM 재수집 (stat=3)", type="primary", width="stretch",
+                     key="post_tx_refetch"):
+            today = kst_today()
+            sd = (today - _dt.timedelta(days=30)).strftime('%Y%m%d')
+            ed = today.strftime('%Y%m%d')
+            with st.spinner("QSM API 조회 중 (stat=3 배송준비)..."):
+                try:
+                    sak = qapi.get_sak()
+                    api_orders = qapi.fetch_orders(sak, sd, ed, "3")
+                except Exception as ex:
+                    st.error(f"API 호출 실패: {ex}")
+                    return
+            rows = [qapi.api_response_to_qsm_dict(o) for o in api_orders]
+            st.session_state['post_tx_qsm_rows'] = rows
+            st.rerun()
+    with c2:
+        if st.session_state.get('post_tx_qsm_rows') is not None:
+            if st.button("🗑 결과 지우기", width="stretch", key="post_tx_clear"):
+                st.session_state.pop('post_tx_qsm_rows', None)
+                st.rerun()
+
+    rows = st.session_state.get('post_tx_qsm_rows')
+    if rows is None:
+        return
+
+    st.markdown(f"#### 📊 분류 결과 (배송준비/미출고 총 {len(rows)}건)")
+    if not rows:
+        st.success("✅ 배송준비 0건 — 미출고 잔류 주문 없음.")
+        return
+    jp_map = _cache.load_mapping(CHANNEL_JP, active_only=True)
+    kr_map = _cache.load_mapping(CHANNEL_KR, active_only=True)
+    jp, kr, unk, conf = _classify(rows, jp_map, kr_map)
+    _render_classify_result(jp, kr, unk, conf)
+    _render_product_summary(jp, kr, unk, conf)
+
+
 def render_page():
     _map.ensure_schema()
     st.markdown(
         "Qoo10 일본 주문 중 **한국 다원 → KSE 한국 → 일본** 출고 분량. "
         "탭 1 발주계획 확정 → KSE OMS xlsx 업로드 → 다원 발주서."
     )
+
+    # QSM 재수집 (배송상태 변경 검증) — 탭 상단에 노출
+    _render_post_transition_check()
+    st.markdown("---")
 
     # 발주계획 picker — 탭 1 에서 '주문수집 확정' 한 brief 컨텍스트만 표시
     # (배송상태 변경은 탭 1 에서만 수행 — 여기는 후속 KSE OMS 처리 단계.)
