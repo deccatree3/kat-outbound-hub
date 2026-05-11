@@ -211,15 +211,15 @@ def _render_post_transition_check():
                 d = qapi.api_response_to_qsm_dict(o)
                 d['_stat'] = '3'
                 rows.append(d)
-            st.session_state['post_tx_qsm_rows'] = rows
+            st.session_state['kr_post_tx_qsm_rows'] = rows
             st.rerun()
     with c2:
-        if st.session_state.get('post_tx_qsm_rows') is not None:
+        if st.session_state.get('kr_post_tx_qsm_rows') is not None:
             if st.button("🗑 결과 지우기", width="stretch", key="post_tx_clear"):
-                st.session_state.pop('post_tx_qsm_rows', None)
+                st.session_state.pop('kr_post_tx_qsm_rows', None)
                 st.rerun()
 
-    rows = st.session_state.get('post_tx_qsm_rows')
+    rows = st.session_state.get('kr_post_tx_qsm_rows')
     if rows is None:
         return
 

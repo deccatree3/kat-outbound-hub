@@ -198,30 +198,30 @@ def _collect_via_api(work_date=None, sequence=None):
         detail_bytes = qapi.build_detail_csv_bytes(api_orders)
         brief_bytes = qapi.build_brief_csv_bytes(api_orders)
         ts = _dt.datetime.now().strftime('%Y%m%d_%H%M')
-        st.session_state['cu_qsm_rows'] = qsm_rows
-        st.session_state['cu_collect_mode'] = 'api'
-        st.session_state['qoo10_detail_bytes'] = detail_bytes
-        st.session_state['qoo10_detail_name'] = f"API_DeliveryManagement_detail_{ts}.csv"
-        st.session_state['qoo10_brief_bytes'] = brief_bytes
-        st.session_state['qoo10_brief_name'] = f"API_DeliveryManagement_brief_{ts}.csv"
-        st.session_state['qoo10_brief_work_date'] = work_date
-        st.session_state['qoo10_brief_sequence'] = sequence
+        st.session_state['kr_cu_qsm_rows'] = qsm_rows
+        st.session_state['kr_cu_collect_mode'] = 'api'
+        st.session_state['kr_qoo10_detail_bytes'] = detail_bytes
+        st.session_state['kr_qoo10_detail_name'] = f"API_DeliveryManagement_detail_{ts}.csv"
+        st.session_state['kr_qoo10_brief_bytes'] = brief_bytes
+        st.session_state['kr_qoo10_brief_name'] = f"API_DeliveryManagement_brief_{ts}.csv"
+        st.session_state['kr_qoo10_brief_work_date'] = work_date
+        st.session_state['kr_qoo10_brief_sequence'] = sequence
         # 미확정 — 하단 '주문수집 확정' 버튼 클릭 시 DB 저장
-        st.session_state.pop('qoo10_brief_id', None)
-        st.session_state.pop('qoo10_tab1_confirmed', None)
-        st.session_state.pop('cu_kr_transitioned', None)
-        st.session_state.pop('cu_kr_last_result', None)
+        st.session_state.pop('kr_qoo10_brief_id', None)
+        st.session_state.pop('kr_qoo10_tab1_confirmed', None)
+        st.session_state.pop('kr_cu_kr_transitioned', None)
+        st.session_state.pop('kr_cu_kr_last_result', None)
         st.success(f"✅ {len(qsm_rows)}건 가져옴 — 하단 '주문수집 확정' 버튼으로 저장")
         st.rerun()
 
 
 def _clear_collected_state():
-    for k in ('cu_qsm_rows', 'cu_collect_mode', 'cu_kr_last_result',
-              'cu_kr_transitioned',
-              'qoo10_detail_bytes', 'qoo10_detail_name',
-              'qoo10_brief_bytes', 'qoo10_brief_name', 'qoo10_brief_id',
-              'qoo10_brief_work_date', 'qoo10_brief_sequence',
-              'qoo10_tab1_confirmed'):
+    for k in ('kr_cu_qsm_rows', 'kr_cu_collect_mode', 'kr_cu_kr_last_result',
+              'kr_cu_kr_transitioned',
+              'kr_qoo10_detail_bytes', 'kr_qoo10_detail_name',
+              'kr_qoo10_brief_bytes', 'kr_qoo10_brief_name', 'kr_qoo10_brief_id',
+              'kr_qoo10_brief_work_date', 'kr_qoo10_brief_sequence',
+              'kr_qoo10_tab1_confirmed'):
         st.session_state.pop(k, None)
 
 
@@ -229,7 +229,7 @@ def render():
     st.markdown("QSM API 로 신규주문 수집 → 국내 출고 배송상태 변경.")
 
     api_available = qapi.has_credentials()
-    qsm_rows = st.session_state.get('cu_qsm_rows', [])
+    qsm_rows = st.session_state.get('kr_cu_qsm_rows', [])
 
     if not qsm_rows:
         # API 자동 수집만 — 발주계획 picker / 주문수집 확정 제거.
@@ -259,7 +259,7 @@ def render():
     # ─── 국내 출고 배송상태 변경 (주문수집 확정 위) ─────
     # 성공 시 cu_qsm_rows 는 그대로 두고 cu_kr_transitioned 플래그만 set.
     # brief 는 수집 시점의 전체(4건) 그대로 저장 → 탭 2/3 가 분류 결과 표시.
-    kr_done = bool(st.session_state.get('cu_kr_transitioned'))
+    kr_done = bool(st.session_state.get('kr_cu_kr_transitioned'))
     if kr_orders:
         today = kst_today()
         today_str = today.strftime('%Y-%m-%d')
@@ -269,13 +269,13 @@ def render():
 
         st.markdown("---")
         if kr_done:
-            last_result = st.session_state.get('cu_kr_last_result') or {}
+            last_result = st.session_state.get('kr_cu_kr_last_result') or {}
             st.success(
                 f"✅ 배송상태 변경 완료 — {last_result.get('count', len(order_nos))}건. "
                 f"({last_result.get('msg', 'SUCCESS')})"
             )
         else:
-            last_result = st.session_state.get('cu_kr_last_result')
+            last_result = st.session_state.get('kr_cu_kr_last_result')
             if last_result and not last_result['ok']:
                 st.error(
                     f"❌ 직전 호출 실패 (ResultCode={last_result['code']}, "
@@ -295,10 +295,10 @@ def render():
                     except Exception as ex:
                         st.error(f"API 호출 실패: {ex}")
                         return
-                st.session_state['cu_kr_last_result'] = result
+                st.session_state['kr_cu_kr_last_result'] = result
                 if result['ok']:
                     # cu_qsm_rows 는 그대로 — brief 는 수집 시점 전체 유지.
-                    st.session_state['cu_kr_transitioned'] = True
+                    st.session_state['kr_cu_kr_transitioned'] = True
                     st.success(
                         f"✅ {len(order_nos)}건 배송상태 변경 완료. "
                         "이후 KSE OMS 국내가 자동 수집."
