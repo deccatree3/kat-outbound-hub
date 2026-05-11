@@ -345,80 +345,18 @@ def render():
     jp_orders, kr_orders, unknown_orders, both_active = _classify(qsm_rows, jp_map, kr_map)
     _render_classify_result(jp_orders, kr_orders, unknown_orders, both_active)
     _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
-    # 국내 출고 분기 상세 표는 탭 2 에 있음. 여기는 액션 버튼만 노출.
-
-    # ─── 국내 출고 배송상태 변경 (주문수집 확정 위) ─────
-    # 성공 시 cu_qsm_rows 는 그대로 두고 cu_kr_transitioned 플래그만 set.
-    # brief 는 수집 시점의 전체(4건) 그대로 저장 → 탭 2/3 가 분류 결과 표시.
-    kr_done = bool(st.session_state.get('cu_kr_transitioned'))
-    if kr_orders:
-        today = kst_today()
-        today_str = today.strftime('%Y-%m-%d')
-        today_yyyymmdd = today.strftime('%Y%m%d')
-        order_nos = [str(q.get('주문번호', '')).strip() for q in kr_orders
-                     if str(q.get('주문번호', '')).strip()]
-
-        st.markdown("---")
-        if kr_done:
-            last_result = st.session_state.get('cu_kr_last_result') or {}
-            st.success(
-                f"✅ 배송상태 변경 완료 — {last_result.get('count', len(order_nos))}건. "
-                f"({last_result.get('msg', 'SUCCESS')})"
-            )
-        else:
-            last_result = st.session_state.get('cu_kr_last_result')
-            if last_result and not last_result['ok']:
-                st.error(
-                    f"❌ 직전 호출 실패 (ResultCode={last_result['code']}, "
-                    f"ResultMsg={last_result['msg']})"
-                )
-            btn = f"🚚 국내 출고 {len(order_nos)}건 배송상태 변경 (발송예정일 {today_str})"
-            if st.button(btn, type="primary", width="stretch",
-                         key="cu_kr_send_ready_btn_tab1"):
-                try:
-                    sak = qapi.get_sak()
-                except Exception as ex:
-                    st.error(f"SAK 발급 실패: {ex}")
-                    return
-                with st.spinner(f"SetSellerCheckYN_V2 호출 중 ({len(order_nos)}건)..."):
-                    try:
-                        result = qapi.set_seller_check_yn(sak, order_nos, today_yyyymmdd)
-                    except Exception as ex:
-                        st.error(f"API 호출 실패: {ex}")
-                        return
-                st.session_state['cu_kr_last_result'] = result
-                if result['ok']:
-                    # cu_qsm_rows 는 그대로 — brief 는 수집 시점 전체 유지.
-                    st.session_state['cu_kr_transitioned'] = True
-                    st.success(
-                        f"✅ {len(order_nos)}건 배송상태 변경 완료. "
-                        "이후 KSE OMS 국내가 자동 수집."
-                    )
-                    st.rerun()
-                else:
-                    st.error(
-                        f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']})."
-                    )
+    # 일본 채널 — 국내 출고 배송상태 변경 기능 없음 (KR 흐름은 [캐처스] Qoo10-국내 채널).
 
     # ─── 페이지 하단 — 주문수집 확정 + 수집 초기화 ─────
-    # 확정 여부는 탭 1 전용 플래그(qoo10_tab1_confirmed) 로 추적. qoo10_brief_id 는
-    # 탭 2/3 picker 와 공유되어 false-positive ('확정됨') 표시 원인이라 사용 X.
     st.markdown("---")
     tab1_confirmed = st.session_state.get('qoo10_tab1_confirmed')
     confirmed_bid = st.session_state.get('qoo10_brief_id') if tab1_confirmed else None
     if confirmed_bid:
-        st.success(f"📋 주문수집 확정됨 — brief #{confirmed_bid} (2/3 탭 발주계획 드롭다운에 노출).")
+        st.success(f"📋 주문수집 확정됨 — brief #{confirmed_bid} (탭 2 일본 출고 발주계획 드롭다운에 노출).")
     else:
-        # KR 매핑 미처리 시 비활성. KR 없음 또는 배송상태 변경 완료 시 활성.
-        confirm_disabled = bool(kr_orders) and not kr_done
         if st.button(
             "📋 주문수집 확정", type="primary", width="stretch", key="cu_confirm_collect",
-            disabled=confirm_disabled,
-            help=(
-                "KR 매핑 주문의 배송상태 변경 완료 후 활성화됩니다."
-                if confirm_disabled else
-                "brief 를 DB 에 저장. 2/3 탭에서 이 batch 를 선택할 수 있게 됨."
-            ),
+            help="brief 를 DB 에 저장. 탭 2 일본 출고에서 이 batch 를 선택할 수 있게 됨.",
         ):
             content = st.session_state.get('qoo10_brief_bytes')
             fname = st.session_state.get('qoo10_brief_name')
