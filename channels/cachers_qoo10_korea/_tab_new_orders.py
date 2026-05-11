@@ -226,51 +226,24 @@ def _clear_collected_state():
 
 
 def render():
-    st.markdown("QSM API 로 신규주문을 수집합니다 (자동 전용).")
+    st.markdown("QSM API 로 신규주문 수집 → 국내 출고 배송상태 변경.")
 
     api_available = qapi.has_credentials()
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
 
     if not qsm_rows:
-        # 발주계획 picker (탭 1/2/3 통일 UI — 탭 1 만 '+ 신규 작업' 옵션 포함)
-        from channels.cachers_qoo10_korea._brief_picker import render_brief_picker
-        result = render_brief_picker(
-            key_prefix='cu_tab1', allow_new=True,
-            title="발주계획 선택",
-        )
-        if result is None:
-            st.info("위에서 '+ 신규 작업' 또는 기존 발주계획 선택.")
-            return
-        if not result.get('is_new'):
-            # 기존 brief 선택 시: 이미 수집된 batch — 탭 2/3 에서 후속 작업.
-            st.info(
-                f"📋 발주계획 #{result['id']} 는 이미 수집됨. "
-                "탭 2/3 에서 후속 작업 진행 (배송상태 변경/일본 출고 등)."
-            )
-            return
-
-        # 신규 작업 모드
-        work_date = result['work_date']
-        sequence = result['sequence']
-
-        # API 자동 수집 (국내 채널은 수동 CSV 모드 제거)
+        # API 자동 수집만 — 발주계획 picker / 주문수집 확정 제거.
         if not api_available:
             st.error(
                 "❌ Qoo10 API 자격증명이 없습니다. "
                 "사이드바에서 자격증명 등록 후 다시 시도하세요."
             )
             return
-        _collect_via_api(work_date=work_date, sequence=sequence)
+        _collect_via_api()
         return
 
-    # 수집 완료 — 분류 결과 (국내 채널은 자동 모드 전용)
-    wd = st.session_state.get('qoo10_brief_work_date')
-    sq = st.session_state.get('qoo10_brief_sequence')
-    session_tag = (f" · {wd.strftime('%Y-%m-%d')} / {sq}차"
-                   if wd and sq else "")
-    st.caption(
-        f"수집 방식: **자동(API)**{session_tag} · 일본 출고 탭에서 재사용 가능"
-    )
+    # 수집 완료 — 분류 결과
+    st.caption(f"수집 방식: **자동(API)** · {len(qsm_rows)}건")
 
     st.markdown("---")
     st.markdown(f"### 📊 분류 결과 (총 {len(qsm_rows)}건)")
@@ -336,46 +309,8 @@ def render():
                         f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']})."
                     )
 
-    # ─── 페이지 하단 — 주문수집 확정 + 수집 초기화 ─────
-    # 확정 여부는 탭 1 전용 플래그(qoo10_tab1_confirmed) 로 추적. qoo10_brief_id 는
-    # 탭 2/3 picker 와 공유되어 false-positive ('확정됨') 표시 원인이라 사용 X.
+    # ─── 페이지 하단 — 수집 초기화 ─────
     st.markdown("---")
-    tab1_confirmed = st.session_state.get('qoo10_tab1_confirmed')
-    confirmed_bid = st.session_state.get('qoo10_brief_id') if tab1_confirmed else None
-    if confirmed_bid:
-        st.success(f"📋 주문수집 확정됨 — brief #{confirmed_bid} (2/3 탭 발주계획 드롭다운에 노출).")
-    else:
-        # KR 매핑 미처리 시 비활성. KR 없음 또는 배송상태 변경 완료 시 활성.
-        confirm_disabled = bool(kr_orders) and not kr_done
-        if st.button(
-            "📋 주문수집 확정", type="primary", width="stretch", key="cu_confirm_collect",
-            disabled=confirm_disabled,
-            help=(
-                "KR 매핑 주문의 배송상태 변경 완료 후 활성화됩니다."
-                if confirm_disabled else
-                "brief 를 DB 에 저장. 2/3 탭에서 이 batch 를 선택할 수 있게 됨."
-            ),
-        ):
-            content = st.session_state.get('qoo10_brief_bytes')
-            fname = st.session_state.get('qoo10_brief_name')
-            wd_save = st.session_state.get('qoo10_brief_work_date')
-            sq_save = st.session_state.get('qoo10_brief_sequence')
-            if not content or not fname:
-                st.error("brief 데이터 없음 — 재수집 필요.")
-            else:
-                try:
-                    bid = qgen.save_pending_brief(
-                        content, fname, len(qsm_rows),
-                        work_date=wd_save, sequence=sq_save,
-                    )
-                    st.session_state['qoo10_brief_id'] = bid
-                    st.session_state['qoo10_tab1_confirmed'] = True
-                    _cache.invalidate_all()
-                    st.success(f"✅ 주문수집 확정 — brief #{bid}")
-                    st.rerun()
-                except Exception as ex:
-                    st.error(f"저장 실패: {ex}")
-
     if st.button("🗑 수집 초기화 (재수집)", key="cu_reset_btn"):
         _clear_collected_state()
         st.rerun()
