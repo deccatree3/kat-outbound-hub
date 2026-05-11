@@ -82,34 +82,48 @@ def classify_file_type(filename: str) -> str:
 
 
 def identify_company_from_coupang_file(file_bytes: bytes) -> str | None:
-    """쿠팡 재고현황 파일에서 옵션ID 추출 → DB에서 업체명 조회."""
+    """쿠팡 재고현황 파일에서 옵션ID/등록상품ID/SKU ID 추출 → DB에서 업체명 조회.
+
+    샘플 50행 + 3개 키 (옵션ID/등록상품ID/SKU ID) 모두 사용해서 매칭 다양화.
+    소량만 DB 에 등록되었거나 일부 SKU 가 default '서현' 으로 잘못 저장된 경우에도
+    다수결로 정확한 업체를 식별.
+    """
     try:
         wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
         ws = wb.active
-        option_ids = []
-        for r in range(3, min(10, ws.max_row + 1)):  # 3~9행 샘플
-            val = ws.cell(row=r, column=3).value  # C열 = 옵션 ID
-            if val:
-                try:
-                    option_ids.append(int(val))
-                except (ValueError, TypeError):
-                    pass
+        option_ids: list[int] = []
+        product_ids: list[int] = []
+        sku_ids: list[int] = []
+        for r in range(3, min(53, ws.max_row + 1)):  # 3~52 행 = 50개 샘플
+            cells = next(ws.iter_rows(min_row=r, max_row=r, values_only=True), None)
+            if not cells:
+                continue
+            # col 2 (idx 1) = 등록상품 ID, col 3 (idx 2) = 옵션 ID, col 4 (idx 3) = SKU ID
+            for ids_list, idx in ((product_ids, 1), (option_ids, 2), (sku_ids, 3)):
+                v = cells[idx] if len(cells) > idx else None
+                if v not in (None, "", "-"):
+                    try:
+                        ids_list.append(int(v))
+                    except (ValueError, TypeError):
+                        pass
         wb.close()
-        if not option_ids:
+        if not (option_ids or product_ids or sku_ids):
             return None
-        return _lookup_company_by_option_ids(option_ids)
+        return _lookup_company_by_coupang_ids(
+            option_ids=option_ids, product_ids=product_ids, sku_ids=sku_ids,
+        )
     except Exception:
         return None
 
 
 def identify_company_from_wms_file(file_bytes: bytes) -> str | None:
-    """WMS Document 파일에서 바코드 추출 → DB에서 업체명 조회."""
+    """WMS Document 파일에서 바코드 추출 → DB에서 업체명 조회. 샘플 50행."""
     try:
         import xlrd
         wb = xlrd.open_workbook(file_contents=file_bytes)
         ws = wb.sheet_by_index(0)
         barcodes = []
-        for r in range(1, min(10, ws.nrows)):
+        for r in range(1, min(51, ws.nrows)):
             val = ws.row_values(r)[0] if ws.ncols > 0 else None
             if val:
                 barcodes.append(str(val).strip())
@@ -122,7 +136,7 @@ def identify_company_from_wms_file(file_bytes: bytes) -> str | None:
             wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
             ws = wb.active
             barcodes = []
-            for r in range(2, min(10, ws.max_row + 1)):
+            for r in range(2, min(52, ws.max_row + 1)):
                 val = ws.cell(row=r, column=1).value
                 if val:
                     barcodes.append(str(val).strip())
@@ -139,6 +153,7 @@ def identify_company_from_template(file_bytes: bytes) -> str | None:
 
     시트는 '로켓그로스 입고' 우선, 없으면 active. 헤더 1~4행, 데이터 5행부터.
     옵션 ID 열은 G열(7) 기본이며, 헤더에 '옵션 ID' 가 있으면 그 위치로 보정.
+    데이터 5~50 행 스캔 (샘플 50개).
     """
     # read_only=True 가 일부 generated_excel 에서 dimensions 를 1x1 로 잘못 보고하는 버그가 있어
     # full mode 로 읽는다 (파일 크기 작아 비용 무시할 수준).
@@ -159,7 +174,7 @@ def identify_company_from_template(file_bytes: bytes) -> str | None:
             break
 
         option_ids = []
-        for r in range(5, min(30, ws.max_row + 1)):
+        for r in range(5, min(55, ws.max_row + 1)):  # 5~54 = 50개 샘플
             val = ws.cell(row=r, column=opt_col).value
             if val in (None, ""):
                 continue
@@ -170,7 +185,7 @@ def identify_company_from_template(file_bytes: bytes) -> str | None:
         wb.close()
         if not option_ids:
             return None
-        return _lookup_company_by_option_ids(option_ids)
+        return _lookup_company_by_coupang_ids(option_ids=option_ids)
     except Exception:
         return None
 
@@ -195,13 +210,44 @@ def identify_company_from_movement(file_bytes: bytes) -> str | None:
 
 
 def _lookup_company_by_option_ids(option_ids: list[int]) -> str | None:
-    """DB에서 옵션ID로 업체명 조회. 다수결."""
+    """DB에서 옵션ID로 업체명 조회. 다수결. (구 호환용 — 신규는 _lookup_company_by_coupang_ids)."""
+    return _lookup_company_by_coupang_ids(option_ids=option_ids)
+
+
+def _lookup_company_by_coupang_ids(
+    option_ids: list[int] | None = None,
+    product_ids: list[int] | None = None,
+    sku_ids: list[int] | None = None,
+) -> str | None:
+    """3개 키 (옵션ID / 등록상품ID / SKU ID) 합쳐서 DB에서 업체명 조회. 다수결.
+
+    한 키만으로 매칭 실패해도 다른 키로 보완. 더 많은 행이 매칭되면 다수결 정확도 ↑.
+    """
+    option_ids = option_ids or []
+    product_ids = product_ids or []
+    sku_ids = sku_ids or []
+    if not (option_ids or product_ids or sku_ids):
+        return None
+    rows: list[str] = []
     with get_session() as session:
-        rows = session.execute(
-            select(CoupangProduct.company_name).where(
-                CoupangProduct.coupang_option_id.in_(option_ids)
-            )
-        ).scalars().all()
+        if option_ids:
+            rows.extend(session.execute(
+                select(CoupangProduct.company_name).where(
+                    CoupangProduct.coupang_option_id.in_(option_ids)
+                )
+            ).scalars().all())
+        if product_ids:
+            rows.extend(session.execute(
+                select(CoupangProduct.company_name).where(
+                    CoupangProduct.coupang_product_id.in_(product_ids)
+                )
+            ).scalars().all())
+        if sku_ids:
+            rows.extend(session.execute(
+                select(CoupangProduct.company_name).where(
+                    CoupangProduct.sku_id.in_(sku_ids)
+                )
+            ).scalars().all())
     if not rows:
         return None
     counter = Counter(rows)
