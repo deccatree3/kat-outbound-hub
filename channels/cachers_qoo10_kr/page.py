@@ -222,7 +222,7 @@ def render_page():
     from channels.cachers_qoo10._brief_picker import render_brief_picker
     picked = render_brief_picker(
         key_prefix='cu_kr',
-        title="발주계획 선택 (탭 1 에서 확정한 batch)",
+        title="발주계획 선택",
         clear_detail_on_load=False,
     )
     if picked:
