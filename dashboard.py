@@ -30,15 +30,17 @@ st.caption("캐처스/네뉴 출고 통합")
 
 # 채널 레지스트리. status는 사용자에게 표시되는 진행도. 'render'가 있으면 dispatch 가능.
 CHANNELS = {
-    "domestic":             {"label": "[네뉴+캐처스] 일반판매", "brand": "네뉴/캐처스", "status": "✅ 운영"},
-    "cachers_qoo10":        {"label": "[캐처스] Qoo10",       "brand": "캐처스",      "status": "✅ 운영 (일본+국내 통합)"},
-    "nenu_rocketgrowth":    {"label": "[네뉴] 로켓그로스",     "brand": "네뉴",        "status": "✅ 운영 (자매 이전)"},
-    "cachers_rocketgrowth": {"label": "[캐처스] 로켓그로스",   "brand": "캐처스",      "status": "✅ 운영 (자매 이전)"},
-    "cachers_makers":       {"label": "[캐처스] 메이커스",     "brand": "캐처스",      "status": "✅ 운영"},
-    "nenu_manual":          {"label": "[네뉴] 수기주문",       "brand": "네뉴",        "status": "메뉴만"},
-    "cachers_manual":       {"label": "[캐처스] 수기주문",     "brand": "캐처스",      "status": "메뉴만"},
-    # qoo10_japan / cachers_qoo10_kr 은 cachers_qoo10 안에서 내부 dispatch.
+    "domestic":              {"label": "[네뉴+캐처스] 일반판매",   "brand": "네뉴/캐처스", "status": "✅ 운영"},
+    "cachers_qoo10_korea":   {"label": "[캐처스] Qoo10-국내",      "brand": "캐처스",      "status": "✅ 운영 (분리 — 국내 출고 흐름)"},
+    "cachers_qoo10_jpn":     {"label": "[캐처스] Qoo10-일본",      "brand": "캐처스",      "status": "✅ 운영 (분리 — 일본 출고 흐름)"},
+    "nenu_rocketgrowth":     {"label": "[네뉴] 로켓그로스",        "brand": "네뉴",        "status": "✅ 운영 (자매 이전)"},
+    "cachers_rocketgrowth":  {"label": "[캐처스] 로켓그로스",      "brand": "캐처스",      "status": "✅ 운영 (자매 이전)"},
+    "cachers_makers":        {"label": "[캐처스] 메이커스",        "brand": "캐처스",      "status": "✅ 운영"},
+    "nenu_manual":           {"label": "[네뉴] 수기주문",          "brand": "네뉴",        "status": "메뉴만"},
+    "cachers_manual":        {"label": "[캐처스] 수기주문",        "brand": "캐처스",      "status": "메뉴만"},
+    # qoo10_japan / cachers_qoo10_kr 은 분리 채널 안에서 내부 dispatch.
     # 사이드바에서는 숨김. dispatch elif 는 유지 (직접 navigation 시 호환).
+    # cachers_qoo10 (통합) 은 분리 채널로 대체 — 사이드바 숨김 (직접 navigation 시 호환).
 }
 
 ADMIN_PAGES = {
@@ -86,7 +88,13 @@ else:
     st.subheader(f"{ch['label']}")
     st.caption(f"화주: {ch['brand']} · 상태: {ch['status']}")
 
-    if selected == "cachers_qoo10":
+    if selected == "cachers_qoo10_korea":
+        from channels.cachers_qoo10_korea.page import render_page
+        render_page()
+    elif selected == "cachers_qoo10_jpn":
+        from channels.cachers_qoo10_jpn.page import render_page
+        render_page()
+    elif selected == "cachers_qoo10":
         from channels.cachers_qoo10.page import render_page
         render_page()
     elif selected == "qoo10_japan":
