@@ -282,10 +282,6 @@ def _render_post_transition_check():
 
 def render_page():
     _map.ensure_schema()
-    st.markdown(
-        "Qoo10 일본 주문 중 **한국 다원 → KSE 한국 → 일본** 출고 분량. "
-        "QSM 배송상태 현황 → KSE OMS xlsx 업로드 → 다원 발주서."
-    )
 
     # QSM 배송상태 현황 — 탭 상단
     _render_post_transition_check()
