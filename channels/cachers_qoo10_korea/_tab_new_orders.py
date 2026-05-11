@@ -215,64 +215,6 @@ def _collect_via_api(work_date=None, sequence=None):
         st.rerun()
 
 
-def _collect_via_csv(work_date=None, sequence=None):
-    """QSM detail/brief CSV 2개 업로드 → cu_qsm_rows + qoo10_detail/brief bytes."""
-    st.caption(
-        "QSM > 배송관리 > 배송요청 > 신규주문에서 받은 detail / brief CSV 2개를 업로드. "
-        "파일명에 `detail` / `brief` 가 포함되면 자동 분류."
-    )
-
-    uploaded = st.file_uploader(
-        "QSM 자료 2개 업로드 (detail + brief)",
-        type=['csv'], accept_multiple_files=True,
-        key="cu_csv_upload",
-    )
-    if uploaded:
-        for f in uploaded:
-            nm = f.name.lower()
-            content = f.getvalue()
-            if 'detail' in nm:
-                st.session_state['qoo10_detail_bytes'] = content
-                st.session_state['qoo10_detail_name'] = f.name
-            elif 'brief' in nm:
-                st.session_state['qoo10_brief_bytes'] = content
-                st.session_state['qoo10_brief_name'] = f.name
-                st.session_state['qoo10_brief_work_date'] = work_date
-                st.session_state['qoo10_brief_sequence'] = sequence
-                # 미확정 — 하단 '주문수집 확정' 버튼 클릭 시 DB 저장
-                st.session_state.pop('qoo10_brief_id', None)
-                st.session_state.pop('qoo10_tab1_confirmed', None)
-                st.session_state.pop('cu_kr_transitioned', None)
-                st.session_state.pop('cu_kr_last_result', None)
-
-    det_ok = bool(st.session_state.get('qoo10_detail_bytes'))
-    brief_ok = bool(st.session_state.get('qoo10_brief_bytes'))
-    det_check = '✅' if det_ok else ''
-    brief_check = '✅' if brief_ok else ''
-    st.markdown(
-        "<div style='font-size:0.85em'>\n\n"
-        "| 구분 | 파일명 예시 | 취합 |\n"
-        "|------|------------|:---:|\n"
-        f"| 배송요청 상세 | `DeliveryManagement_detail_*.csv` | {det_check} |\n"
-        f"| 배송요청 요약 | `DeliveryManagement_brief_*.csv` | {brief_check} |\n\n"
-        "</div>",
-        unsafe_allow_html=True,
-    )
-
-    if det_ok and brief_ok:
-        if st.button("📥 분류 진행", key="cu_csv_classify_btn",
-                     type="primary", width="stretch"):
-            try:
-                qsm_rows = qgen.parse_qsm_csv(st.session_state['qoo10_detail_bytes'])
-            except Exception as ex:
-                st.error(f"detail CSV 파싱 실패: {ex}")
-                return
-            st.session_state['cu_qsm_rows'] = qsm_rows
-            st.session_state['cu_collect_mode'] = 'csv'
-            st.success(f"✅ {len(qsm_rows)}건 로드")
-            st.rerun()
-
-
 def _clear_collected_state():
     for k in ('cu_qsm_rows', 'cu_collect_mode', 'cu_kr_last_result',
               'cu_kr_transitioned',
@@ -284,7 +226,7 @@ def _clear_collected_state():
 
 
 def render():
-    st.markdown("자동 또는 수동 방법으로 QSM의 신규주문을 수집해주세요.")
+    st.markdown("QSM API 로 신규주문을 수집합니다 (자동 전용).")
 
     api_available = qapi.has_credentials()
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
@@ -311,29 +253,23 @@ def render():
         work_date = result['work_date']
         sequence = result['sequence']
 
-        # 수집 모드 선택
-        mode_options = (["자동 (QSM API)", "수동 (CSV 2개 업로드)"]
-                        if api_available else ["수동 (CSV 2개 업로드)"])
-        mode = st.radio(
-            "수집 방식",
-            options=mode_options, horizontal=True, key="cu_collect_mode_radio",
-            help=None if api_available else
-                 "Qoo10 API 자격증명이 등록되지 않아 자동 수집 비활성화됨",
-        )
-        if mode.startswith("자동"):
-            _collect_via_api(work_date=work_date, sequence=sequence)
-        else:
-            _collect_via_csv(work_date=work_date, sequence=sequence)
+        # API 자동 수집 (국내 채널은 수동 CSV 모드 제거)
+        if not api_available:
+            st.error(
+                "❌ Qoo10 API 자격증명이 없습니다. "
+                "사이드바에서 자격증명 등록 후 다시 시도하세요."
+            )
+            return
+        _collect_via_api(work_date=work_date, sequence=sequence)
         return
 
-    # 수집 완료 — 분류 결과
-    mode_label = '자동(API)' if st.session_state.get('cu_collect_mode') == 'api' else '수동(CSV)'
+    # 수집 완료 — 분류 결과 (국내 채널은 자동 모드 전용)
     wd = st.session_state.get('qoo10_brief_work_date')
     sq = st.session_state.get('qoo10_brief_sequence')
     session_tag = (f" · {wd.strftime('%Y-%m-%d')} / {sq}차"
                    if wd and sq else "")
     st.caption(
-        f"수집 방식: **{mode_label}**{session_tag} · 일본 출고 탭에서 재사용 가능"
+        f"수집 방식: **자동(API)**{session_tag} · 일본 출고 탭에서 재사용 가능"
     )
 
     st.markdown("---")
