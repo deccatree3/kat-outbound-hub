@@ -58,9 +58,18 @@ def _render_metrics_and_preview(daone_rows):
 
 def _section_daone(eza_rows, work_date, sequence, source_filename, session_info):
     st.markdown("### 📋 [캐처스]다원 출고요청")
-    st.caption("판매처그룹='캐처스' 행만 변환. 나머지(네뉴 등) 행은 자동 제외.")
+    st.caption(
+        "판매처그룹='캐처스' 행만 변환. 상품명에 '참기름' 또는 '들기름' 포함 행은 추가 제외."
+    )
 
-    cachers_rows = [r for r in eza_rows if str(r.get('판매처그룹', '')).strip() == '캐처스']
+    def _is_oil(name: str) -> bool:
+        return ('참기름' in name) or ('들기름' in name)
+
+    cachers_rows = [
+        r for r in eza_rows
+        if str(r.get('판매처그룹', '')).strip() == '캐처스'
+        and not _is_oil(str(r.get('상품명') or ''))
+    ]
     if not cachers_rows:
         st.info("📭 캐처스 행이 없어 다원 발주서를 생성하지 않습니다.")
         return
