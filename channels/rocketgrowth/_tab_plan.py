@@ -585,6 +585,8 @@ def render(brand: str):
             "product_name": wms_product_name,
             "orderable": cp.orderable_stock,
             "inbound_stock": cp.inbound_stock,
+            # 화면 표시용 — 가용(판매가능) + 입고예정 합. 산식에는 orderable 단독 사용.
+            "coupang_avail": int(cp.orderable_stock or 0) + int(cp.inbound_stock or 0),
             "sales_7d": cp.sales_qty_7d,
             "sales_30d": cp.sales_qty_30d,
             "velocity": round(engine_out.sales_velocity_daily, 2),
@@ -934,7 +936,7 @@ def render(brand: str):
 
     display_cols = [
         "coupang_option_id", "urgency", "product_name",
-        "orderable", "sales_7d", "sales_30d", "velocity", "days_until_stockout",
+        "coupang_avail", "sales_7d", "sales_30d", "velocity", "days_until_stockout",
         "box_qty_display", "inbound_basic_bundle", "basic_boxes",
         "pool_remaining_base", "pool_remaining_bundle",
         "inbound_final", "confirmed_boxes",
@@ -1006,7 +1008,10 @@ def render(brand: str):
                 help="쿠팡 옵션 ID",
             ),
             "product_name": st.column_config.TextColumn("상품명", width="large", pinned=True),
-            "orderable": st.column_config.NumberColumn("쿠팡가용", format="%d"),
+            "coupang_avail": st.column_config.NumberColumn(
+                "쿠팡가용", format="%d",
+                help="판매가능재고 + 입고예정재고 합. 발주 산식에 사용되는 총재고와 동일.",
+            ),
             "sales_7d": st.column_config.NumberColumn("7일", format="%d"),
             "sales_30d": st.column_config.NumberColumn("30일", format="%d"),
             "velocity": st.column_config.NumberColumn(
