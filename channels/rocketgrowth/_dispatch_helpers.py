@@ -266,7 +266,6 @@ def render_context_bar(plan: InboundPlan) -> None:
     """공유 컨텍스트 바 (탭 3/4 상단)."""
     fc = plan.fc_name or "미정"
     arr = plan.arrival_date or "미정"
-    worker = plan.worker or "미정"
     milkrun = plan.milkrun_id or "미정"
     sub = derive_substatus_label(plan)
     parts = [
@@ -276,7 +275,6 @@ def render_context_bar(plan: InboundPlan) -> None:
         f'<span><b>업체</b> {plan.company_name}</span>',
         f'<span><b>FC</b> {fc}</span>',
         f'<span><b>입고일</b> {arr}</span>',
-        f'<span><b>작업자</b> {worker}</span>',
         f'<span><b>milkrun_id</b> {milkrun}</span>',
     ]
     st.markdown(

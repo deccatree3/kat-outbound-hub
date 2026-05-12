@@ -61,7 +61,6 @@ def _render_context_bar(plan: InboundPlan, has_attach_pdf: bool = False) -> str:
     company = plan.company_name or "—"
     fc = plan.fc_name or "미정"
     arr = plan.arrival_date or "미정"  # 첨부문서 파싱 전엔 미정
-    worker = plan.worker or "미정"
     milkrun = plan.milkrun_id or "미정"
     parts = [
         f'<span style="background:#fef3c7; color:#92400e; padding:3px 8px; '
@@ -70,7 +69,6 @@ def _render_context_bar(plan: InboundPlan, has_attach_pdf: bool = False) -> str:
         f'<span><b>업체</b> {company}</span>',
         f'<span><b>FC</b> {fc}</span>',
         f'<span><b>입고일</b> {arr}</span>',
-        f'<span><b>작업자</b> {worker}</span>',
         f'<span><b>milkrun_id</b> {milkrun}</span>',
     ]
     return (
