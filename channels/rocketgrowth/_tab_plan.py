@@ -774,11 +774,9 @@ def render(brand: str):
             return None
         import math as _math
         qty = int(v)
-        # 에이지샷 번들 (캐처스): 박스 capacity = 100 (에이지샷 9호 max fit)
-        if r.get("is_agetshot"):
-            return _math.ceil(qty / AGETSHOT_BOX_CAPACITY) if qty > 0 else 0
         box = max(int(r["box_qty"] or 1), 1)
-        # 일반 SKU: 박스 미충족도 1박스 (ceil). 예: box=50, qty=48 -> 1
+        # 박스 미충족도 1박스 (ceil). 예: box=50, qty=48 -> 1
+        # (에이지샷 번들 capacity=100 특별 규칙은 탭 2/3 에서만 적용 — 탭 1 은 일반 box_qty.)
         return _math.ceil(qty / box)
 
     allocated_df["confirmed_boxes"] = allocated_df.apply(_calc_confirmed_boxes, axis=1)
@@ -913,28 +911,11 @@ def render(brand: str):
     )
 
     # box인입 표시 컬럼 — 에이지샷 번들 (캐처스): 'FREE' / 일반: str(box_qty)
-    # box입인 표시:
-    #   - 일반 SKU: master box_qty
-    #   - 에이지샷 번들 (캐처스): 확정수량 기준 100단위 분할 — 예: 105 -> '100, 5'
-    #     (Qoo10 국내 출고 packing 규칙과 동일: 100=에이지샷 9호, 잔여분=best-fit outbox)
-    def _box_display(r):
-        if not r.get("is_agetshot"):
-            return str(int(r["box_qty"] or 1))
-        v = r.get("inbound_final")
-        try:
-            qty = int(v) if v is not None and not (isinstance(v, float) and pd.isna(v)) else 0
-        except Exception:
-            qty = 0
-        if qty <= 0:
-            return "0"
-        full = qty // AGETSHOT_BOX_CAPACITY
-        rem = qty % AGETSHOT_BOX_CAPACITY
-        parts = [str(AGETSHOT_BOX_CAPACITY)] * full
-        if rem > 0:
-            parts.append(str(rem))
-        return ", ".join(parts)
-
-    allocated_df["box_qty_display"] = allocated_df.apply(_box_display, axis=1)
+    # box입인 표시 — 마스터 box_qty 그대로 (탭 1 은 일반 규칙 통일).
+    allocated_df["box_qty_display"] = allocated_df.apply(
+        lambda r: str(int(r["box_qty"] or 1)),
+        axis=1,
+    )
 
     view = allocated_df.copy()
     if search:
@@ -1113,12 +1094,8 @@ def render(brand: str):
         if qty > 0:
             active_cnt += 1
             import math as _math
-            # 박스수: 에이지샷 번들이면 capacity=100, 일반은 box_qty (ceil)
-            if r.get("is_agetshot"):
-                box_val = _math.ceil(qty / AGETSHOT_BOX_CAPACITY)
-            else:
-                box = int(r.get("box_qty") or 1)
-                box_val = _math.ceil(qty / max(box, 1))
+            box = int(r.get("box_qty") or 1)
+            box_val = _math.ceil(qty / max(box, 1))
             confirmed_qty += qty
             confirmed_boxes_sum += box_val
             unit_w = int(r.get("weight_g") or 0)
