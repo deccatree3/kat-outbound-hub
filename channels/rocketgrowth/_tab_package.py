@@ -157,11 +157,12 @@ def _derive_meta(plan: InboundPlan) -> dict[str, Any]:
     fc_name / milkrun_id / arrival_date 는 검수 단계에서 첨부문서 파싱 결과로
     추후 보정될 수 있음 (verify_section 내부에서 attachment.fc / attachment.milkrun_id /
     attachment.arrival_date 사용).
+
+    worker 는 plan 의 company_name 기준 (= 화주) — 설정의 default_company_name 사용 X.
     """
-    cfg = load_config()
     return {
         'fc_name': plan.fc_name or "동탄1",
-        'worker': plan.worker or cfg.default_company_name,
+        'worker': plan.worker or plan.company_name or "서현",
         'arrival_date': plan.arrival_date or plan.plan_date or _date.today(),
         'milkrun_id': plan.milkrun_id,
         'shipment_type': plan.shipment_type or 'milkrun',
