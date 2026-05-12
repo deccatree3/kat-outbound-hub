@@ -3,10 +3,69 @@
 흐름:
   1. verified/completed plan 선택
   2. ① 물류센터 전달 파일 (취합리스트, 팔레트적재리스트, 재고이동건, PDF 3종)
+     + 📦 ZIP 일괄 다운로드
+     + ⚡ 개별 N개 동시 트리거 (JS multi-download)
 """
 from __future__ import annotations
 
+import base64
+import io
+import json
+import zipfile
+
 import streamlit as st
+import streamlit.components.v1 as components
+
+
+def _build_logistics_zip(items: list[tuple[str, bytes]], folder: str = "") -> bytes:
+    """파일 (filename, bytes) 리스트를 ZIP 으로 묶음. folder 지정 시 ZIP 내부에 폴더 생성."""
+    buf = io.BytesIO()
+    with zipfile.ZipFile(buf, 'w', zipfile.ZIP_DEFLATED) as zf:
+        for fname, content in items:
+            if not content:
+                continue
+            arcname = f"{folder.rstrip('/')}/{fname}" if folder else fname
+            zf.writestr(arcname, content)
+    return buf.getvalue()
+
+
+def _render_multi_download_trigger(items: list[tuple[str, bytes]], label: str, key: str):
+    """한 번의 클릭으로 모든 파일을 개별 다운로드 트리거. base64 + JS."""
+    files_js = []
+    for name, content in items:
+        if not content:
+            continue
+        b64 = base64.b64encode(content).decode('ascii')
+        files_js.append({'name': name, 'b64': b64})
+    if not files_js:
+        return
+    files_json = json.dumps(files_js)
+    button_id = f"multi-dl-{key}"
+    html = f"""
+<button id="{button_id}" style="
+    width:100%; padding:0.5rem 1rem;
+    background:#ff4b4b; color:white; border:none; border-radius:0.5rem;
+    font-weight:600; font-size:14px; cursor:pointer;
+">{label}</button>
+<script>
+(function() {{
+    const files = {files_json};
+    document.getElementById("{button_id}").onclick = function() {{
+        files.forEach((f, i) => {{
+            setTimeout(() => {{
+                const a = document.createElement('a');
+                a.href = 'data:application/octet-stream;base64,' + f.b64;
+                a.download = f.name;
+                document.body.appendChild(a);
+                a.click();
+                document.body.removeChild(a);
+            }}, i * 250);
+        }});
+    }};
+}})();
+</script>
+"""
+    components.html(html, height=50)
 
 from rocketgrowth.db import get_session
 from rocketgrowth.models import InboundPlan
@@ -101,6 +160,9 @@ def render(brand: str):
     ship_prefix = data.ship_prefix
     is_milkrun = data.is_milkrun
 
+    # 일괄 다운로드 (ZIP / multi-trigger) 용 — 각 파일 생성 성공 시 append.
+    zip_items: list[tuple[str, bytes]] = []
+
     # 취합리스트 + (밀크런만) 팔레트적재 + 재고이동건
     if is_milkrun:
         dc = st.columns(3)
@@ -119,10 +181,12 @@ def render(brand: str):
                 sku_order=getattr(data.attachment, 'sku_order', None),
                 brand=brand,
             )
+        cons_name = f"{brand_company}_{ship_prefix}_취합리스트_{yymmdd}_{fc}.xlsx"
+        zip_items.append((cons_name, cons))
         with dc[0]:
             st.download_button(
                 "📥 취합리스트", data=cons,
-                file_name=f"{brand_company}_{ship_prefix}_취합리스트_{yymmdd}_{fc}.xlsx",
+                file_name=cons_name,
                 mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                 width="stretch", type="primary",
                 key=f"disp_{brand}_dl_cons_{plan.id}",
@@ -139,10 +203,12 @@ def render(brand: str):
                 data.sec_items, data.pa, fc, arr,
                 milkrun_request_id=order_base, pallet_size=cfg.pallet_size_boxes,
             )
+            pal_name = f"밀크런_물류부착문서2 (팔레트적재리스트)_{fc}_{datesuf}.xlsx"
+            zip_items.append((pal_name, pal))
             with dc[1]:
                 st.download_button(
                     "📥 팔레트적재리스트", data=pal,
-                    file_name=f"밀크런_물류부착문서2 (팔레트적재리스트)_{fc}_{datesuf}.xlsx",
+                    file_name=pal_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     width="stretch", type="primary",
                     key=f"disp_{brand}_dl_pal_{plan.id}",
@@ -159,10 +225,12 @@ def render(brand: str):
             mv_out = update_inventory_movement(
                 bytes(plan.movement_template_blob), data.sec_items, arr, fc, brand_company,
             )
+            mv_name = plan.movement_template_filename or f"쿠팡 재고이동건_{yyyymm}.xlsx"
+            zip_items.append((mv_name, mv_out))
             with mv_col:
                 st.download_button(
                     "📥 재고이동건", data=mv_out,
-                    file_name=plan.movement_template_filename or f"쿠팡 재고이동건_{yyyymm}.xlsx",
+                    file_name=mv_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     width="stretch", type="primary",
                     key=f"disp_{brand}_dl_mv_{plan.id}",
@@ -177,10 +245,12 @@ def render(brand: str):
     # PDF 리네임 다운로드 (운송별 명칭 차이)
     dpc = st.columns(3)
     if data.invoice_bytes:
+        inv_name = f"{ship_prefix}_물류동봉문서(거래명세서)_{fc}_{datesuf}.pdf"
+        zip_items.append((inv_name, data.invoice_bytes))
         with dpc[0]:
             st.download_button(
                 "📥 물류동봉문서(거래명세서)", data=data.invoice_bytes,
-                file_name=f"{ship_prefix}_물류동봉문서(거래명세서)_{fc}_{datesuf}.pdf",
+                file_name=inv_name,
                 mime="application/pdf", width="stretch", type="primary",
                 key=f"disp_{brand}_dl_inv_{plan.id}",
             )
@@ -190,10 +260,12 @@ def render(brand: str):
                 st.caption("동봉문서 N/A (택배 + 혼적 박스 없음)")
             else:
                 st.warning("⚠️ 밀크런 — 동봉문서 누락 (필수)")
+    lb_name = f"제품 바코드라벨_{fc}_{datesuf}.pdf"
+    zip_items.append((lb_name, data.label_bytes))
     with dpc[1]:
         st.download_button(
             "📥 제품 바코드라벨", data=data.label_bytes,
-            file_name=f"제품 바코드라벨_{fc}_{datesuf}.pdf",
+            file_name=lb_name,
             mime="application/pdf", width="stretch", type="primary",
             key=f"disp_{brand}_dl_lb_{plan.id}",
         )
@@ -202,9 +274,9 @@ def render(brand: str):
             attach_filename = f"밀크런_물류부착문서1 (팔레트부착문서)_{fc}_{datesuf}.pdf"
             attach_label = "팔레트부착"
         else:
-            # 택배: 쉽먼트_물류부착문서_{FC}_{date}.pdf
             attach_filename = f"쉽먼트_물류부착문서_{fc}_{datesuf}.pdf"
             attach_label = "박스부착"
+        zip_items.append((attach_filename, data.attach_bytes))
         st.download_button(
             f"📥 물류부착문서({attach_label})", data=data.attach_bytes,
             file_name=attach_filename,
@@ -216,6 +288,40 @@ def render(brand: str):
         st.caption(
             "📦 택배: 박스 NO 는 부착문서 SKU 나열 순서 기준 자동 부여 "
             "(같은 SKU 내 수량 적은 박스가 먼저)."
+        )
+
+    # ─── 일괄 다운로드 옵션 ─────
+    valid_zip_items = [(n, b) for n, b in zip_items if b]
+    if valid_zip_items:
+        st.markdown("---")
+        st.caption(
+            f"📦 일괄 다운로드 옵션 — 위 {len(valid_zip_items)}개 파일 한 번에:"
+        )
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            zip_folder = f"{brand_company}_{ship_prefix}_{fc}_{datesuf}"
+            try:
+                zip_bytes = _build_logistics_zip(valid_zip_items, folder=zip_folder)
+                st.download_button(
+                    f"📦 ZIP 일괄 다운로드 ({len(valid_zip_items)}개 → 1 파일)",
+                    data=zip_bytes,
+                    file_name=f"{zip_folder}.zip",
+                    mime="application/zip",
+                    width="stretch", type="secondary",
+                    key=f"disp_{brand}_dl_zip_{plan.id}",
+                    help="모든 파일을 ZIP 으로 압축. 수신자가 압축 해제 필요.",
+                )
+            except Exception as ex:
+                st.error(f"ZIP 생성 실패: {ex}")
+        with bc2:
+            _render_multi_download_trigger(
+                valid_zip_items,
+                label=f"⚡ 개별 {len(valid_zip_items)}개 동시 다운로드",
+                key=f"{brand}_{plan.id}",
+            )
+        st.caption(
+            "ZIP = 1개 파일로 전달, 압축 해제 필요. "
+            "⚡ 개별 = 압축 없이 N개 파일 그대로 (브라우저가 다중 다운로드 허용 요청할 수 있음)."
         )
 
     # 출고요청 확정 + 다음 단계
