@@ -29,6 +29,21 @@ def _build_logistics_zip(items: list[tuple[str, bytes]], folder: str = "") -> by
     return buf.getvalue()
 
 
+def _render_zip_download_blue(zip_bytes: bytes, fname: str, label: str, key: str):
+    """ZIP 다운로드를 파란색 커스텀 버튼으로 렌더 (Streamlit primary=빨강, secondary=회색 외)."""
+    b64 = base64.b64encode(zip_bytes).decode('ascii')
+    html = f"""
+<a href="data:application/zip;base64,{b64}" download="{fname}" id="zip-dl-{key}"
+   style="
+     display:inline-block; width:100%; padding:0.5rem 1rem;
+     background:#1976d2; color:white; border:1px solid #1976d2; border-radius:0.5rem;
+     text-align:center; font-weight:600; font-size:14px;
+     text-decoration:none; cursor:pointer; box-sizing:border-box;
+   ">{label}</a>
+"""
+    components.html(html, height=50)
+
+
 def _render_multi_download_trigger(items: list[tuple[str, bytes]], label: str, key: str):
     """한 번의 클릭으로 모든 파일을 개별 다운로드 트리거. base64 + JS."""
     files_js = []
@@ -302,14 +317,11 @@ def render(brand: str):
             zip_folder = f"{brand_company}_{ship_prefix}_{fc}_{datesuf}"
             try:
                 zip_bytes = _build_logistics_zip(valid_zip_items, folder=zip_folder)
-                st.download_button(
-                    f"📦 ZIP 다운로드 ({len(valid_zip_items)}개 → 1 파일)",
-                    data=zip_bytes,
-                    file_name=f"{zip_folder}.zip",
-                    mime="application/zip",
-                    width="stretch", type="secondary",
-                    key=f"disp_{brand}_dl_zip_{plan.id}",
-                    help="모든 파일을 ZIP 으로 압축. 수신자가 압축 해제 필요.",
+                _render_zip_download_blue(
+                    zip_bytes=zip_bytes,
+                    fname=f"{zip_folder}.zip",
+                    label=f"📦 ZIP 다운로드 ({len(valid_zip_items)}개 → 1 파일)",
+                    key=f"{brand}_{plan.id}",
                 )
             except Exception as ex:
                 st.error(f"ZIP 생성 실패: {ex}")
