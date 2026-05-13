@@ -86,7 +86,7 @@ def _select_plan(brand: str, brand_company: str) -> InboundPlan | None:
         plans = s.execute(
             select(InboundPlan)
             .where(InboundPlan.company_name == brand_company)
-            .order_by(desc(InboundPlan.created_at))
+            .order_by(desc(InboundPlan.id))  # # 번호 큰 것 (최근) 이 상단
         ).scalars().all()
 
     if not plans:

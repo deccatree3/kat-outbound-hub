@@ -44,7 +44,7 @@ def select_dispatch_plan(brand: str, brand_company: str, key_suffix: str = "") -
                 InboundPlan.company_name == brand_company,
                 InboundPlan.status.in_(['inbound_confirmed', 'verified', 'completed']),
             )
-            .order_by(desc(InboundPlan.arrival_date), desc(InboundPlan.created_at))
+            .order_by(desc(InboundPlan.id))  # # 번호 큰 것 (최근) 이 상단
         ).scalars().all()
 
     if not plans:
