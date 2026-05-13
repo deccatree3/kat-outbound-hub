@@ -303,7 +303,7 @@ def render(brand: str):
             try:
                 zip_bytes = _build_logistics_zip(valid_zip_items, folder=zip_folder)
                 st.download_button(
-                    f"📦 ZIP 일괄 다운로드 ({len(valid_zip_items)}개 → 1 파일)",
+                    f"📦 ZIP 다운로드 ({len(valid_zip_items)}개 → 1 파일)",
                     data=zip_bytes,
                     file_name=f"{zip_folder}.zip",
                     mime="application/zip",
