@@ -179,12 +179,12 @@ def _section_3pl(eza_rows, work_date, sequence):
         return
 
     yymmdd = work_date.strftime('%y%m%d')
-    out_name = f"{yymmdd}_{int(sequence)}차_3PL자연미앤출고요청서(주문건수 {unique_orders}, 주문수량 {total_qty}).xlsx"
+    out_name = f"{yymmdd}_{int(sequence)}차_3PL자연미앤출고요청서(주문건수 {unique_orders}, 주문수량 {total_qty}).xls"
     st.download_button(
         f"📥 {out_name}",
         data=xlsx_bytes,
         file_name=out_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+        mime="application/vnd.ms-excel",
         type="primary", width="stretch",
         key=f"3pl_download_{work_date}_{sequence}",
     )

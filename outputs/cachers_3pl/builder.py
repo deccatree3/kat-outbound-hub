@@ -1,15 +1,19 @@
 """
 캐처스 3PL 출고요청서 빌더.
 
-EZA 확장주문검색.xls (신양식 31컬럼) → 캐처스-3PL-참기름-자연앤미 출고요청서.xlsx (25컬럼).
+EZA 확장주문검색.xls (신양식 31컬럼) → 캐처스-3PL-참기름-자연앤미 출고요청서.xls (25컬럼).
 
 필터: 업로드 파일의 '공급처' 컬럼이 정확히 TARGET_SUPPLIER 인 행만 추출.
+
+출력 포맷 (자연앤미 호환):
+  - 레거시 Excel (.xls, xlwt) — 자연앤미 업로드 시스템이 .xlsx 미수용 가능성
+  - 시트명: 'Worksheet'
+  - 빈 셀: '' (빈 문자열) — None 회피
 """
 import io
 from typing import Dict, List, Tuple
 
-import openpyxl
-from openpyxl.utils import get_column_letter
+import xlwt
 
 
 TARGET_SUPPLIER = '캐처스-3PL-참기름-자연앤미'
@@ -62,37 +66,39 @@ def filter_target_rows(eza_rows: List[Dict]) -> List[Dict]:
 
 
 def build_cachers_3pl_xlsx(eza_rows: List[Dict]) -> Tuple[bytes, int]:
-    """필터된 EZA dict 들을 25컬럼 출고요청서.xlsx 로 빌드.
-    반환: (xlsx_bytes, target_row_count).
+    """필터된 EZA dict 들을 25컬럼 출고요청서.xls (xlwt) 로 빌드.
+
+    함수명은 호환 위해 _xlsx 유지하지만 실제 출력은 .xls (자연앤미 업로드 호환).
+    반환: (xls_bytes, target_row_count).
     """
     target_rows = filter_target_rows(eza_rows)
 
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = 'Sheet1'
-    ws.append(OUTPUT_HEADERS)
+    wb = xlwt.Workbook(encoding='utf-8')
+    ws = wb.add_sheet('Worksheet')
 
-    for r in target_rows:
-        out_row = []
-        for h in OUTPUT_HEADERS:
+    # 헤더
+    for c, h in enumerate(OUTPUT_HEADERS):
+        ws.write(0, c, h)
+
+    # 데이터
+    for ri, r in enumerate(target_rows, start=1):
+        for ci, h in enumerate(OUTPUT_HEADERS):
             eza_key = OUTPUT_TO_EZA.get(h)
             if eza_key is None:
                 v = ''
             else:
                 v = r.get(eza_key, '')
-                # 신·구 양식 호환: 신규 '고객주문번호' 비어있으면 옛 '주문번호' fallback
                 if (not v) and eza_key == '고객주문번호':
                     v = r.get('주문번호', '')
-            out_row.append(v)
-        ws.append(out_row)
+            # 빈 셀은 명시적으로 '' 로 기록 (자연앤미 호환)
+            ws.write(ri, ci, v if v is not None else '')
 
-    # 컬럼 폭 (운영 시 가독성)
+    # 컬럼 폭 (xlwt: width = 1/256 character widths)
     widths = [22, 12, 10, 12, 10, 10, 22, 18, 14,
               30, 30, 18, 8, 14, 16, 16, 14, 16, 16, 12, 50, 30, 8, 16, 12]
-    for i, w in enumerate(widths, 1):
-        if i <= len(OUTPUT_HEADERS):
-            ws.column_dimensions[get_column_letter(i)].width = w
-    ws.freeze_panes = 'A2'
+    for i, w in enumerate(widths):
+        if i < len(OUTPUT_HEADERS):
+            ws.col(i).width = int(w * 256)
 
     buf = io.BytesIO()
     wb.save(buf)
