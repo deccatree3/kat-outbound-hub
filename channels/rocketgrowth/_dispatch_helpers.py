@@ -5,6 +5,7 @@ verified/completed plan 을 선택해 sec_items, pa, fc, arr, PDF bytes 등
 """
 from __future__ import annotations
 
+import math
 from dataclasses import dataclass, field
 from datetime import date as _date, timedelta
 from typing import Any
@@ -188,7 +189,8 @@ def build_dispatch_data(brand: str, brand_company: str, plan: InboundPlan) -> Di
             or (pwp.product_name if pwp and pwp.product_name else None)
         )
         bq = it.box_qty or 1
-        boxes = (it.inbound_qty_final or 0) // max(bq, 1)
+        _qty = it.inbound_qty_final or 0
+        boxes = math.ceil(_qty / max(bq, 1)) if _qty > 0 else 0
         sec_items.append(SecondaryItem(
             coupang_option_id=it.coupang_option_id,
             sku_id=cm.sku_id if cm else None,
@@ -209,7 +211,8 @@ def build_dispatch_data(brand: str, brand_company: str, plan: InboundPlan) -> Di
         pallet_map: dict[int, list[PalletEntry]] = {}
         for it in items:
             pn = it.pallet_no or 1
-            boxes_it = (it.inbound_qty_final or 0) // max(it.box_qty or 1, 1)
+            _q = it.inbound_qty_final or 0
+            boxes_it = math.ceil(_q / max(it.box_qty or 1, 1)) if _q > 0 else 0
             if boxes_it <= 0:
                 continue
             pallet_map.setdefault(pn, []).append(
@@ -226,14 +229,17 @@ def build_dispatch_data(brand: str, brand_company: str, plan: InboundPlan) -> Di
             pallet_count=_pallet_count,
         )
     else:
+        def _boxes_of(it):
+            _q = it.inbound_qty_final or 0
+            return math.ceil(_q / max(it.box_qty or 1, 1)) if _q > 0 else 0
         pa_items = [
             PA_PalletItem(
                 key=it.coupang_option_id,
                 name=it.product_name or "",
-                boxes=(it.inbound_qty_final or 0) // max(it.box_qty or 1, 1),
+                boxes=_boxes_of(it),
             )
             for it in items
-            if (it.inbound_qty_final or 0) // max(it.box_qty or 1, 1) > 0
+            if _boxes_of(it) > 0
         ]
         pa = pa_assign_pallets(pa_items, pallet_size=cfg.pallet_size_boxes)
 

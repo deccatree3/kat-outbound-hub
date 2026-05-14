@@ -4,6 +4,7 @@
 """
 from __future__ import annotations
 
+import math
 from datetime import date
 from typing import Optional
 
@@ -237,7 +238,7 @@ def save_plan(
                     box_qty=box_qty,
                     inbound_qty_suggested=int(row.get("inbound_basic") or 0),
                     inbound_qty_final=final_qty,
-                    inbound_boxes=final_qty // max(box_qty, 1),
+                    inbound_boxes=math.ceil(final_qty / max(box_qty, 1)) if final_qty > 0 else 0,
                     days_sellable_after=(
                         float(row["days_sellable_after"])
                         if row["days_sellable_after"] is not None else None
