@@ -500,6 +500,7 @@ def _step2_outbound_generate():
             else:
                 xlsx_bytes = qgen.build_outbound_xlsx(out_rows)
                 today_str = kst_today().strftime('%Y%m%d')
+                ob_name = f"Outbound_ship_conf_btoc_{today_str}.xlsx"
                 try:
                     n_saved = qgen.save_outbound_log(
                         rows, out_rows, mappings, det_name or 'unknown.csv'
@@ -507,10 +508,13 @@ def _step2_outbound_generate():
                     st.caption(f"🗂 출고 이력 DB 기록: {n_saved}건")
                 except Exception as ex:
                     st.warning(f"DB 기록 실패 (다운로드는 가능): {ex}")
+                if bid_now:
+                    if qgen.save_brief_outbound(bid_now, xlsx_bytes, ob_name):
+                        st.caption("💾 출고요청서 저장됨 — 이어서 모드에서 재다운로드 가능")
                 st.download_button(
-                    f"📥 Outbound_ship_conf_btoc_{today_str}.xlsx 다운로드",
+                    f"📥 {ob_name} 다운로드",
                     data=xlsx_bytes,
-                    file_name=f"Outbound_ship_conf_btoc_{today_str}.xlsx",
+                    file_name=ob_name,
                     mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
                     width="stretch",
                     type="primary",

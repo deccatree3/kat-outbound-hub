@@ -81,6 +81,26 @@ def _tab_jp_outbound():
             f"📜 {session_tag}**기존 작업 이어서** — `{brief_name}` 로드됨. "
             "①(출고요청서 생성)/②(OMS 업로드)는 이미 완료된 것으로 간주하고 **③ 송장 취합부터** 진행."
         )
+        _bid = st.session_state.get('qoo10_brief_id')
+        if _bid:
+            from qoo10 import generator as _qgen
+            _saved_ob = _qgen.load_brief_outbound(_bid)
+            if _saved_ob:
+                _ob_bytes, _ob_name = _saved_ob
+                st.download_button(
+                    f"📥 출고요청서 재다운로드 ({_ob_name})",
+                    data=_ob_bytes,
+                    file_name=_ob_name,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    width="stretch",
+                    key="cu_jp_resume_redownload_outbound",
+                    help="① 단계에서 생성·저장된 KSE 출고요청서. OMS 재업로드가 필요할 때 사용.",
+                )
+            else:
+                st.caption(
+                    "ℹ️ 이 brief 에 저장된 출고요청서가 없습니다 "
+                    "(저장 기능 도입 이전 작업이거나 ① 단계 미실행)."
+                )
         st.markdown("---")
 
     _step4_collect_waybills()       # ③

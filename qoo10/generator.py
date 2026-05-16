@@ -8,7 +8,7 @@ import io
 import os
 import sys
 import datetime
-from typing import List, Dict, Tuple
+from typing import List, Dict, Optional, Tuple
 
 import openpyxl
 from openpyxl.utils import get_column_letter
@@ -587,6 +587,15 @@ def _ensure_brief_schema():
                 ALTER TABLE qoo10_pending_brief
                     ADD COLUMN IF NOT EXISTS status VARCHAR(32) DEFAULT 'collected'
             """)
+            # 생성된 KSE 출고요청서 xlsx 보관 (이어서 모드 재다운로드용)
+            cur.execute("""
+                ALTER TABLE qoo10_pending_brief
+                    ADD COLUMN IF NOT EXISTS outbound_xlsx BYTEA
+            """)
+            cur.execute("""
+                ALTER TABLE qoo10_pending_brief
+                    ADD COLUMN IF NOT EXISTS outbound_xlsx_name TEXT
+            """)
             # 기존 row 들도 'collected' 로 (NULL 만 갱신)
             cur.execute("""
                 UPDATE qoo10_pending_brief SET status = 'collected' WHERE status IS NULL
@@ -754,6 +763,46 @@ def load_pending_brief(brief_id: int) -> Tuple[bytes, str]:
     if not row:
         raise RuntimeError(f"임시저장 brief id={brief_id} 없음")
     return bytes(row[0]), row[1]
+
+
+def save_brief_outbound(brief_id: int, xlsx_bytes: bytes, file_name: str) -> bool:
+    """생성된 KSE 출고요청서 xlsx 를 brief 에 보관. 이어서 모드 재다운로드용.
+    성공 시 True. brief 가 없거나 실패 시 False (다운로드 자체는 영향 없음).
+    """
+    _ensure_brief_schema()
+    try:
+        conn = pg.connect()
+        with conn.cursor() as cur:
+            cur.execute("""
+                UPDATE qoo10_pending_brief
+                SET outbound_xlsx = %s, outbound_xlsx_name = %s
+                WHERE id = %s
+            """, (xlsx_bytes, file_name, brief_id))
+            updated = cur.rowcount
+        conn.commit()
+        conn.close()
+        return updated > 0
+    except Exception:
+        return False
+
+
+def load_brief_outbound(brief_id: int) -> Optional[Tuple[bytes, str]]:
+    """brief 에 보관된 KSE 출고요청서 xlsx 로드. 없으면 None."""
+    try:
+        conn = pg.connect(autocommit=True)
+        with conn.cursor() as cur:
+            cur.execute(
+                "SELECT outbound_xlsx, outbound_xlsx_name "
+                "FROM qoo10_pending_brief WHERE id = %s",
+                (brief_id,),
+            )
+            row = cur.fetchone()
+        conn.close()
+    except Exception:
+        return None
+    if not row or row[0] is None:
+        return None
+    return bytes(row[0]), (row[1] or f"Outbound_ship_conf_{brief_id}.xlsx")
 
 
 def mark_brief_consumed(brief_id: int):
