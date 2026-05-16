@@ -96,6 +96,15 @@ def build_cachers_3pl_xlsx(eza_rows: List[Dict]) -> Tuple[bytes, int]:
                     v = r.get(eza_key, '')
                     if (not v) and eza_key == '고객주문번호':
                         v = r.get('주문번호', '')
+            # 주문수량은 숫자 셀로 기록 (샘플 c13 = NUM 타입). 값 로직은 그대로.
+            if h == '주문수량':
+                s = str(v).strip() if v is not None else ''
+                try:
+                    num = int(float(s.replace(',', '')))
+                    ws.write(ri, ci, num)
+                    continue
+                except (ValueError, TypeError):
+                    pass  # 숫자 변환 불가 시 아래 text 경로로 폴백
             # 빈 셀은 명시적으로 '' 로 기록 (자연앤미 호환)
             ws.write(ri, ci, v if v is not None else '')
 
