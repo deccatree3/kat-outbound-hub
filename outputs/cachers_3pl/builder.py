@@ -18,6 +18,9 @@ import xlwt
 
 TARGET_SUPPLIER = '캐처스-3PL-참기름-자연앤미'
 
+# 출력 '공급처' 컬럼은 EZA 원본값과 무관하게 항상 이 고정값 (자연앤미 요청)
+SUPPLIER_OUTPUT = '캐처스 자사'
+
 OUTPUT_HEADERS = [
     '공급처', '주문일', '주문시간', '발주일', '발주시간', '몰명',
     '출하의뢰번호', '출하의뢰항번', '주문번호',
@@ -45,11 +48,11 @@ OUTPUT_TO_EZA: Dict[str, str] = {
     '자체상품코드':    '제품코드',
     '주문수량':       '주문수량',
     '주문자이름':     '주문자이름',
-    '주문자전화':     '주문자연락처1',
-    '주문자휴대폰':   '주문자연락처2',
+    '주문자전화':     '주문자연락처2',
+    '주문자휴대폰':   '주문자연락처1',
     '수령자이름':     '수취인명',
-    '수령자전화':     '수취인연락처1',
-    '수령자휴대폰':   '수취인연락처2',
+    '수령자전화':     '수취인연락처2',
+    '수령자휴대폰':   '수취인연락처1',
     '수령자우편번호': '수취인우편번호',
     '수령자주소':     '수취인주소1',
     '배송메모':       '배송메시지',
@@ -83,13 +86,16 @@ def build_cachers_3pl_xlsx(eza_rows: List[Dict]) -> Tuple[bytes, int]:
     # 데이터
     for ri, r in enumerate(target_rows, start=1):
         for ci, h in enumerate(OUTPUT_HEADERS):
-            eza_key = OUTPUT_TO_EZA.get(h)
-            if eza_key is None:
-                v = ''
+            if h == '공급처':
+                v = SUPPLIER_OUTPUT
             else:
-                v = r.get(eza_key, '')
-                if (not v) and eza_key == '고객주문번호':
-                    v = r.get('주문번호', '')
+                eza_key = OUTPUT_TO_EZA.get(h)
+                if eza_key is None:
+                    v = ''
+                else:
+                    v = r.get(eza_key, '')
+                    if (not v) and eza_key == '고객주문번호':
+                        v = r.get('주문번호', '')
             # 빈 셀은 명시적으로 '' 로 기록 (자연앤미 호환)
             ws.write(ri, ci, v if v is not None else '')
 
