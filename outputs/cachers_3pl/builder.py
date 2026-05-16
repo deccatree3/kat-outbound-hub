@@ -79,9 +79,43 @@ def build_cachers_3pl_xlsx(eza_rows: List[Dict]) -> Tuple[bytes, int]:
     wb = xlwt.Workbook(encoding='utf-8')
     ws = wb.add_sheet('Worksheet')
 
+    # 샘플(확장주문검색_20260504105133_자연앤미 - 샘플.xls) 서식 그대로:
+    #  헤더 = 연녹색 #CCFFCC 배경 + 굴림 9pt 굵게 + 4면 얇은 검정 테두리 + 가운데
+    #  데이터 = 배경 없음 + 굴림 9pt + 4면 얇은 검정 테두리 + 일반(좌)·세로 하단
+    #  색 인덱스 8=검정. 행높이 300 twips, 컬럼폭은 샘플 computed 값 그대로.
+    _GREEN = 0x20
+    wb.set_colour_RGB(_GREEN, 204, 255, 204)
+
+    def _borders():
+        b = xlwt.Borders()
+        b.left = b.right = b.top = b.bottom = xlwt.Borders.THIN
+        b.left_colour = b.right_colour = b.top_colour = b.bottom_colour = 0x08
+        return b
+
+    _fnt_h = xlwt.Font()
+    _fnt_h.name = '굴림'; _fnt_h.height = 180; _fnt_h.bold = True; _fnt_h.colour_index = 0x08
+    _fnt_d = xlwt.Font()
+    _fnt_d.name = '굴림'; _fnt_d.height = 180; _fnt_d.bold = False; _fnt_d.colour_index = 0x08
+
+    _al_h = xlwt.Alignment()
+    _al_h.horz = xlwt.Alignment.HORZ_CENTER; _al_h.vert = xlwt.Alignment.VERT_BOTTOM
+    _al_d = xlwt.Alignment()
+    _al_d.horz = xlwt.Alignment.HORZ_GENERAL; _al_d.vert = xlwt.Alignment.VERT_BOTTOM
+
+    _pat_g = xlwt.Pattern()
+    _pat_g.pattern = xlwt.Pattern.SOLID_PATTERN; _pat_g.pattern_fore_colour = _GREEN
+
+    header_style = xlwt.XFStyle()
+    header_style.font = _fnt_h; header_style.alignment = _al_h
+    header_style.borders = _borders(); header_style.pattern = _pat_g
+
+    data_style = xlwt.XFStyle()
+    data_style.font = _fnt_d; data_style.alignment = _al_d
+    data_style.borders = _borders()
+
     # 헤더
     for c, h in enumerate(OUTPUT_HEADERS):
-        ws.write(0, c, h)
+        ws.write(0, c, h, header_style)
 
     # 데이터
     for ri, r in enumerate(target_rows, start=1):
@@ -101,19 +135,25 @@ def build_cachers_3pl_xlsx(eza_rows: List[Dict]) -> Tuple[bytes, int]:
                 s = str(v).strip() if v is not None else ''
                 try:
                     num = int(float(s.replace(',', '')))
-                    ws.write(ri, ci, num)
+                    ws.write(ri, ci, num, data_style)
                     continue
                 except (ValueError, TypeError):
                     pass  # 숫자 변환 불가 시 아래 text 경로로 폴백
             # 빈 셀은 명시적으로 '' 로 기록 (자연앤미 호환)
-            ws.write(ri, ci, v if v is not None else '')
+            ws.write(ri, ci, v if v is not None else '', data_style)
 
-    # 컬럼 폭 (xlwt: width = 1/256 character widths)
-    widths = [22, 12, 10, 12, 10, 10, 22, 18, 14,
-              30, 30, 18, 8, 14, 16, 16, 14, 16, 16, 12, 50, 30, 8, 16, 12]
+    # 컬럼 폭 — 샘플 computed_column_width 값 그대로 (1/256 char 단위)
+    widths = [3328, 3072, 2560, 3072, 2560, 1536, 7424, 4608, 2560,
+              10752, 8448, 3584, 2560, 3072, 3840, 3840, 3072, 3840,
+              3840, 4096, 14592, 7424, 1536, 2560, 2048]
     for i, w in enumerate(widths):
         if i < len(OUTPUT_HEADERS):
-            ws.col(i).width = int(w * 256)
+            ws.col(i).width = min(int(w), 65535)
+
+    # 행 높이 300 twips (헤더 + 데이터 전 행)
+    for ri in range(len(target_rows) + 1):
+        ws.row(ri).height_mismatch = True
+        ws.row(ri).height = 300
 
     buf = io.BytesIO()
     wb.save(buf)
