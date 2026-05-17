@@ -245,7 +245,7 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
     name_by_code = {str(r["품목코드"]): r["상품명"] for _, r in edited.iterrows()}
 
     if st.button(
-        f"✅ 재고이동 확정 (제외 {len(held_codes)}품목 = 이동필요 {n_move} + 관찰선택 {len(watch_checked)})",
+        "✅ 재고이동 확정",
         type="primary", width="stretch", key="domestic_holding_confirm",
     ):
         st.session_state["domestic_holding_confirmed"] = {
