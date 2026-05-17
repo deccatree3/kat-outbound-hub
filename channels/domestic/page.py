@@ -8,9 +8,11 @@ EZA 확장주문검색.xls 한 번 업로드 → 두 출력 동시 제공:
 EZA ↔ 다원 자동 연동은 네뉴만 활성. 캐처스는 다원 수기 업로드.
 """
 import datetime
+from pathlib import Path
 
 import pandas as pd
 import streamlit as st
+from sqlalchemy import select
 
 from outputs.daone.builder import (
     parse_eza_xls,
@@ -21,7 +23,17 @@ from outputs.nenu_bundle.builder import build_bundle_xlsx
 from outputs.eza.builder import (
     build_eza_waybill_xlsx, EZA_WAYBILL_DEFAULT_CARRIER,
     parse_daone_invoice_xls, parse_3pl_invoice_xlsx, build_eza_waybill_from_triples,
+    build_nenu_to_cachers_eza_xls,
 )
+from outputs.eza.cachers_nenu import (
+    load_purchase_list, compute_affected_products, split_held_orders,
+    STATUS_MOVE, STATUS_WATCH,
+)
+from rocketgrowth.ingestion.wms_file import (
+    parse_wms_inventory_file, aggregate_wms_by_barcode,
+)
+from rocketgrowth.db import get_session
+from rocketgrowth.models import WmsProduct
 from outputs.cachers_3pl.builder import (
     build_cachers_3pl_xlsx, filter_target_rows as _3pl_filter, TARGET_SUPPLIER as _3PL_SUPPLIER,
 )
@@ -56,31 +68,45 @@ def _render_metrics_and_preview(daone_rows):
     return unique_orders, total_qty
 
 
-def _section_daone(eza_rows, work_date, sequence, source_filename, session_info):
-    st.markdown("### 📋 [캐처스]다원 출고요청")
-    st.caption(
-        f"판매처그룹='캐처스' 행만 변환. 공급처='{_3PL_SUPPLIER}' 행은 추가 제외 "
-        "(별도 [캐처스]3PL-자연미앤 섹션에서 처리)."
-    )
+def _load_box_qty_by_code(purchase_list) -> dict:
+    """매입리스트 바코드 → WmsProduct.box_qty → {캐처스품목코드: box입수|None}."""
+    barcodes = sorted({p.barcode for p in purchase_list if p.barcode})
+    box_by_bc: dict[str, int | None] = {}
+    if barcodes:
+        with get_session() as s:
+            for bc, bq in s.execute(
+                select(WmsProduct.wms_barcode, WmsProduct.box_qty)
+                .where(WmsProduct.wms_barcode.in_(barcodes))
+            ).all():
+                box_by_bc[bc] = bq
+    return {p.code: box_by_bc.get(p.barcode) for p in purchase_list}
 
-    cachers_rows = [
-        r for r in eza_rows
-        if str(r.get('판매처그룹', '')).strip() == '캐처스'
-        and str(r.get('공급처', '')).strip() != _3PL_SUPPLIER
-    ]
-    if not cachers_rows:
-        st.info("📭 캐처스 행이 없어 다원 발주서를 생성하지 않습니다.")
+
+def _parse_cachers_stock(data: bytes, name: str) -> dict:
+    """캐처스 재고 Document_*.xls bytes → 품목코드별 집계 (RELEASEAREA 제외 포함)."""
+    tmp = Path(f"./_tmp_cachers_stock_{name}")
+    tmp.write_bytes(data)
+    try:
+        snap = parse_wms_inventory_file(tmp)
+    finally:
+        try:
+            tmp.unlink()
+        except Exception:
+            pass
+    return aggregate_wms_by_barcode(snap)
+
+
+def _render_daone_download(daone_rows, work_date, sequence, source_filename, session_info):
+    """다원 발주서 미리보기 + 다운로드 + 저장 (홀딩 제외 후 행 기준)."""
+    if not daone_rows:
+        st.info("📭 전 주문이 홀딩되어 이번 차수 다원 발주서가 비었습니다.")
         return
-
-    daone_rows = transform_to_daone(cachers_rows)
     unique_orders, total_qty = _render_metrics_and_preview(daone_rows)
-
     try:
         xlsx_bytes = build_daone_xlsx(daone_rows)
     except Exception as ex:
         st.error(f"다원 xlsx 생성 실패: {ex}")
         return
-
     yymmdd = work_date.strftime('%y%m%d')
     out_name = f"{yymmdd}_{int(sequence)}차발주서(주문건수 {unique_orders}, 주문수량 {total_qty}).xlsx"
     c_dl, c_save = st.columns([2, 1])
@@ -97,6 +123,135 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info)
         render_save_button(CHANNEL_KEY, session_info, daone_rows,
                            source_filename, key_prefix='domestic')
     st.caption("📤 다원 WMS에 수기 업로드 (단독) 또는 통합 발주서에 저장.")
+
+
+def _section_daone(eza_rows, work_date, sequence, source_filename, session_info):
+    st.markdown("### 📋 [캐처스]다원 출고요청")
+    st.caption(
+        f"판매처그룹='캐처스' 행만 변환. 공급처='{_3PL_SUPPLIER}' 행은 추가 제외 "
+        "(별도 [캐처스]3PL-자연미앤 섹션에서 처리)."
+    )
+
+    cachers_rows = [
+        r for r in eza_rows
+        if str(r.get('판매처그룹', '')).strip() == '캐처스'
+        and str(r.get('공급처', '')).strip() != _3PL_SUPPLIER
+    ]
+    if not cachers_rows:
+        st.info("📭 캐처스 행이 없어 다원 발주서를 생성하지 않습니다.")
+        return
+
+    daone_rows_all = transform_to_daone(cachers_rows)
+
+    # ── 캐처스 재고 확인 → 네뉴 매입리스트 품절 합포장 홀딩 (선택) ──
+    st.markdown(
+        "**캐처스 재고 확인 (선택)** — 캐처스가 판매하는 네뉴 매입리스트 상품이 "
+        "캐처스 재고 품절/부족이면 해당 상품이 든 **합포장(같은 수취인) 주문 전체**를 "
+        "이번 차수에서 제외하고, 네뉴→캐처스 재고이동 이지어드민 발주서를 제공."
+    )
+    stock_file = st.file_uploader(
+        "캐처스 재고파일 Document_*.xls (미업로드 시 홀딩 없이 전체 발주)",
+        type=['xls'], key="domestic_cachers_stock",
+        help="EZA WMS 재고현황 export. 품목코드=캐처스 품목코드. RELEASEAREA LOC 제외 후 가능수량 합산.",
+    )
+
+    daone_rows = daone_rows_all
+    eza_xls = None
+    eza_count = 0
+
+    if stock_file is not None:
+        try:
+            stock_agg = _parse_cachers_stock(stock_file.getvalue(), stock_file.name)
+            purchase_list = load_purchase_list()
+            box_by_code = _load_box_qty_by_code(purchase_list)
+            affected = compute_affected_products(
+                daone_rows_all, stock_agg, purchase_list, box_by_code,
+            )
+        except Exception as ex:
+            st.error(f"재고 홀딩 분석 실패: {ex}")
+            affected = []
+
+        if not affected:
+            st.success("✅ 매입리스트 품절/관찰 대상 없음 — 전체 출고.")
+        else:
+            n_move = sum(1 for a in affected if a.status == STATUS_MOVE)
+            n_watch = len(affected) - n_move
+            st.warning(
+                f"⚠️ 매입리스트 상품 검토 필요 — 이동필요 {n_move} / 관찰 {n_watch}. "
+                "재고이동할 상품을 선택하고 확정수량(기본=box입수) 조정 후 확정."
+            )
+            df = pd.DataFrame([{
+                "재고이동": a.status == STATUS_MOVE,
+                "상태": a.status,
+                "상품명": a.name,
+                "품목코드": a.code,
+                "주문수량합": a.ordered,
+                "가용재고": a.available,
+                "box입수": a.box_qty if a.box_qty is not None else 0,
+                "확정수량": int(a.box_qty) if a.box_qty else int(a.ordered),
+            } for a in affected])
+            edited = st.data_editor(
+                df, hide_index=True, width="stretch",
+                disabled=["상태", "상품명", "품목코드", "주문수량합", "가용재고", "box입수"],
+                column_config={
+                    "재고이동": st.column_config.CheckboxColumn(
+                        "재고이동", help="체크 시 해당 상품이 든 합포장 주문 전체를 이번 차수 제외"),
+                    "확정수량": st.column_config.NumberColumn(
+                        "확정수량", min_value=0, step=1,
+                        help="이지어드민 발주 수량 (기본=box입수, 수정 가능)"),
+                },
+                key="domestic_holding_editor",
+            )
+            sel = edited[edited["재고이동"] == True]  # noqa: E712
+            held_codes = set(sel["품목코드"].tolist())
+            if st.button(
+                f"✅ 재고이동 확정 ({len(held_codes)}개 상품)",
+                type="primary", disabled=not held_codes,
+                key="domestic_holding_confirm",
+            ):
+                st.session_state["domestic_holding_confirmed"] = {
+                    "codes": sorted(held_codes),
+                    "items": [
+                        {"name": r["상품명"], "qty": int(r["확정수량"])}
+                        for _, r in sel.iterrows()
+                    ],
+                }
+            conf = st.session_state.get("domestic_holding_confirmed")
+            if conf and conf["codes"]:
+                shipped, held, n_groups = split_held_orders(
+                    daone_rows_all, set(conf["codes"]),
+                )
+                daone_rows = shipped
+                m1, m2, m3 = st.columns(3)
+                m1.metric("홀딩 합포장 그룹", n_groups)
+                m2.metric("제외 행수", len(held))
+                m3.metric("이지어드민 발주 품목", len(conf["items"]))
+                try:
+                    eza_xls = build_nenu_to_cachers_eza_xls(conf["items"], work_date)
+                    eza_count = len(conf["items"])
+                except Exception as ex:
+                    st.error(f"이지어드민 발주서 생성 실패: {ex}")
+
+    st.markdown("---")
+    _render_daone_download(daone_rows, work_date, sequence, source_filename, session_info)
+
+    # 이지어드민 발주서 (네뉴→캐처스 재고이동) — 항상 노출, 해당 없으면 비활성(회색)
+    st.markdown("---")
+    eza_name = (
+        f"{work_date.strftime('%y%m%d')}_{int(sequence)}차_"
+        f"네뉴→캐처스_이지어드민발주서({eza_count}품목).xls"
+    )
+    st.download_button(
+        ("📥 이지어드민 발주서 (네뉴→캐처스 재고이동)"
+         + (f" — {eza_count}품목" if eza_count else " — 해당 없음")),
+        data=eza_xls if eza_xls else b"",
+        file_name=eza_name,
+        mime="application/vnd.ms-excel",
+        type="primary", width="stretch",
+        disabled=eza_xls is None,
+        key="domestic_nenu_cachers_eza_dl",
+    )
+    st.caption("📤 네뉴 이지어드민에 업로드 → 재고차감 → 네뉴→캐처스 재고이동. 다음 차수에 홀딩분 출고.")
 
 
 def _section_bundle(eza_bytes_list, work_date, sequence):

@@ -188,6 +188,50 @@ def build_eza_waybill_xlsx(daone_invoice_xls_bytes: bytes,
     }
 
 
+# ─── 네뉴→캐처스 재고이동 이지어드민 발주서 (8컬럼) ───────────────────
+# 캐처스가 판 네뉴 매입리스트 상품이 캐처스 재고 품절일 때, 네뉴 측
+# 이지어드민 재고차감용 발주서. 수령인=캐처스(다원 아산센터)로 고정.
+NENU_CACHERS_EZA_HEADERS = [
+    '순서', '주문번호', '수령인', '연락처', '주소', '상품명', '수량', '상품금액',
+]
+_NC_RECIPIENT = '캐처스'
+_NC_PHONE = '1644-7827'
+_NC_ADDRESS = '충남 아산시 염치읍 서원리 72-16 2층 다원로지스틱스 아산센터'
+
+
+def build_nenu_to_cachers_eza_xls(items: List[Dict], work_date) -> bytes:
+    """네뉴→캐처스 재고이동 이지어드민 발주서 .xls.
+
+    items: [{'name': 상품명, 'qty': 확정수량}, ...] (상품별 1행).
+    주문번호 = '{work_date:YYYYMMDD}-{n}' (n=1..). 순서=1 고정 (샘플 기준,
+    각 상품이 단일 라인 1주문). 상품금액 빈값.
+    """
+    wb = xlwt.Workbook(encoding='utf-8')
+    ws = wb.add_sheet('Sheet1')
+
+    for ci, h in enumerate(NENU_CACHERS_EZA_HEADERS):
+        ws.write(0, ci, h)
+
+    ymd = work_date.strftime('%Y%m%d')
+    for idx, it in enumerate(items, start=1):
+        try:
+            qty = int(float(it.get('qty', 0) or 0))
+        except (ValueError, TypeError):
+            qty = 0
+        ws.write(idx, 0, 1)                       # 순서
+        ws.write(idx, 1, f"{ymd}-{idx}")          # 주문번호
+        ws.write(idx, 2, _NC_RECIPIENT)           # 수령인
+        ws.write(idx, 3, _NC_PHONE)               # 연락처
+        ws.write(idx, 4, _NC_ADDRESS)             # 주소
+        ws.write(idx, 5, (it.get('name') or '').strip())  # 상품명
+        ws.write(idx, 6, qty)                     # 수량
+        ws.write(idx, 7, '')                      # 상품금액 (빈값)
+
+    bio = io.BytesIO()
+    wb.save(bio)
+    return bio.getvalue()
+
+
 def build_makers_eza_xls(makers_rows: List[Dict]) -> bytes:
     """메이커스 주문내역 dict → EZA 발주서 .xls bytes.
 
