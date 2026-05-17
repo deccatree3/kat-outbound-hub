@@ -206,26 +206,26 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
     n_watch = len(affected) - n_move
     st.warning(
         f"⚠️ 매입리스트 검토 — **이동필요(품절/부족) {n_move}건은 무조건 제외**, "
-        f"관찰 {n_watch}건은 선택. 확정수량(기본=box입수) 조정 후 '재고이동 확정'."
+        f"관찰 {n_watch}건은 선택. 이동수량(기본=box입수) 조정 후 '재고이동 확정'."
     )
     df = pd.DataFrame([{
         "재고이동": a.status == STATUS_MOVE,
         "상태": a.status,
         "상품명": a.name,
         "품목코드": a.code,
-        "주문수량합": a.ordered,
+        "주문수량": a.ordered,
         "가용재고": a.available,
         "box입수": a.box_qty if a.box_qty is not None else 0,
-        "확정수량": int(a.box_qty) if a.box_qty else int(a.ordered),
+        "이동수량": int(a.box_qty) if a.box_qty else int(a.ordered),
     } for a in affected])
     edited = st.data_editor(
         df, hide_index=True, width="stretch",
-        disabled=["상태", "상품명", "품목코드", "주문수량합", "가용재고", "box입수"],
+        disabled=["상태", "상품명", "품목코드", "주문수량", "가용재고", "box입수"],
         column_config={
             "재고이동": st.column_config.CheckboxColumn(
                 "재고이동", help="이동필요는 체크와 무관하게 항상 제외. 관찰만 선택 반영."),
-            "확정수량": st.column_config.NumberColumn(
-                "확정수량", min_value=0, step=1,
+            "이동수량": st.column_config.NumberColumn(
+                "이동수량", min_value=0, step=1,
                 help="이지어드민 발주 수량 (기본=box입수, 수정 가능)"),
         },
         key="domestic_holding_editor",
@@ -241,7 +241,7 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
         if r["상태"] == STATUS_WATCH and bool(r["재고이동"])
     }
     held_codes = move_codes | watch_checked
-    qty_by_code = {str(r["품목코드"]): int(r["확정수량"]) for _, r in edited.iterrows()}
+    qty_by_code = {str(r["품목코드"]): int(r["이동수량"]) for _, r in edited.iterrows()}
     name_by_code = {str(r["품목코드"]): r["상품명"] for _, r in edited.iterrows()}
 
     if st.button(
