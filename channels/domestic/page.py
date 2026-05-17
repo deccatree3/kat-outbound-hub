@@ -125,11 +125,13 @@ def _render_daone_download(daone_rows, work_date, sequence, source_filename, ses
     st.caption("📤 다원 WMS에 수기 업로드 (단독) 또는 통합 발주서에 저장.")
 
 
-def _section_daone(eza_rows, work_date, sequence, source_filename, session_info):
+def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
+                   stock_file=None):
     st.markdown("### 📋 [캐처스]다원 출고요청")
     st.caption(
         f"판매처그룹='캐처스' 행만 변환. 공급처='{_3PL_SUPPLIER}' 행은 추가 제외 "
-        "(별도 [캐처스]3PL-자연미앤 섹션에서 처리)."
+        "(별도 [캐처스]3PL-자연미앤 섹션에서 처리). "
+        "캐처스 WMS 재고현황 동시 업로드 시 네뉴 매입리스트 품절분 합포장 홀딩."
     )
 
     cachers_rows = [
@@ -142,19 +144,6 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info)
         return
 
     daone_rows_all = transform_to_daone(cachers_rows)
-
-    # ── 캐처스 재고 확인 → 네뉴 매입리스트 품절 합포장 홀딩 (선택) ──
-    st.markdown(
-        "**캐처스 재고 확인 (선택)** — 캐처스가 판매하는 네뉴 매입리스트 상품이 "
-        "캐처스 재고 품절/부족이면 해당 상품이 든 **합포장(같은 수취인) 주문 전체**를 "
-        "이번 차수에서 제외하고, 네뉴→캐처스 재고이동 이지어드민 발주서를 제공."
-    )
-    stock_file = st.file_uploader(
-        "캐처스 재고파일 Document_*.xls (미업로드 시 홀딩 없이 전체 발주)",
-        type=['xls'], key="domestic_cachers_stock",
-        help="EZA WMS 재고현황 export. 품목코드=캐처스 품목코드. RELEASEAREA LOC 제외 후 가능수량 합산.",
-    )
-
     daone_rows = daone_rows_all
     eza_xls = None
     eza_count = 0
@@ -348,17 +337,28 @@ def _section_3pl(eza_rows, work_date, sequence):
 
 def _tab_create_order():
     st.markdown(
-        "이지어드민 **확장주문검색.xls** 한 번 업로드 → **다원 발주서**(캐처스) + **번들작업파일**(네뉴 세트) 동시 생성. "
+        "이지어드민 **확장주문검색.xls** + 캐처스 **WMS 재고현황.xls** 동시 업로드 → "
+        "**다원 발주서**(캐처스, 네뉴 매입리스트 품절분 홀딩) + **번들작업파일**(네뉴 세트) 생성. "
         "이지오토 Y 흐름이라 이지어드민이 자동 수집, 우리는 변환만."
     )
 
-    uploaded_files = st.file_uploader(
-        "이지어드민 확장주문검색 파일 (.xls, 여러 개 가능)",
-        type=['xls'],
-        accept_multiple_files=True,
-        key="domestic_eza",
-        help="이지어드민 > 주문관리 > 확장주문검색 > 엑셀다운. 여러 개 한꺼번에 끌어다 놓을 수 있음.",
-    )
+    up_eza, up_stock = st.columns(2)
+    with up_eza:
+        uploaded_files = st.file_uploader(
+            "① 이지어드민 확장주문검색 (.xls, 여러 개 가능)",
+            type=['xls'],
+            accept_multiple_files=True,
+            key="domestic_eza",
+            help="이지어드민 > 주문관리 > 확장주문검색 > 엑셀다운. 여러 개 한꺼번에 가능.",
+        )
+    with up_stock:
+        stock_file = st.file_uploader(
+            "② 캐처스 WMS 재고현황 Document_*.xls (선택)",
+            type=['xls'],
+            key="domestic_cachers_stock",
+            help="EZA WMS 재고현황 export. 미업로드 시 홀딩 없이 전체 발주. "
+                 "품목코드=캐처스 품목코드, RELEASEAREA LOC 제외 후 가능수량 합산.",
+        )
 
     if not uploaded_files:
         return
@@ -385,7 +385,8 @@ def _tab_create_order():
     sequence = session_info['sequence']
     source_filename = ', '.join(f.name for f in uploaded_files)
 
-    _section_daone(eza_rows, work_date, int(sequence), source_filename, session_info)
+    _section_daone(eza_rows, work_date, int(sequence), source_filename, session_info,
+                   stock_file=stock_file)
     st.markdown("---")
     _section_bundle([f.getvalue() for f in uploaded_files], work_date, int(sequence))
     st.markdown("---")
