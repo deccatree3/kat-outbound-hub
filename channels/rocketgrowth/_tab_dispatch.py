@@ -87,7 +87,7 @@ from rocketgrowth.models import InboundPlan
 from rocketgrowth.secondary_export import (
     build_consolidation_list, build_order_form, build_pallet_loading_list,
     build_parcel_consolidation_list, build_parcel_eza_order_form,
-    update_inventory_movement,
+    build_parcel_outbound_request, update_inventory_movement,
 )
 
 from channels.rocketgrowth._helpers import get_fc_info, jump_to_tab, section_note
@@ -178,8 +178,11 @@ def render(brand: str):
     # 일괄 다운로드 (ZIP / multi-trigger) 용 — 각 파일 생성 성공 시 append.
     zip_items: list[tuple[str, bytes]] = []
 
-    # 취합리스트 + (밀크런만) 팔레트적재 + 재고이동건
-    if is_milkrun:
+    # 취합리스트 + (밀크런) 팔레트적재 / (캐처스 택배) 출고요청서 + 재고이동건
+    # 캐처스는 EZA↔다원 자동연동이 없어 다원에 직접 출고요청서 전달 필요
+    # (네뉴 택배는 위 '① 이지어드민 수동 발주' 로 처리됨).
+    _cachers_parcel = (not is_milkrun) and (brand == 'cachers')
+    if is_milkrun or _cachers_parcel:
         dc = st.columns(3)
     else:
         dc = st.columns(2)
@@ -210,6 +213,43 @@ def render(brand: str):
         with dc[0]:
             st.error(f"취합리스트: {ex}")
 
+    # 캐처스 택배: 다원 출고요청서 (박스 단위 19컬럼, 박스NO = 취합리스트와 동일)
+    if _cachers_parcel:
+        _fc_info_req = get_fc_info(fc) if fc else None
+        if _fc_info_req is None:
+            with dc[1]:
+                st.error(
+                    f"❌ FC '{fc}' 정보 미등록 — 탭 2 검수 단계에서 FC 정보 "
+                    "(주소/우편번호/전화) 먼저 등록해 주세요."
+                )
+        else:
+            try:
+                req_xlsx = build_parcel_outbound_request(
+                    data.sec_items, fc_name=fc,
+                    fc_phone=_fc_info_req.phone,
+                    fc_postal=_fc_info_req.postal_code,
+                    fc_address=_fc_info_req.address,
+                    arrival_date=arr,
+                    sku_order=getattr(data.attachment, 'sku_order', None),
+                    brand=brand,
+                )
+                req_name = (
+                    f"{brand_company}_로켓그로스_{ship_prefix}_출고요청서_"
+                    f"{yymmdd}입고_{fc}.xlsx"
+                )
+                zip_items.append((req_name, req_xlsx))
+                with dc[1]:
+                    st.download_button(
+                        "📥 출고요청서", data=req_xlsx,
+                        file_name=req_name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        width="stretch", type="primary",
+                        key=f"disp_{brand}_dl_req_{plan.id}",
+                    )
+            except Exception as ex:
+                with dc[1]:
+                    st.error(f"출고요청서: {ex}")
+
     from rocketgrowth.config import load_config
     cfg = load_config()
     if is_milkrun:
@@ -231,6 +271,8 @@ def render(brand: str):
         except Exception as ex:
             with dc[1]:
                 st.error(f"팔레트적재: {ex}")
+        mv_col = dc[2]
+    elif _cachers_parcel:
         mv_col = dc[2]
     else:
         mv_col = dc[1]

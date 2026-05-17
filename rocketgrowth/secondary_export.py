@@ -446,44 +446,21 @@ def build_consolidation_list(
     return buf.getvalue()
 
 
-# ============================================================================
-# 1b) 택배 취합리스트 (단일 FC)
-# ============================================================================
-def build_parcel_consolidation_list(
+def parcel_box_rows(
     items: list[SecondaryItem],
     fc_name: str,
-    work_date: date,
-    company_short: str = "서현",
     sku_order: list[str] | None = None,
     brand: str | None = None,
-) -> bytes:
-    """택배 취합리스트 엑셀 생성 (단일 FC).
+) -> list[dict]:
+    """택배 박스 단위 분할 + 아웃박스NO 부여 (취합리스트·출고요청서 공통).
 
-    구조 (sample 기반):
-      - Row 1 (col H~J): 'FC' | 'SKU' | '총 수량'
-      - Row 2: fc_name | sku_count | total_qty
-      - Row 6: 'total' | sku_count | total_qty
-      - Row 8 (col A): '■ 상품목록' / Row 8 (col L): '■ 번들작업표'
-      - Row 9: 컬럼 헤더
-      - Row 10+: 박스별 데이터 (좌) + 번들 작업표 (우)
+    반환 dict 키: fc, option_id, product_name, wms_barcode, attached_barcode,
+    qty, expiry, in_box, out_box, out_box_no.
 
-    박스 NO 부여:
-      - sku_order (부착문서 SKU 나열 순서) 따라 정렬
-      - 같은 SKU 내 여러 박스: 수량 적은 것 먼저
-      - 1, 2, 3, ... 순차 부여
+    박스 NO 는 sku_order(부착문서 SKU 나열 순서) → 같은 SKU 내 수량 적은 것
+    먼저 순으로 1 부터 순차 부여. 취합리스트와 출고요청서가 동일 박스 순서를
+    공유하도록 두 빌더가 모두 이 함수를 사용한다.
     """
-    wb = openpyxl.Workbook()
-    ws = wb.active
-    ws.title = "상품리스트"
-
-    # 스타일
-    bold = Font(bold=True)
-    center = Alignment(horizontal="center", vertical="center")
-    left_align = Alignment(horizontal="left", vertical="center")
-    yellow = PatternFill("solid", fgColor="FFFF00")  # 상단 요약 헤더 + 우측 헤더 그룹
-    green = PatternFill("solid", fgColor="92D050")   # 좌측 헤더 그룹 (FC/옵션ID/상품명/바코드)
-    even_box_fill = PatternFill("solid", fgColor="FBE2D5")  # 짝수 아웃박스NO 행 (옅은 빨강)
-
     # ─── 박스 단위 분할 ─────
     # SKU별 박스 entry 리스트 (qty, inbox, outbox) + 매칭 SKU
     # 일반 SKU: box_qty 기준 분할, 인박스/아웃박스 = '-'
@@ -558,6 +535,49 @@ def build_parcel_consolidation_list(
                 "out_box_no": box_no,
             })
             box_no += 1
+    return box_rows
+
+
+# ============================================================================
+# 1b) 택배 취합리스트 (단일 FC)
+# ============================================================================
+def build_parcel_consolidation_list(
+    items: list[SecondaryItem],
+    fc_name: str,
+    work_date: date,
+    company_short: str = "서현",
+    sku_order: list[str] | None = None,
+    brand: str | None = None,
+) -> bytes:
+    """택배 취합리스트 엑셀 생성 (단일 FC).
+
+    구조 (sample 기반):
+      - Row 1 (col H~J): 'FC' | 'SKU' | '총 수량'
+      - Row 2: fc_name | sku_count | total_qty
+      - Row 6: 'total' | sku_count | total_qty
+      - Row 8 (col A): '■ 상품목록' / Row 8 (col L): '■ 번들작업표'
+      - Row 9: 컬럼 헤더
+      - Row 10+: 박스별 데이터 (좌) + 번들 작업표 (우)
+
+    박스 NO 부여:
+      - sku_order (부착문서 SKU 나열 순서) 따라 정렬
+      - 같은 SKU 내 여러 박스: 수량 적은 것 먼저
+      - 1, 2, 3, ... 순차 부여
+    """
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "상품리스트"
+
+    # 스타일
+    bold = Font(bold=True)
+    center = Alignment(horizontal="center", vertical="center")
+    left_align = Alignment(horizontal="left", vertical="center")
+    yellow = PatternFill("solid", fgColor="FFFF00")  # 상단 요약 헤더 + 우측 헤더 그룹
+    green = PatternFill("solid", fgColor="92D050")   # 좌측 헤더 그룹 (FC/옵션ID/상품명/바코드)
+    even_box_fill = PatternFill("solid", fgColor="FBE2D5")  # 짝수 아웃박스NO 행 (옅은 빨강)
+
+    # 박스 단위 분할 + 아웃박스NO — 출고요청서와 공유 (동일 박스 순서 보장)
+    box_rows = parcel_box_rows(items, fc_name, sku_order=sku_order, brand=brand)
 
     # ─── 번들작업표 (번들 SKU 만, 각 1행, 총 수량) ─────
     # 번들 판정 = unit_qty >= 2. (이전 휴리스틱 'coupang_barcode != own_wms_barcode' 은
@@ -1227,6 +1247,101 @@ def build_parcel_eza_order_form(
 
     wb.close()
     buf.seek(0)
+    return buf.getvalue()
+
+
+# ============================================================================
+# 4c) 택배용 다원 출고요청서 (캐처스 — 박스 단위, 19컬럼)
+# ============================================================================
+# 캐처스는 EZA↔다원 자동연동이 없어 다원에 직접 출고요청서를 보낸다.
+# (네뉴는 build_parcel_eza_order_form 으로 이지어드민에 올림 → 다원 자동전달.)
+_PARCEL_REQ_MALL_CODE = "000000000001"
+_PARCEL_REQ_ITR_NO = "[택배] 캐처스-로켓그로스"
+_PARCEL_REQ_SENDER_NAME = "캐처스물류"
+_PARCEL_REQ_SENDER_PHONE = "01074923214"
+_PARCEL_REQ_HEADERS = [
+    "몰명(또는 몰코드)", "출하의뢰번호", "출하의뢰항번", "고객주문번호",
+    "상품명", "제품코드", "주문수량", "주문자명",
+    "주문자연락처1", "주문자연락처2", "수취인명", "수취인연락처1",
+    "수취인연락처2", "수취인우편번호", "수취인주소1", "주소2",
+    "배송메시지", "송장번호", "택배사명",
+]
+
+
+def prev_business_day(arrival: date) -> date:
+    """입고일 기준 직전 영업일 (= 출고일). 주말 + 한국 공휴일·대체공휴일 스킵.
+
+    holidays.SouthKorea() 는 조회 시 해당 연도를 자동 확장하므로 연도 경계도
+    안전. 예) 입고 2026-05-11(月) → D-1 일요일 → 토 → 금 2026-05-08.
+    """
+    import holidays as _holidays
+    kr = _holidays.SouthKorea()
+    cur = arrival - timedelta(days=1)
+    while cur.weekday() >= 5 or cur in kr:
+        cur -= timedelta(days=1)
+    return cur
+
+
+def build_parcel_outbound_request(
+    items: list[SecondaryItem],
+    fc_name: str,
+    fc_phone: str,
+    fc_postal: str,
+    fc_address: str,
+    arrival_date: date,
+    sku_order: list[str] | None = None,
+    brand: str | None = None,
+) -> bytes:
+    """캐처스 택배 입고 시 다원 출고요청서 생성 (박스 단위, 다원 발주서 19컬럼).
+
+    - 박스 분할/순서는 취합리스트와 동일 (parcel_box_rows 공유) — 박스NO 일치.
+    - 출하의뢰항번/고객주문번호 = '{출고일 yymmdd}-{박스NO}'
+      (출고일 = 입고일 직전 영업일).
+    - 수취인 = FC, 주문자 = 캐처스물류(고정).
+    - 단일 시트 'Sheet1' 만 생성 (전달양식 등 보조 시트는 다원 매핑용 — 제외).
+    """
+    box_rows = parcel_box_rows(items, fc_name, sku_order=sku_order, brand=brand)
+
+    ship_yymmdd = prev_business_day(arrival_date).strftime("%y%m%d")
+
+    _postal = (fc_postal or "").strip()
+    postal_val: int | str = int(_postal) if _postal.isdigit() else _postal
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "Sheet1"
+
+    for c, h in enumerate(_PARCEL_REQ_HEADERS, start=1):
+        ws.cell(1, c, h)
+
+    for ri, r in enumerate(box_rows, start=2):
+        bn = r["out_box_no"]
+        order_no = f"{ship_yymmdd}-{bn}"
+        ws.cell(ri, 1, _PARCEL_REQ_MALL_CODE)
+        ws.cell(ri, 2, _PARCEL_REQ_ITR_NO)
+        ws.cell(ri, 3, order_no)
+        ws.cell(ri, 4, order_no)
+        ws.cell(ri, 5, r["product_name"])
+        ws.cell(ri, 6, r["wms_barcode"])
+        ws.cell(ri, 7, int(r["qty"]))
+        ws.cell(ri, 8, _PARCEL_REQ_SENDER_NAME)
+        ws.cell(ri, 9, _PARCEL_REQ_SENDER_PHONE)
+        ws.cell(ri, 10, _PARCEL_REQ_SENDER_PHONE)
+        ws.cell(ri, 11, f"{fc_name}-쿠팡물류_{bn}")
+        ws.cell(ri, 12, fc_phone)
+        ws.cell(ri, 13, fc_phone)
+        ws.cell(ri, 14, postal_val)
+        ws.cell(ri, 15, fc_address)
+        ws.cell(ri, 16, fc_address)
+        # 17 배송메시지 / 18 송장번호 / 19 택배사명 = 빈값
+
+    widths = {1: 17, 2: 23, 3: 18, 4: 20, 5: 28, 6: 15, 7: 9, 8: 11,
+              9: 13, 10: 13, 11: 18, 12: 14, 13: 14, 14: 14, 15: 36, 16: 36}
+    for col, w in widths.items():
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
     return buf.getvalue()
 
 
