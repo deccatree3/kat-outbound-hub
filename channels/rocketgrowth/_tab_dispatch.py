@@ -282,7 +282,7 @@ def render(brand: str):
             mv_out = update_inventory_movement(
                 bytes(plan.movement_template_blob), data.sec_items, arr, fc, brand_company,
             )
-            mv_name = plan.movement_template_filename or f"쿠팡 재고이동건_{yyyymm}.xlsx"
+            mv_name = f"쿠팡 재고이동건({brand_company})_{yyyymm}.xlsx"
             zip_items.append((mv_name, mv_out))
             with mv_col:
                 st.download_button(
