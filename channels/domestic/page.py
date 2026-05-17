@@ -368,9 +368,7 @@ def _section_3pl(eza_rows, work_date, sequence):
 
 def _tab_create_order():
     st.markdown(
-        "이지어드민 **확장주문검색.xls** + 캐처스 **WMS 재고현황.xls** 를 한 번에 업로드 → "
-        "**다원 발주서**(캐처스, 네뉴 매입리스트 품절분 홀딩) + **번들작업파일**(네뉴 세트) 생성. "
-        "파일 내용으로 자동 분류 (재고현황 미포함 시 홀딩 없이 전체 발주)."
+        "이지어드민 **확장주문검색.xls** + 캐처스 **WMS 재고현황.xls** 업로드"
     )
 
     uploaded = st.file_uploader(
