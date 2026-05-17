@@ -204,10 +204,7 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
     move_codes = {a.code for a in affected if a.status == STATUS_MOVE}
     n_move = len(move_codes)
     n_watch = len(affected) - n_move
-    st.warning(
-        f"⚠️ 매입리스트 검토. 이동필요 {n_move}건, "
-        f"관찰(가용재고가 box인입수 대비 50%이하) {n_watch}건"
-    )
+    st.warning("매입리스트 검토")
     df = pd.DataFrame([{
         "재고이동": a.status == STATUS_MOVE,
         "상태": a.status,
@@ -240,6 +237,13 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
     qty_by_code = {str(r["품목코드"]): int(r["이동수량"]) for _, r in edited.iterrows()}
     name_by_code = {str(r["품목코드"]): r["상품명"] for _, r in edited.iterrows()}
 
+    # 검토 리스트 요약 (확정 전, 체크 상태 실시간 반영)
+    _, _, _excl_orders = split_held_orders(daone_rows_all, held_codes)
+    s1, s2, s3 = st.columns(3)
+    s1.metric("재고부족 SKU", n_move)
+    s2.metric("관찰(가용재고 box인입수 대비 50%미만)", n_watch)
+    s3.metric("출고요청서 제외 주문건수", _excl_orders)
+
     if st.button(
         "✅ 재고이동 확정",
         type="primary", width="stretch", key="domestic_holding_confirm",
@@ -258,11 +262,7 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
         return
 
     held_set = set(conf["codes"])
-    shipped, held, n_groups = split_held_orders(daone_rows_all, held_set)
-    m1, m2, m3 = st.columns(3)
-    m1.metric("홀딩 합포장 그룹", n_groups)
-    m2.metric("출고요청서 제외 행수", len(held))
-    m3.metric("이지어드민 발주 품목", len(conf["items"]))
+    shipped, _held, _n_groups = split_held_orders(daone_rows_all, held_set)
 
     # ① 이지어드민 발주서 (먼저)
     st.markdown("---")
