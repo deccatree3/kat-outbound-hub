@@ -175,95 +175,112 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
         return
 
     daone_rows_all = transform_to_daone(cachers_rows)
-    daone_rows = daone_rows_all
-    eza_xls = None
-    eza_count = 0
 
-    if stock_file is not None:
-        try:
-            stock_agg = _parse_cachers_stock(stock_file.getvalue(), stock_file.name)
-            purchase_list = load_purchase_list()
-            box_by_code = _load_box_qty_by_code(purchase_list)
-            affected = compute_affected_products(
-                daone_rows_all, stock_agg, purchase_list, box_by_code,
-            )
-        except Exception as ex:
-            st.error(f"재고 홀딩 분석 실패: {ex}")
-            affected = []
+    # 재고파일 없으면: 기존대로 전체 발주서 (홀딩 분석 안 함)
+    if stock_file is None:
+        st.markdown("---")
+        _render_daone_download(daone_rows_all, work_date, sequence,
+                               source_filename, session_info)
+        return
 
-        if not affected:
-            st.success("✅ 매입리스트 품절/관찰 대상 없음 — 전체 출고.")
-        else:
-            n_move = sum(1 for a in affected if a.status == STATUS_MOVE)
-            n_watch = len(affected) - n_move
-            st.warning(
-                f"⚠️ 매입리스트 상품 검토 필요 — 이동필요 {n_move} / 관찰 {n_watch}. "
-                "재고이동할 상품을 선택하고 확정수량(기본=box입수) 조정 후 확정."
-            )
-            df = pd.DataFrame([{
-                "재고이동": a.status == STATUS_MOVE,
-                "상태": a.status,
-                "상품명": a.name,
-                "품목코드": a.code,
-                "주문수량합": a.ordered,
-                "가용재고": a.available,
-                "box입수": a.box_qty if a.box_qty is not None else 0,
-                "확정수량": int(a.box_qty) if a.box_qty else int(a.ordered),
-            } for a in affected])
-            edited = st.data_editor(
-                df, hide_index=True, width="stretch",
-                disabled=["상태", "상품명", "품목코드", "주문수량합", "가용재고", "box입수"],
-                column_config={
-                    "재고이동": st.column_config.CheckboxColumn(
-                        "재고이동", help="체크 시 해당 상품이 든 합포장 주문 전체를 이번 차수 제외"),
-                    "확정수량": st.column_config.NumberColumn(
-                        "확정수량", min_value=0, step=1,
-                        help="이지어드민 발주 수량 (기본=box입수, 수정 가능)"),
-                },
-                key="domestic_holding_editor",
-            )
-            sel = edited[edited["재고이동"] == True]  # noqa: E712
-            held_codes = set(sel["품목코드"].tolist())
-            if st.button(
-                f"✅ 재고이동 확정 ({len(held_codes)}개 상품)",
-                type="primary", disabled=not held_codes,
-                key="domestic_holding_confirm",
-            ):
-                st.session_state["domestic_holding_confirmed"] = {
-                    "codes": sorted(held_codes),
-                    "items": [
-                        {"name": r["상품명"], "qty": int(r["확정수량"])}
-                        for _, r in sel.iterrows()
-                    ],
-                }
-            conf = st.session_state.get("domestic_holding_confirmed")
-            if conf and conf["codes"]:
-                shipped, held, n_groups = split_held_orders(
-                    daone_rows_all, set(conf["codes"]),
-                )
-                daone_rows = shipped
-                m1, m2, m3 = st.columns(3)
-                m1.metric("홀딩 합포장 그룹", n_groups)
-                m2.metric("제외 행수", len(held))
-                m3.metric("이지어드민 발주 품목", len(conf["items"]))
-                try:
-                    eza_xls = build_nenu_to_cachers_eza_xls(conf["items"], work_date)
-                    eza_count = len(conf["items"])
-                except Exception as ex:
-                    st.error(f"이지어드민 발주서 생성 실패: {ex}")
+    try:
+        stock_agg = _parse_cachers_stock(stock_file.getvalue(), stock_file.name)
+        purchase_list = load_purchase_list()
+        box_by_code = _load_box_qty_by_code(purchase_list)
+        affected = compute_affected_products(
+            daone_rows_all, stock_agg, purchase_list, box_by_code,
+        )
+    except Exception as ex:
+        st.error(f"재고 홀딩 분석 실패: {ex} — 홀딩 없이 전체 발주서로 진행.")
+        affected = []
 
+    if not affected:
+        st.success("✅ 매입리스트 품절/부족/관찰 대상 없음 — 전체 출고.")
+        st.markdown("---")
+        _render_daone_download(daone_rows_all, work_date, sequence,
+                               source_filename, session_info)
+        return
+
+    move_codes = {a.code for a in affected if a.status == STATUS_MOVE}
+    n_move = len(move_codes)
+    n_watch = len(affected) - n_move
+    st.warning(
+        f"⚠️ 매입리스트 검토 — **이동필요(품절/부족) {n_move}건은 무조건 제외**, "
+        f"관찰 {n_watch}건은 선택. 확정수량(기본=box입수) 조정 후 '재고이동 확정'."
+    )
+    df = pd.DataFrame([{
+        "재고이동": a.status == STATUS_MOVE,
+        "상태": a.status,
+        "상품명": a.name,
+        "품목코드": a.code,
+        "주문수량합": a.ordered,
+        "가용재고": a.available,
+        "box입수": a.box_qty if a.box_qty is not None else 0,
+        "확정수량": int(a.box_qty) if a.box_qty else int(a.ordered),
+    } for a in affected])
+    edited = st.data_editor(
+        df, hide_index=True, width="stretch",
+        disabled=["상태", "상품명", "품목코드", "주문수량합", "가용재고", "box입수"],
+        column_config={
+            "재고이동": st.column_config.CheckboxColumn(
+                "재고이동", help="이동필요는 체크와 무관하게 항상 제외. 관찰만 선택 반영."),
+            "확정수량": st.column_config.NumberColumn(
+                "확정수량", min_value=0, step=1,
+                help="이지어드민 발주 수량 (기본=box입수, 수정 가능)"),
+        },
+        key="domestic_holding_editor",
+    )
+    st.caption(
+        "ℹ️ 이동필요(품절·부족)는 체크 해제해도 **항상** 출고요청서에서 제외. "
+        "관찰은 체크한 것만 제외/재고이동."
+    )
+
+    # 제외 대상 = 이동필요(무조건) + 관찰(체크). 이지어드민 발주 품목도 동일 집합.
+    watch_checked = {
+        str(r["품목코드"]) for _, r in edited.iterrows()
+        if r["상태"] == STATUS_WATCH and bool(r["재고이동"])
+    }
+    held_codes = move_codes | watch_checked
+    qty_by_code = {str(r["품목코드"]): int(r["확정수량"]) for _, r in edited.iterrows()}
+    name_by_code = {str(r["품목코드"]): r["상품명"] for _, r in edited.iterrows()}
+
+    if st.button(
+        f"✅ 재고이동 확정 (제외 {len(held_codes)}품목 = 이동필요 {n_move} + 관찰선택 {len(watch_checked)})",
+        type="primary", width="stretch", key="domestic_holding_confirm",
+    ):
+        st.session_state["domestic_holding_confirmed"] = {
+            "codes": sorted(held_codes),
+            "items": [
+                {"name": name_by_code[c], "qty": qty_by_code.get(c, 0)}
+                for c in sorted(held_codes)
+            ],
+        }
+
+    conf = st.session_state.get("domestic_holding_confirmed")
+    if not conf:
+        st.info("👆 '재고이동 확정'을 누르면 이지어드민 발주서 → 출고요청서가 생성됩니다.")
+        return
+
+    held_set = set(conf["codes"])
+    shipped, held, n_groups = split_held_orders(daone_rows_all, held_set)
+    m1, m2, m3 = st.columns(3)
+    m1.metric("홀딩 합포장 그룹", n_groups)
+    m2.metric("출고요청서 제외 행수", len(held))
+    m3.metric("이지어드민 발주 품목", len(conf["items"]))
+
+    # ① 이지어드민 발주서 (먼저)
     st.markdown("---")
-    _render_daone_download(daone_rows, work_date, sequence, source_filename, session_info)
-
-    # 이지어드민 발주서 (네뉴→캐처스 재고이동) — 항상 노출, 해당 없으면 비활성(회색)
-    st.markdown("---")
+    try:
+        eza_xls = build_nenu_to_cachers_eza_xls(conf["items"], work_date)
+    except Exception as ex:
+        eza_xls = None
+        st.error(f"이지어드민 발주서 생성 실패: {ex}")
     eza_name = (
         f"{work_date.strftime('%y%m%d')}_{int(sequence)}차_"
-        f"네뉴→캐처스_이지어드민발주서({eza_count}품목).xls"
+        f"네뉴→캐처스_이지어드민발주서({len(conf['items'])}품목).xls"
     )
     st.download_button(
-        ("📥 이지어드민 발주서 (네뉴→캐처스 재고이동)"
-         + (f" — {eza_count}품목" if eza_count else " — 해당 없음")),
+        f"📥 ① 이지어드민 발주서 (네뉴→캐처스 재고이동) — {len(conf['items'])}품목",
         data=eza_xls if eza_xls else b"",
         file_name=eza_name,
         mime="application/vnd.ms-excel",
@@ -271,7 +288,11 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
         disabled=eza_xls is None,
         key="domestic_nenu_cachers_eza_dl",
     )
-    st.caption("📤 네뉴 이지어드민에 업로드 → 재고차감 → 네뉴→캐처스 재고이동. 다음 차수에 홀딩분 출고.")
+    st.caption("📤 네뉴 이지어드민 업로드 → 재고차감 → 네뉴→캐처스 재고이동. 다음 차수에 홀딩분 출고.")
+
+    # ② 출고요청서 (다원 발주서) — 그 아래
+    st.markdown("---")
+    _render_daone_download(shipped, work_date, sequence, source_filename, session_info)
 
 
 def _section_bundle(eza_bytes_list, work_date, sequence):
