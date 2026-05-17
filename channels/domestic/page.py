@@ -230,10 +230,6 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
         },
         key="domestic_holding_editor",
     )
-    st.caption(
-        "ℹ️ 이동필요(품절·부족)는 체크 해제해도 **항상** 출고요청서에서 제외. "
-        "관찰은 체크한 것만 제외/재고이동."
-    )
 
     # 제외 대상 = 이동필요(무조건) + 관찰(체크). 이지어드민 발주 품목도 동일 집합.
     watch_checked = {
