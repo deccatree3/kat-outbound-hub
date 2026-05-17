@@ -205,8 +205,8 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
     n_move = len(move_codes)
     n_watch = len(affected) - n_move
     st.warning(
-        f"⚠️ 매입리스트 검토 — **이동필요(품절/부족) {n_move}건은 무조건 제외**, "
-        f"관찰 {n_watch}건은 선택. 이동수량(기본=box입수) 조정 후 '재고이동 확정'."
+        f"⚠️ 매입리스트 검토. 이동필요 {n_move}건, "
+        f"관찰(가용재고가 box인입수 대비 50%이하) {n_watch}건"
     )
     df = pd.DataFrame([{
         "재고이동": a.status == STATUS_MOVE,
