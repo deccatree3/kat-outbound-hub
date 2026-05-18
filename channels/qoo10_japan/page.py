@@ -478,7 +478,8 @@ def _step2_outbound_generate():
                     row['基本住所'] = final_addr_map[cart]
                     row['注文先基本住所'] = final_addr_map[cart]
 
-        mapping_complete = not [e for e in errors if e['원인'] == '상품 매핑 없음']
+        # KR 채널 활성건은 재분류되어 missing_errors 에서 빠짐 — 가드도 동일 기준
+        mapping_complete = not missing_errors
 
         if japan_order_count == 0:
             st.info("📭 **일본 창고 출고 주문이 없습니다.** "
