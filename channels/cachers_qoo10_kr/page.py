@@ -34,6 +34,9 @@ from outputs.packing.boxes import compute_packing
 from channels._session_selector import (
     render_work_session_selector, render_save_button,
 )
+from channels._bulk_download import (
+    build_zip, render_zip_download_blue, render_multi_download_trigger,
+)
 
 
 CHANNEL_KEY = 'cachers_qoo10_kr'
@@ -416,6 +419,12 @@ def render_page():
     order_name = f"{yymmdd}_{int(sequence)}차발주서_큐텐국내{info_suffix}.xlsx"
     packing_name = f"{yymmdd}_{int(sequence)}차패킹리스트_큐텐국내{info_suffix}.xlsx"
 
+    # 일괄 다운로드용 — 생성 성공 파일을 순서대로 누적 (발주서·패킹리스트는 항상)
+    bulk_items: list[tuple[str, bytes]] = [
+        (order_name, order_xlsx),
+        (packing_name, packing_xlsx),
+    ]
+
     c_order, c_pack, c_save = st.columns([2, 2, 1])
     with c_order:
         st.download_button(
@@ -451,6 +460,7 @@ def render_page():
             type="primary", width="stretch",
             key="kse_attached_pdf_download",
         )
+        bulk_items.append((attached_name, attached_pdf_bytes))
 
     if uploaded_pdf is not None:
         pdf_out_name = f"{yymmdd}_{int(sequence)}차_KSE쉽먼트라벨.pdf"
@@ -463,3 +473,33 @@ def render_page():
             key="kse_pdf_download",
         )
         st.caption("📌 PDF 파일명 형식 사양 확정 후 업데이트 예정.")
+        bulk_items.append((pdf_out_name, uploaded_pdf.getvalue()))
+
+    # ─── 일괄 다운로드 (로켓그로스 물류센터 전달 파일 탭과 동일 패턴) ───
+    valid_bulk = [(n, b) for n, b in bulk_items if b]
+    if len(valid_bulk) >= 2:
+        st.markdown("---")
+        st.caption(f"📦 일괄 다운로드 — 위 {len(valid_bulk)}개 파일 한 번에:")
+        zip_folder = f"{yymmdd}_{int(sequence)}차_큐텐국내{info_suffix}"
+        bz1, bz2 = st.columns(2)
+        with bz1:
+            try:
+                zip_bytes = build_zip(valid_bulk, folder=zip_folder)
+                render_zip_download_blue(
+                    zip_bytes=zip_bytes,
+                    fname=f"{zip_folder}.zip",
+                    label=f"📦 ZIP 다운로드 ({len(valid_bulk)}개 → 1 파일)",
+                    key=f"kseqkr_{yymmdd}_{int(sequence)}",
+                )
+            except Exception as ex:
+                st.error(f"ZIP 생성 실패: {ex}")
+        with bz2:
+            render_multi_download_trigger(
+                valid_bulk,
+                label=f"⚡ 개별 {len(valid_bulk)}개 동시 다운로드",
+                key=f"kseqkr_{yymmdd}_{int(sequence)}",
+            )
+        st.caption(
+            "ZIP = 1개 파일로 전달, 압축 해제 필요. "
+            "⚡ 개별 = 압축 없이 그대로 (브라우저가 다중 다운로드 허용 요청할 수 있음)."
+        )
