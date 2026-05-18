@@ -284,8 +284,19 @@ def _step2_outbound_generate():
         out_rows, errors, addr_changes = qgen.generate_outbound_rows(rows, mappings)
         audit = qgen.compute_audit(rows, out_rows, mappings)
 
-        missing_errors = [e for e in errors if e['원인'] == '상품 매핑 없음']
+        _missing_raw = [e for e in errors if e['원인'] == '상품 매핑 없음']
         disabled_errors = [e for e in errors if e['원인'] == '매핑 비활성(취급 안함)']
+        # 신 채널별 매핑 모델: qoo10_japan 매핑이 없어도 국내(cachers_qoo10_kr)
+        # 채널에 활성 매핑이 있으면 '신규 매핑 필요'가 아니라 국내 출고분이다
+        # (탭1 분류와 일치시킴 — 레거시 enabled=False 국내판정 대체).
+        from db import mapping as _m_kr
+        _kr_active = _m_kr.load_for_channel('cachers_qoo10_kr', active_only=True)
+        missing_errors = []
+        for _e in _missing_raw:
+            if (_e['상품명'], _e['옵션정보']) in _kr_active:
+                disabled_errors.append({**_e, '원인': '국내 출고(KR 채널)'})
+            else:
+                missing_errors.append(_e)
 
         bid_now = st.session_state.get('qoo10_brief_id')
         brief_bytes_now = st.session_state.get('qoo10_brief_bytes')
