@@ -472,7 +472,6 @@ def render_page():
             type="primary", width="stretch",
             key="kse_pdf_download",
         )
-        st.caption("📌 PDF 파일명 형식 사양 확정 후 업데이트 예정.")
         bulk_items.append((pdf_out_name, uploaded_pdf.getvalue()))
 
     # ─── 일괄 다운로드 (로켓그로스 물류센터 전달 파일 탭과 동일 패턴) ───
