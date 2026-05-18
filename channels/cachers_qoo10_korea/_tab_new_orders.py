@@ -264,8 +264,11 @@ def render():
         today = kst_today()
         today_str = today.strftime('%Y-%m-%d')
         today_yyyymmdd = today.strftime('%Y%m%d')
-        order_nos = [str(q.get('주문번호', '')).strip() for q in kr_orders
-                     if str(q.get('주문번호', '')).strip()]
+        # Qoo10 ShippingBasic.SetSellerCheckYN_V2 의 OrderNo 파라미터는
+        # 주문번호(orderNo)가 아니라 장바구니번호(packNo)를 기대함.
+        # orderNo(10자리)를 보내면 -10001 "OrderNo format error" 발생.
+        order_nos = [str(q.get('장바구니번호', '')).strip() for q in kr_orders
+                     if str(q.get('장바구니번호', '')).strip()]
 
         st.markdown("---")
         if kr_done:
@@ -306,7 +309,8 @@ def render():
                     st.rerun()
                 else:
                     st.error(
-                        f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']})."
+                        f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']}). "
+                        f"전송 OrderNo(packNo)={result.get('order_nos', '')}"
                     )
 
     # ─── 페이지 하단 — 수집 초기화 ─────

@@ -367,7 +367,10 @@ def set_seller_check_yn(sak: str,
 
     Args:
         sak: 인증키 (Authcode)
-        order_nos: 주문번호 list (콤마 구분 최대 1000건). 빈 list 면 즉시 반환.
+        order_nos: **packNo(장바구니번호) list** (콤마 구분 최대 1000건). 빈 list 면
+            즉시 반환. 주의: Qoo10 SetSellerCheckYN_V2 의 OrderNo 파라미터는
+            주문번호(orderNo)가 아니라 packNo 를 기대한다. orderNo 전송 시
+            ResultCode=-10001 "OrderNo format error" 발생.
         ship_date: 발송예정일 'YYYYMMDD' (8자리)
 
     Returns:
