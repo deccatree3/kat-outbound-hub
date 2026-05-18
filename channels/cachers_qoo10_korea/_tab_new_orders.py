@@ -264,11 +264,11 @@ def render():
         today = kst_today()
         today_str = today.strftime('%Y-%m-%d')
         today_yyyymmdd = today.strftime('%Y%m%d')
-        # Qoo10 ShippingBasic.SetSellerCheckYN_V2 의 OrderNo 파라미터는
-        # 주문번호(orderNo)가 아니라 장바구니번호(packNo)를 기대함.
-        # orderNo(10자리)를 보내면 -10001 "OrderNo format error" 발생.
-        order_nos = [str(q.get('장바구니번호', '')).strip() for q in kr_orders
-                     if str(q.get('장바구니번호', '')).strip()]
+        # OrderNo = 주문번호(orderNo). -10001 format error 의 실제 원인은
+        # 값이 아니라 요청 구조(POST+콤마조인)였고, set_seller_check_yn 이
+        # GET+1건씩으로 수정됨 (SetSendingInfo 동작 패턴과 동일).
+        order_nos = [str(q.get('주문번호', '')).strip() for q in kr_orders
+                     if str(q.get('주문번호', '')).strip()]
 
         st.markdown("---")
         if kr_done:
@@ -310,7 +310,7 @@ def render():
                 else:
                     st.error(
                         f"❌ 호출 실패 (ResultCode={result['code']}, ResultMsg={result['msg']}). "
-                        f"전송 OrderNo(packNo)={result.get('order_nos', '')}"
+                        f"성공 {result.get('count', 0)}건 / 실패 OrderNo={result.get('fail_order_nos', '')}"
                     )
 
     # ─── 페이지 하단 — 수집 초기화 ─────

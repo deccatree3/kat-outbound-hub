@@ -367,46 +367,55 @@ def set_seller_check_yn(sak: str,
 
     Args:
         sak: 인증키 (Authcode)
-        order_nos: **packNo(장바구니번호) list** (콤마 구분 최대 1000건). 빈 list 면
-            즉시 반환. 주의: Qoo10 SetSellerCheckYN_V2 의 OrderNo 파라미터는
-            주문번호(orderNo)가 아니라 packNo 를 기대한다. orderNo 전송 시
-            ResultCode=-10001 "OrderNo format error" 발생.
+        order_nos: **주문번호(orderNo) list**. 빈 list 면 즉시 반환.
         ship_date: 발송예정일 'YYYYMMDD' (8자리)
 
-    Returns:
-        {'ok': bool, 'count': N, 'code': ResultCode, 'msg': ResultMsg, 'order_nos': '...'}
-    """
-    if not order_nos:
-        return {'ok': True, 'count': 0, 'code': 0, 'msg': 'no orders', 'order_nos': ''}
-    order_csv = ','.join(str(o).strip() for o in order_nos if str(o).strip())
-    if not order_csv:
-        return {'ok': True, 'count': 0, 'code': 0, 'msg': 'no orders', 'order_nos': ''}
+    구현 주의: 동작이 검증된 ShippingBasic 쓰기 호출(SetSendingInfo /
+    register_waybill)과 동일하게 **GET + OrderNo 1건씩** 호출한다.
+    POST + 콤마조인 다건은 Qoo10 이 `-10001 OrderNo format error` 로 거절함
+    (값 orderNo/packNo 무관 — 요청 구조 문제로 확인됨).
 
-    params = {
-        "v": "1.0",
-        "returnType": "json",
-        "method": "ShippingBasic.SetSellerCheckYN_V2",
-        "key": sak,
-        "OrderNo": order_csv,
-        "ShippingDate": str(ship_date).strip(),
-    }
-    r = requests.post(BASE_URL, data=params, timeout=60)
-    body = r.text
-    try:
-        data = json.loads(body)
-        rcode = data.get('ResultCode')
-        rmsg = data.get('ResultMsg', '')
-    except json.JSONDecodeError:
-        return {
-            'ok': False, 'count': len(order_nos), 'code': r.status_code,
-            'msg': body[:300], 'order_nos': order_csv,
+    Returns:
+        {'ok': bool, 'count': 성공건수, 'code': 실패코드|0, 'msg': 실패메시지|SUCCESS,
+         'order_nos': 시도 전체 csv, 'fail_order_nos': 실패 csv}
+    """
+    cleaned = [str(o).strip() for o in (order_nos or []) if str(o).strip()]
+    if not cleaned:
+        return {'ok': True, 'count': 0, 'code': 0, 'msg': 'no orders',
+                'order_nos': '', 'fail_order_nos': ''}
+
+    sd = str(ship_date).strip()
+    results = []
+    for ono in cleaned:
+        params = {
+            "v": "1.0",
+            "returnType": "json",
+            "method": "ShippingBasic.SetSellerCheckYN_V2",
+            "key": sak,
+            "OrderNo": ono,
+            "ShippingDate": sd,
         }
+        try:
+            r = requests.get(BASE_URL, params=params, timeout=30)
+            body = r.text
+            data = json.loads(body)
+            rcode = data.get('ResultCode')
+            rmsg = data.get('ResultMsg', '')
+            ok = (rcode == 0 or rcode == '0')
+        except json.JSONDecodeError:
+            rcode, rmsg, ok = r.status_code, body[:200], False
+        except Exception as ex:
+            rcode, rmsg, ok = -1, str(ex)[:200], False
+        results.append({'order_no': ono, 'ok': ok, 'code': rcode, 'msg': rmsg})
+
+    fails = [x for x in results if not x['ok']]
     return {
-        'ok': rcode == 0 or rcode == '0',
-        'count': len(order_nos),
-        'code': rcode,
-        'msg': rmsg,
-        'order_nos': order_csv,
+        'ok': not fails,
+        'count': sum(1 for x in results if x['ok']),
+        'code': fails[0]['code'] if fails else 0,
+        'msg': fails[0]['msg'] if fails else 'SUCCESS',
+        'order_nos': ','.join(cleaned),
+        'fail_order_nos': ','.join(x['order_no'] for x in fails),
     }
 
 
