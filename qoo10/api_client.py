@@ -370,10 +370,11 @@ def set_seller_check_yn(sak: str,
         order_nos: **주문번호(orderNo) list**. 빈 list 면 즉시 반환.
         ship_date: 발송예정일 'YYYYMMDD' (8자리)
 
-    구현 주의: 동작이 검증된 ShippingBasic 쓰기 호출(SetSendingInfo /
-    register_waybill)과 동일하게 **GET + OrderNo 1건씩** 호출한다.
-    POST + 콤마조인 다건은 Qoo10 이 `-10001 OrderNo format error` 로 거절함
-    (값 orderNo/packNo 무관 — 요청 구조 문제로 확인됨).
+    구현 주의: 원본(POST + OrderNo)은 **단건일 때 라이브 동작 검증됨**
+    (사용자 QSM 상태변경 확인). 실패는 **다건 콤마조인**(`OrderNo="a,b"`)
+    뿐 — SetSellerCheckYN_V2 는 OrderNo 1건만 받음. 따라서 POST 유지하고
+    **OrderNo 1건씩 루프**(콤마 제거). orderNo/packNo 값 무관(둘 다 콤마면
+    `-10001 OrderNo format error`).
 
     Returns:
         {'ok': bool, 'count': 성공건수, 'code': 실패코드|0, 'msg': 실패메시지|SUCCESS,
@@ -396,7 +397,9 @@ def set_seller_check_yn(sak: str,
             "ShippingDate": sd,
         }
         try:
-            r = requests.get(BASE_URL, params=params, timeout=30)
+            # 원본(POST)이 단건일 때 실제 동작 검증됨(QSM 상태 변경 확인).
+            # 실패 원인은 다건 콤마조인뿐이라 콤마만 제거(건별 호출).
+            r = requests.post(BASE_URL, data=params, timeout=30)
             body = r.text
             data = json.loads(body)
             rcode = data.get('ResultCode')
