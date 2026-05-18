@@ -123,7 +123,7 @@ def render_page():
             help="OFF (⏸ 비활성) 로 두면 같은 채널 운영 lookup 에서 제외됨.",
         )
         init_sku_df = pd.DataFrame({
-            'SKU 코드': [''], '상품명': [''], '수량': [1],
+            'SKU 코드': [''], '상품명': [''], '수량': [1], '삭제': [False],
         })
         is_new = True
         orig_key = None
@@ -153,11 +153,12 @@ def render_page():
             'SKU 코드': codes,
             '상품명':   names,
             '수량':     qtys,
+            '삭제':     [False] * max_n,
         })
         is_new = False
         orig_key = (ch_orig, pn_orig, po_orig)
 
-    st.markdown("**SKU 구성** (세트면 행 추가)")
+    st.markdown("**SKU 구성** (세트면 행 추가 · 삭제 체크 후 저장 시 해당 행 제외)")
     sku_edited = st.data_editor(
         init_sku_df,
         column_config={
@@ -167,6 +168,8 @@ def render_page():
                        help="비고용 — 빈값이면 SKU 코드로 채워짐"),
             '수량':     st.column_config.NumberColumn(min_value=1, step=1, default=1,
                        required=True, width="small"),
+            '삭제':     st.column_config.CheckboxColumn(width="small", default=False,
+                       help="체크 후 저장 시 이 SKU 행을 매핑에서 제외"),
         },
         num_rows="dynamic",
         hide_index=True,
@@ -193,9 +196,10 @@ def render_page():
         if not pn:
             st.error("상품명은 필수입니다.")
         else:
-            valid = sku_edited[sku_edited['SKU 코드'].astype(str).str.strip() != '']
+            _kept = sku_edited[~sku_edited['삭제'].fillna(False).astype(bool)]
+            valid = _kept[_kept['SKU 코드'].astype(str).str.strip() != '']
             if valid.empty:
-                st.error("최소 1개 SKU 코드 필요.")
+                st.error("최소 1개 SKU 코드 필요 (전부 삭제됨/빈값).")
             else:
                 payload = []
                 for _, r in valid.iterrows():
