@@ -244,10 +244,31 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
     s2.metric("관찰(가용재고 box인입수 대비 50%미만)", n_watch)
     s3.metric("출고요청서 제외 주문건수", _excl_orders)
 
-    if st.button(
-        "✅ 재고이동 확정",
-        type="primary", width="stretch", key="domestic_holding_confirm",
-    ):
+    # 이동필요(품절·부족) 0건 = 관찰만 → 재고이동 없이 '다음단계'로 진행 가능
+    only_watch = (n_move == 0)
+    if only_watch:
+        bc1, bc2 = st.columns(2)
+        with bc1:
+            confirm_clicked = st.button(
+                "✅ 재고이동 확정", type="primary", width="stretch",
+                key="domestic_holding_confirm",
+                help="체크한 관찰 상품을 네뉴→캐처스 재고이동 (해당 합포장 주문 제외).",
+            )
+        with bc2:
+            skip_clicked = st.button(
+                "다음단계 (재고이동 없이)", width="stretch",
+                key="domestic_holding_skip",
+                help="관찰 상품은 재고가 있어 그대로 출고. 제외·재고이동 없이 출고요청서만 생성.",
+            )
+    else:
+        confirm_clicked = st.button(
+            "✅ 재고이동 확정", type="primary", width="stretch",
+            key="domestic_holding_confirm",
+            help="이동필요(품절·부족)는 항상 제외. 체크한 관찰도 함께 재고이동.",
+        )
+        skip_clicked = False
+
+    if confirm_clicked:
         st.session_state["domestic_holding_confirmed"] = {
             "codes": sorted(held_codes),
             "items": [
@@ -255,36 +276,45 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
                 for c in sorted(held_codes)
             ],
         }
+    elif skip_clicked:
+        st.session_state["domestic_holding_confirmed"] = {"codes": [], "items": []}
 
     conf = st.session_state.get("domestic_holding_confirmed")
     if not conf:
-        st.info("👆 '재고이동 확정'을 누르면 이지어드민 발주서 → 출고요청서가 생성됩니다.")
+        st.info(
+            "👆 '재고이동 확정' 또는 '다음단계'를 누르면 출고요청서가 생성됩니다."
+            if only_watch else
+            "👆 '재고이동 확정'을 누르면 이지어드민 발주서 → 출고요청서가 생성됩니다."
+        )
         return
 
     held_set = set(conf["codes"])
     shipped, _held, _n_groups = split_held_orders(daone_rows_all, held_set)
 
-    # ① 이지어드민 발주서 (먼저)
-    st.markdown("---")
-    try:
-        eza_xls = build_nenu_to_cachers_eza_xls(conf["items"], work_date)
-    except Exception as ex:
-        eza_xls = None
-        st.error(f"이지어드민 발주서 생성 실패: {ex}")
-    eza_name = (
-        f"{work_date.strftime('%y%m%d')}_{int(sequence)}차_"
-        f"네뉴→캐처스_이지어드민발주서({len(conf['items'])}품목).xls"
-    )
-    st.download_button(
-        f"📥 ① 이지어드민 발주서 (네뉴→캐처스 재고이동) — {len(conf['items'])}품목",
-        data=eza_xls if eza_xls else b"",
-        file_name=eza_name,
-        mime="application/vnd.ms-excel",
-        type="primary", width="stretch",
-        disabled=eza_xls is None,
-        key="domestic_nenu_cachers_eza_dl",
-    )
-    st.caption("📤 네뉴 이지어드민 업로드 → 재고차감 → 네뉴→캐처스 재고이동. 다음 차수에 홀딩분 출고.")
+    # ① 이지어드민 발주서 — 재고이동 품목이 있을 때만 (다음단계=재고이동 없음 시 생략)
+    if conf["items"]:
+        st.markdown("---")
+        try:
+            eza_xls = build_nenu_to_cachers_eza_xls(conf["items"], work_date)
+        except Exception as ex:
+            eza_xls = None
+            st.error(f"이지어드민 발주서 생성 실패: {ex}")
+        eza_name = (
+            f"{work_date.strftime('%y%m%d')}_{int(sequence)}차_"
+            f"네뉴→캐처스_이지어드민발주서({len(conf['items'])}품목).xls"
+        )
+        st.download_button(
+            f"📥 ① 이지어드민 발주서 (네뉴→캐처스 재고이동) — {len(conf['items'])}품목",
+            data=eza_xls if eza_xls else b"",
+            file_name=eza_name,
+            mime="application/vnd.ms-excel",
+            type="primary", width="stretch",
+            disabled=eza_xls is None,
+            key="domestic_nenu_cachers_eza_dl",
+        )
+        st.caption("📤 네뉴 이지어드민 업로드 → 재고차감 → 네뉴→캐처스 재고이동. 다음 차수에 홀딩분 출고.")
+    else:
+        st.info("ℹ️ 재고이동 없음 — 관찰 상품 포함 전체 출고요청서 생성.")
 
     # ② 출고요청서 (다원 발주서) — 그 아래
     st.markdown("---")
