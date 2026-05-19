@@ -18,6 +18,7 @@ from qoo10 import api_client as qapi
 from qoo10 import generator as qgen
 from utils.timezone import kst_today
 from channels import _db_cache as _cache
+from channels._qoo10_new_mapping import render_unknown_inline_mapping
 
 
 CHANNEL_JP = 'qoo10_japan'
@@ -99,8 +100,7 @@ def _render_classify_result(jp, kr, unknown, conflicts):
             by_key[k].append(q)
         st.error(
             f"🆕 미매핑 — 주문 {len(unknown)}건 / 키 {len(by_key)}개. "
-            "어드민 → 🔧 상품 매핑에서 등록 후 다시 가져오기. "
-            "JP 출고일 경우 채널 = 'Qoo10 일본 출고' / KR 출고일 경우 채널 = 'Qoo10 국내 출고'."
+            "아래 **🆕 신규 상품 매핑** 섹션에서 일본·국내 양쪽 채널에 한 번에 등록 후 다시 가져오기."
         )
         rows = []
         for k, qs in by_key.items():
@@ -345,6 +345,7 @@ def render():
     jp_orders, kr_orders, unknown_orders, both_active = _classify(qsm_rows, jp_map, kr_map)
     _render_classify_result(jp_orders, kr_orders, unknown_orders, both_active)
     _render_product_summary(jp_orders, kr_orders, unknown_orders, both_active)
+    render_unknown_inline_mapping(unknown_orders)
     # 일본 채널 — 국내 출고 배송상태 변경 기능 없음 (KR 흐름은 [캐처스] Qoo10-국내 채널).
 
     # ─── 페이지 하단 — 주문수집 확정 + 수집 초기화 ─────
