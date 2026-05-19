@@ -99,8 +99,7 @@ def _render_classify_result(jp, kr, unknown, conflicts):
             k = ((q.get('상품명') or '').strip(), (q.get('옵션정보') or '').strip())
             by_key[k].append(q)
         st.error(
-            f"🆕 미매핑 — 주문 {len(unknown)}건 / 키 {len(by_key)}개. "
-            "아래 **🆕 신규 상품 매핑** 섹션에서 일본·국내 양쪽 채널에 한 번에 등록 후 다시 가져오기."
+            f"🆕 미매핑 — 주문 {len(unknown)}건 / 아래 **🆕 신규 상품 매핑** 섹션에서 맵핑할 것"
         )
         rows = []
         for k, qs in by_key.items():
