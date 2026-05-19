@@ -23,6 +23,7 @@ import pandas as pd
 import streamlit as st
 
 from db import mapping as _map
+from qoo10 import generator as _qgen
 from outputs.daone.builder import (
     parse_kse_oms_xlsx,
     kse_oms_to_daone_with_mapping,
@@ -160,14 +161,16 @@ def _render_pending_mappings(unknown_rows, mappings):
                         name = str(row['상품명'] or '').strip() or code
                         qty = int(row['수량'] or 1)
                         payload.append((code, name, qty))
-                    if _map.upsert(CHANNEL_KEY, qname, qoption, payload):
+                    if _qgen.upsert_both_channels(
+                        _qgen.CHANNEL_CACHERS_QOO10_KR, qname, qoption, payload
+                    ):
                         st.success(
-                            "등록 완료: "
+                            "등록 완료 (국내 활성 + 일본 비활성 동시 등록): "
                             + " + ".join(f"{n}×{q}" for _, n, q in payload)
                         )
                         st.rerun()
                     else:
-                        st.error("매핑 등록 실패 (DB 연결 확인)")
+                        st.error("매핑 등록 실패 (DB 연결 확인 / 한쪽 채널 실패)")
 
 
 def _render_post_transition_check():

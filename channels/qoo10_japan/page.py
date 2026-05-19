@@ -413,9 +413,12 @@ def _step2_outbound_generate():
                                         (sku_info['sku_code'], sku_info['sku_name'], qty)
                                     )
                                 try:
-                                    qgen.add_mapping(e['상품명'], e['옵션정보'], skus_payload)
+                                    qgen.upsert_both_channels(
+                                        qgen.CHANNEL_QOO10_JAPAN,
+                                        e['상품명'], e['옵션정보'], skus_payload,
+                                    )
                                     st.success(
-                                        "매핑 저장 완료: "
+                                        "매핑 저장 완료 (일본 활성 + 국내 비활성 동시 등록): "
                                         + " + ".join([f"{n}×{q}" for _, n, q in skus_payload])
                                     )
                                     st.rerun()

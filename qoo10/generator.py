@@ -135,6 +135,10 @@ def load_kse_sku_catalog(location: str = 'JP') -> List[Dict]:
 CHANNEL_QOO10_JAPAN = 'qoo10_japan'
 
 
+CHANNEL_CACHERS_QOO10_KR = 'cachers_qoo10_kr'
+QOO10_CHANNELS = (CHANNEL_QOO10_JAPAN, CHANNEL_CACHERS_QOO10_KR)
+
+
 def add_mapping(qoo10_name: str, qoo10_option: str,
                 skus: List[Tuple[str, str, int]], enabled: bool = True):
     """Qoo10 일본 매핑 upsert. skus = [(sku_code, sku_name, qty), ...]
@@ -142,6 +146,30 @@ def add_mapping(qoo10_name: str, qoo10_option: str,
     """
     from db import mapping as _m
     _m.upsert(CHANNEL_QOO10_JAPAN, qoo10_name, qoo10_option, skus)
+
+
+def upsert_both_channels(active_channel: str,
+                         qoo10_name: str, qoo10_option: str,
+                         skus: List[Tuple[str, str, int]]) -> bool:
+    """큐텐 상품을 **일본·국내 양쪽 채널 모두** 매핑 등록 (요구사항).
+
+    모든 큐텐 상품은 qoo10_japan·cachers_qoo10_kr 양쪽에 동일 SKU 구성으로
+    존재해야 하며, 실제 출고 채널은 is_active 로 결정. 신규 인라인 등록 시
+    작업 채널 = is_active True, 반대 채널 = is_active False (존재만, 미출고).
+    한 채널 등록했다고 다른 채널 생략 금지.
+
+    active_channel: 'qoo10_japan' 또는 'cachers_qoo10_kr'.
+    반환: 두 채널 모두 성공 시 True.
+    """
+    from db import mapping as _m
+    if active_channel not in QOO10_CHANNELS:
+        raise ValueError(f"active_channel 은 {QOO10_CHANNELS} 중 하나여야 함: {active_channel!r}")
+    ok = True
+    for ch in QOO10_CHANNELS:
+        if not _m.upsert(ch, qoo10_name, qoo10_option, skus,
+                         is_active=(ch == active_channel)):
+            ok = False
+    return ok
 
 
 def delete_mapping(qoo10_name: str, qoo10_option: str):
