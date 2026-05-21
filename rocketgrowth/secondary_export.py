@@ -1353,6 +1353,77 @@ def build_parcel_outbound_request(
 
 
 # ============================================================================
+# 4d) 밀크런용 다원 출고요청서 (캐처스 — SKU 단위, 19컬럼)
+# ============================================================================
+# 도착지는 FC 가 아니라 다원 아산센터 고정(밀크런은 다원→쿠팡 픽업 흐름).
+_MILKRUN_REQ_MALL_CODE = "000000000001"
+_MILKRUN_REQ_ITR_NO = "[밀크런] 캐처스-로켓그로스"
+_MILKRUN_REQ_SENDER_NAME = "캐처스물류"
+_MILKRUN_REQ_SENDER_PHONE = "01074923214"
+_MILKRUN_REQ_RECEIVER_PHONE = "010-1234-1234"  # 사용자 확정 — 다원 시스템 접수용 더미
+_MILKRUN_REQ_RECEIVER_POSTAL = 31442
+_MILKRUN_REQ_RECEIVER_ADDRESS = (
+    "충남 아산시 염치읍 서원리 72-16 2층 다원로지스틱스 아산센터"
+)
+
+
+def build_milkrun_outbound_request(
+    items: list[SecondaryItem],
+    fc_name: str,
+    arrival_date: date,
+) -> bytes:
+    """캐처스 밀크런 출고요청서 (단일 발주서 시트, 19컬럼).
+
+    - SKU 단위 1행 (`inbound_qty > 0` 만 포함). 박스 단위 아님.
+    - 출고일 = **입고일(arrival_date) 그대로** (사용자 확정 — 영업일 D-N 룰 아님).
+    - C 출하의뢰항번 = D 고객주문번호 = '{입고일yymmdd}-{순번}' (1..N).
+    - K 수취인명 = '[밀크런]로켓그로스_{fc}'.
+    - O/P 수취인주소 = 다원 아산센터 고정 (밀크런 다원 픽업 흐름).
+    - L/M 수취인연락처 = '010-1234-1234' 고정 (다원 접수 더미).
+    """
+    sku_rows = [it for it in items if (it.inbound_qty or 0) > 0]
+    ship_yymmdd = arrival_date.strftime("%y%m%d")
+
+    wb = openpyxl.Workbook()
+    ws = wb.active
+    ws.title = "발주서"
+
+    # 헤더 (parcel 과 동일 19컬럼 사용)
+    for c, h in enumerate(_PARCEL_REQ_HEADERS, start=1):
+        ws.cell(1, c, h)
+
+    for idx, it in enumerate(sku_rows, start=1):
+        order_no = f"{ship_yymmdd}-{idx}"
+        prod_name = (it.wms_product_name or it.product_name or "").strip()
+        ws.cell(idx + 1, 1, _MILKRUN_REQ_MALL_CODE)
+        ws.cell(idx + 1, 2, _MILKRUN_REQ_ITR_NO)
+        ws.cell(idx + 1, 3, order_no)
+        ws.cell(idx + 1, 4, order_no)
+        ws.cell(idx + 1, 5, prod_name)
+        ws.cell(idx + 1, 6, it.own_wms_barcode or "")
+        ws.cell(idx + 1, 7, int(it.inbound_qty))
+        ws.cell(idx + 1, 8, _MILKRUN_REQ_SENDER_NAME)
+        ws.cell(idx + 1, 9, _MILKRUN_REQ_SENDER_PHONE)
+        ws.cell(idx + 1, 10, _MILKRUN_REQ_SENDER_PHONE)
+        ws.cell(idx + 1, 11, f"[밀크런]로켓그로스_{fc_name}")
+        ws.cell(idx + 1, 12, _MILKRUN_REQ_RECEIVER_PHONE)
+        ws.cell(idx + 1, 13, _MILKRUN_REQ_RECEIVER_PHONE)
+        ws.cell(idx + 1, 14, _MILKRUN_REQ_RECEIVER_POSTAL)
+        ws.cell(idx + 1, 15, _MILKRUN_REQ_RECEIVER_ADDRESS)
+        ws.cell(idx + 1, 16, _MILKRUN_REQ_RECEIVER_ADDRESS)
+        # 17 배송메시지 / 18 송장번호 / 19 택배사명 = 빈값
+
+    widths = {1: 17, 2: 25, 3: 12, 4: 12, 5: 32, 6: 15, 7: 9, 8: 11,
+              9: 13, 10: 13, 11: 25, 12: 14, 13: 14, 14: 14, 15: 48, 16: 48}
+    for col, w in widths.items():
+        ws.column_dimensions[get_column_letter(col)].width = w
+
+    buf = BytesIO()
+    wb.save(buf)
+    return buf.getvalue()
+
+
+# ============================================================================
 # 5) 재고차감 — 확장주문검색 파싱 / 검수 / 3차결과물 생성
 # ============================================================================
 @dataclass

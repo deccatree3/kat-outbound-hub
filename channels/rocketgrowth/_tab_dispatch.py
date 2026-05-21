@@ -85,9 +85,10 @@ def _render_multi_download_trigger(items: list[tuple[str, bytes]], label: str, k
 from rocketgrowth.db import get_session
 from rocketgrowth.models import InboundPlan
 from rocketgrowth.secondary_export import (
-    build_consolidation_list, build_order_form, build_pallet_loading_list,
-    build_parcel_consolidation_list, build_parcel_eza_order_form,
-    build_parcel_outbound_request, update_inventory_movement,
+    build_consolidation_list, build_milkrun_outbound_request, build_order_form,
+    build_pallet_loading_list, build_parcel_consolidation_list,
+    build_parcel_eza_order_form, build_parcel_outbound_request,
+    update_inventory_movement,
 )
 
 from channels.rocketgrowth._helpers import get_fc_info, jump_to_tab, section_note
@@ -182,7 +183,10 @@ def render(brand: str):
     # 캐처스는 EZA↔다원 자동연동이 없어 다원에 직접 출고요청서 전달 필요
     # (네뉴 택배는 위 '① 이지어드민 수동 발주' 로 처리됨).
     _cachers_parcel = (not is_milkrun) and (brand == 'cachers')
-    if is_milkrun or _cachers_parcel:
+    _cachers_milkrun = is_milkrun and (brand == 'cachers')
+    if _cachers_milkrun:
+        dc = st.columns(4)  # 취합/팔레트적재/출고요청서/재고이동건
+    elif is_milkrun or _cachers_parcel:
         dc = st.columns(3)
     else:
         dc = st.columns(2)
@@ -271,7 +275,30 @@ def render(brand: str):
         except Exception as ex:
             with dc[1]:
                 st.error(f"팔레트적재: {ex}")
-        mv_col = dc[2]
+        # 캐처스 밀크런: 다원 출고요청서 (SKU 단위 19컬럼, 다원 아산센터 도착지 고정)
+        if _cachers_milkrun:
+            try:
+                mreq_xlsx = build_milkrun_outbound_request(
+                    data.sec_items, fc_name=fc, arrival_date=arr,
+                )
+                mreq_name = (
+                    f"밀크런_출고요청_로켓그로스({brand_company})_{fc}_{datesuf}.xlsx"
+                )
+                zip_items.append((mreq_name, mreq_xlsx))
+                with dc[2]:
+                    st.download_button(
+                        "📥 출고요청서", data=mreq_xlsx,
+                        file_name=mreq_name,
+                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                        width="stretch", type="primary",
+                        key=f"disp_{brand}_dl_mreq_{plan.id}",
+                    )
+            except Exception as ex:
+                with dc[2]:
+                    st.error(f"출고요청서: {ex}")
+            mv_col = dc[3]
+        else:
+            mv_col = dc[2]
     elif _cachers_parcel:
         mv_col = dc[2]
     else:
