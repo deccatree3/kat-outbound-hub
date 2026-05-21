@@ -357,13 +357,18 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
         ):
             st.code('\n'.join(info['single_matched_barcodes']))
 
+    # 네뉴 번들작업 없음(세트 입고수량 0) → 다운로드 버튼 비활성
+    _no_bundle = (info.get('total_qty') or 0) <= 0
     out_name = f"일반주문 번들작업건_{work_date.strftime('%y%m%d')}_{int(sequence)}차.xlsx"
+    if _no_bundle:
+        st.caption("ℹ️ 네뉴 번들작업 없음 (세트 입고수량 0) — 다운로드 비활성.")
     st.download_button(
         f"📥 {out_name}",
         data=xlsx_bytes,
         file_name=out_name,
         mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
         type="primary", width="stretch",
+        disabled=_no_bundle,
         key=f"nenu_bundle_download_{work_date}_{sequence}",
     )
 
