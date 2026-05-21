@@ -277,7 +277,12 @@ def render(brand: str):
     else:
         mv_col = dc[1]
 
-    if plan.movement_template_blob:
+    # 재고이동건 = 번들(unit_qty>=2) 입고 시에만 의미. 단품만 입고면 재고이동건 없음.
+    _has_bundle_inbound = any(
+        (it.unit_qty or 0) >= 2 and (it.inbound_qty or 0) > 0
+        for it in data.sec_items
+    )
+    if plan.movement_template_blob and _has_bundle_inbound:
         try:
             mv_out = update_inventory_movement(
                 bytes(plan.movement_template_blob), data.sec_items, arr, fc, brand_company,
@@ -295,9 +300,21 @@ def render(brand: str):
         except Exception as ex:
             with mv_col:
                 st.error(f"재고이동건: {ex}")
-    else:
+    elif not plan.movement_template_blob:
         with mv_col:
             st.caption("재고이동건 템플릿 미저장 — 탭 1 에서 업로드 시 활성화")
+    else:
+        # 템플릿 있으나 번들 입고 0 → 재고이동건 불필요 (단품만 입고)
+        with mv_col:
+            st.caption("재고이동건 없음 (단품만 입고) — 다운로드 비활성")
+            st.download_button(
+                "📥 재고이동건", data=b"",
+                file_name="재고이동건.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                width="stretch", type="primary",
+                disabled=True,
+                key=f"disp_{brand}_dl_mv_{plan.id}",
+            )
 
     # PDF 리네임 다운로드 (운송별 명칭 차이)
     dpc = st.columns(3)
