@@ -122,7 +122,8 @@ class DispatchData:
 def build_dispatch_data(brand: str, brand_company: str, plan: InboundPlan) -> DispatchData | None:
     """탭 3/4 가 공통으로 사용할 dispatch 데이터 빌드.
 
-    필수: plan.status in (verified, completed) + label_pdf/attach_pdf 가 PlanFile 에 존재.
+    필수: plan.status in (verified, completed) + attach_pdf 가 PlanFile 에 존재.
+    label_pdf 는 선택(단품만 납품이면 발생 안 함). invoice_pdf 는 밀크런 필수.
     """
     cfg = load_config()
 
@@ -153,10 +154,11 @@ def build_dispatch_data(brand: str, brand_company: str, plan: InboundPlan) -> Di
     attach_bytes = plan_files.get("attach_pdf", (None, None))[1]
     invoice_bytes = plan_files.get("invoice_pdf", (None, None))[1]
 
-    if not label_bytes or not attach_bytes:
+    if not attach_bytes:
         st.warning(
-            "⚠️ 부착문서 PDF 또는 라벨 PDF 가 누락되어 있습니다. "
-            "탭 2 검수 단계에서 PDF 업로드 + 발주 확정 먼저 진행하세요."
+            "⚠️ 부착문서 PDF 가 누락되어 있습니다. "
+            "탭 2 검수 단계에서 PDF 업로드 + 발주 확정 먼저 진행하세요. "
+            "(바코드 라벨은 단품만 납품이면 없을 수 있어 선택)"
         )
         return None
 

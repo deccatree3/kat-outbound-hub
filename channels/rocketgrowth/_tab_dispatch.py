@@ -317,15 +317,19 @@ def render(brand: str):
                 st.caption("동봉문서 N/A (택배 + 혼적 박스 없음)")
             else:
                 st.warning("⚠️ 밀크런 — 동봉문서 누락 (필수)")
-    lb_name = f"제품 바코드라벨_{fc}_{datesuf}.pdf"
-    zip_items.append((lb_name, data.label_bytes))
-    with dpc[1]:
-        st.download_button(
-            "📥 제품 바코드라벨", data=data.label_bytes,
-            file_name=lb_name,
-            mime="application/pdf", width="stretch", type="primary",
-            key=f"disp_{brand}_dl_lb_{plan.id}",
-        )
+    if data.label_bytes:
+        lb_name = f"제품 바코드라벨_{fc}_{datesuf}.pdf"
+        zip_items.append((lb_name, data.label_bytes))
+        with dpc[1]:
+            st.download_button(
+                "📥 제품 바코드라벨", data=data.label_bytes,
+                file_name=lb_name,
+                mime="application/pdf", width="stretch", type="primary",
+                key=f"disp_{brand}_dl_lb_{plan.id}",
+            )
+    else:
+        with dpc[1]:
+            st.caption("바코드라벨 N/A (단품만 납품 — 라벨 미발생)")
     with dpc[2]:
         if is_milkrun:
             attach_filename = f"밀크런_물류부착문서1 (팔레트부착문서)_{fc}_{datesuf}.pdf"

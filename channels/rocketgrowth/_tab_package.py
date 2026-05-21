@@ -506,20 +506,22 @@ def render(brand: str):
         src = " (이전 저장됨)" if prev else " (방금 업로드)"
         return f"✅ {name}: `{fname}`{src}"
 
+    # 바코드 라벨: 단품만 납품 시 발생하지 않음 → 선택
     # 동봉문서: 밀크런 필수 / 택배는 옵션 (혼적 시만 필요, 운영 상 미운영)
     st.caption("📎 PDF 상태:")
     for line in [
-        _pdf_disp("바코드 라벨", label_pdf, "label_pdf"),
+        _pdf_disp("바코드 라벨", label_pdf, "label_pdf", optional=True),
         _pdf_disp("부착 문서", attach_pdf, "attach_pdf"),
         _pdf_disp("동봉 문서", invoice_pdf, "invoice_pdf", optional=_is_parcel_now),
     ]:
         st.caption(line)
 
-    if not (label_pdf and attach_pdf):
+    if not attach_pdf:
         if _is_parcel_now:
-            st.info("바코드 라벨 PDF + 부착 문서 PDF 업로드 필요. 동봉 문서는 혼적 박스 있을 때만 (택배는 보통 미운영).")
+            st.info("부착 문서 PDF 업로드 필수. 바코드 라벨은 단품만이면 없을 수 있음(선택). "
+                    "동봉 문서는 혼적 박스 있을 때만 (택배는 보통 미운영).")
         else:
-            st.info("바코드 라벨 PDF + 부착 문서 PDF + 동봉 문서 PDF 모두 업로드 필요 (밀크런).")
+            st.info("부착 문서 + 동봉 문서 PDF 업로드 필수 (밀크런). 바코드 라벨은 단품만이면 없을 수 있음(선택).")
         return
 
     # 밀크런: 동봉 문서도 필수
@@ -527,9 +529,12 @@ def render(brand: str):
         st.warning("⚠️ 밀크런은 동봉 문서 PDF 도 필수 — 업로드 후 진행 가능.")
         return
 
-    lb = label_pdf.getvalue() if hasattr(label_pdf, 'getvalue') else label_pdf.read()
+    # 바코드 라벨은 선택(단품만이면 발생 안 함) — None-safe 처리
+    lb = lname = None
+    if label_pdf is not None:
+        lb = label_pdf.getvalue() if hasattr(label_pdf, 'getvalue') else label_pdf.read()
+        lname = getattr(label_pdf, 'name', 'label.pdf')
     ab = attach_pdf.getvalue() if hasattr(attach_pdf, 'getvalue') else attach_pdf.read()
-    lname = getattr(label_pdf, 'name', 'label.pdf')
     aname = getattr(attach_pdf, 'name', 'attach.pdf')
     ib = None
     iname = None
@@ -537,9 +542,9 @@ def render(brand: str):
         ib = invoice_pdf.getvalue() if hasattr(invoice_pdf, 'getvalue') else invoice_pdf.read()
         iname = getattr(invoice_pdf, 'name', 'invoice.pdf')
 
-    # PDF 신규 → DB 저장
+    # PDF 신규 → DB 저장 (label 은 업로드 시에만)
     new_pdfs: dict[str, tuple[str, bytes]] = {}
-    if "label_pdf" not in plan_files:
+    if lb and "label_pdf" not in plan_files:
         new_pdfs["label_pdf"] = (lname, lb)
     if "attach_pdf" not in plan_files:
         new_pdfs["attach_pdf"] = (aname, ab)
@@ -548,7 +553,8 @@ def render(brand: str):
     if new_pdfs:
         save_plan_files(plan.id, new_pdfs)
 
-    labels_parsed = parse_barcode_labels(lb)
+    # 라벨 없으면 빈 dict — 다운스트림 .get(bc) 안전, label-기대 SKU 시만 경고
+    labels_parsed = parse_barcode_labels(lb) if lb else {}
     # 운송방식별 부착문서 파서 분기
     if (plan.shipment_type or 'milkrun') == 'parcel':
         attachment = parse_parcel_attachment_doc(ab)
