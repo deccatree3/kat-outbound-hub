@@ -218,23 +218,21 @@ def build_consolidation_list(
     company_short: str = "서현",
     milkrun_id: str | None = None,
 ) -> bytes:
-    """취합리스트 엑셀 생성.
+    """취합리스트 엑셀 생성 (밀크런).
 
-    컬럼 (바코드종류 제외, '박스량' → '박스수'):
-        1: 동탄1 / 상품명
-        2: 바코드(WMS)
-        3: 바코드(부착)
-        4: 확정수량
-        5: 소비기한
-        6: 제조일자
-        7: 박스 입수량
-        8: 박스수
-        9: 파레트번호
-       10: 파레트수    ← 같은 팔레트 행들의 셀 병합
-       11: 중량kg
-
+    컬럼:
+        1(A): 상품명           2(B): 바코드(WMS)     3(C): 바코드(부착)
+        4(D): 확정수량         5(E): 소비기한        6(F): 제조일자
+        7(G): 박스 입수량      8(H): 박스수
+        9(I): 인박스           10(J): 아웃박스       ← 에이지샷 번들만 채움, 그 외 '-'
+       11(K): 파레트번호       12(L): 파레트수       ← 같은 팔레트 행들의 셀 병합
+       13(M): 중량kg
+    상단 요약 헤더는 F1~M1 (NO/요청ID/FC/SKU수/총수량/총박스수/총팔레트수/총중량).
+    우측 번들작업표: P7 마커 + P~T (바코드WMS/바코드부착/상품명/수량/소비기한).
     짝수 팔레트(2,4,...) 행은 옅은 빨강(살구색) 배경.
     """
+    from outputs.packing.boxes import select_outbox_for as _select_outbox
+
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "상품리스트"
@@ -249,9 +247,9 @@ def build_consolidation_list(
     gray = PatternFill("solid", fgColor="E8E8E8")
     even_pallet_fill = PatternFill("solid", fgColor="FBE2D5")  # 옅은 빨강
 
-    # ===== 상단 요약 헤더 (R1) — 회색 =====
+    # ===== 상단 요약 헤더 (R1) — 회색, F~M =====
     summary_headers = ["NO", "요청ID", "FC", "SKU 수", "총 수량", "총 박스수", "총 팔레트수", "총 중량"]
-    for i, h in enumerate(summary_headers, start=4):  # D~K
+    for i, h in enumerate(summary_headers, start=6):  # F~M
         c = ws.cell(row=1, column=i, value=h)
         c.font = bold
         c.alignment = center
@@ -268,16 +266,16 @@ def build_consolidation_list(
     )
 
     row2 = [1, milkrun_id or "", fc_name, sku_count, total_qty, total_boxes, total_pallets, round(total_weight_kg, 2)]
-    for i, v in enumerate(row2, start=4):
+    for i, v in enumerate(row2, start=6):
         c = ws.cell(row=2, column=i, value=v)
         c.alignment = center
         c.border = border
 
-    # Total 행 (R5)
-    tc = ws.cell(row=5, column=6, value="total")
+    # Total 행 (R5) — "total" 은 H(col 8), 그 뒤 I~M 에 5개 합계
+    tc = ws.cell(row=5, column=8, value="total")
     tc.font = bold
     tc.alignment = center
-    for i, v in enumerate([sku_count, total_qty, total_boxes, total_pallets, round(total_weight_kg, 2)], start=7):
+    for i, v in enumerate([sku_count, total_qty, total_boxes, total_pallets, round(total_weight_kg, 2)], start=9):
         c = ws.cell(row=5, column=i, value=v)
         c.alignment = center
         c.border = border
@@ -285,17 +283,19 @@ def build_consolidation_list(
 
     # ===== 좌측 블록 헤더 (R8) — 팔레트 적재용 =====
     bundle_header = [
-        fc_name,             # 1
-        "바코드(WMS)",       # 2
-        "바코드(부착)",      # 3
-        "확정수량",          # 4
-        "소비기한",          # 5
-        "제조일자",          # 6
-        "박스\n입수량",      # 7
-        "박스수",            # 8
-        "파레트번호",        # 9
-        "파레트수",          # 10
-        "중량kg",            # 11
+        fc_name,             # 1 A
+        "바코드(WMS)",       # 2 B
+        "바코드(부착)",      # 3 C
+        "확정수량",          # 4 D
+        "소비기한",          # 5 E
+        "제조일자",          # 6 F
+        "박스\n입수량",      # 7 G
+        "박스수",            # 8 H
+        "인박스",            # 9 I — NEW
+        "아웃박스",          # 10 J — NEW
+        "파레트번호",        # 11 K
+        "파레트수",          # 12 L
+        "중량kg",            # 13 M
     ]
     for i, h in enumerate(bundle_header, start=1):
         c = ws.cell(row=8, column=i, value=h)
@@ -305,29 +305,27 @@ def build_consolidation_list(
         # 첫 3개는 초록, 나머지는 노랑 (샘플 패턴)
         c.fill = green if i <= 3 else yellow
 
-    # ===== 우측 번들 정보 (N7 marker, R8 headers, R9~) =====
-    # N7 (col 14, row 7) marker - 좌측 정렬
-    marker = ws.cell(row=7, column=14, value="■ 번들작업표")
+    # ===== 우측 번들 정보 (P7 marker, R8 headers, R9~) =====
+    marker = ws.cell(row=7, column=16, value="■ 번들작업표")
     marker.font = Font(bold=True, size=12)
     marker.alignment = Alignment(horizontal="left", vertical="center")
 
     bundle_right_headers = [
-        ("바코드(WMS)", 14),
-        ("바코드(부착)", 15),
-        ("상품명", 16),
-        ("수량", 17),
-        ("소비기한", 18),
+        ("바코드(WMS)", 16),  # P
+        ("바코드(부착)", 17),  # Q
+        ("상품명", 18),        # R
+        ("수량", 19),          # S
+        ("소비기한", 20),      # T
     ]
     for label, col in bundle_right_headers:
         c = ws.cell(row=8, column=col, value=label)
         c.font = bold
         c.alignment = center
         c.border = border
-        c.fill = green if col <= 16 else yellow
+        c.fill = green if col <= 18 else yellow
 
     # ===== 데이터 (R9~) =====
     item_by_opt = {it.coupang_option_id: it for it in items}
-    # (palette_no, entry, item) 순서대로 평탄화
     rows_to_write: list[tuple[int, PalletEntry, SecondaryItem]] = []
     for p_idx, pallet in enumerate(pallet_assignment.pallets, start=1):
         for entry in pallet:
@@ -335,10 +333,9 @@ def build_consolidation_list(
             if it:
                 rows_to_write.append((p_idx, entry, it))
 
-    # 같은 팔레트별 시작 행을 추적해서 파레트수 셀 병합용
     pallet_row_ranges: dict[int, list[int]] = {}
 
-    # 스키니퓨리티 선물세트 합포장 쇼핑백: 선물세트 바로 아래에 추가
+    # 스키니퓨리티 선물세트 합포장 쇼핑백
     GIFT_SET_BC = "8809744301273"
     GIFT_BAG_BC = "8809744301525"
     GIFT_BAG_NAME = "스키니퓨리티 선물세트 쇼핑백 - 스키니퓨리티 선물세트(7T*4종) 박스에 합포장"
@@ -348,22 +345,33 @@ def build_consolidation_list(
         boxes_here = entry.boxes
         qty_here = boxes_here * it.box_qty
         weight = round((it.weight_g * qty_here + 500 * boxes_here) / 1000, 2)
+
+        # 인박스/아웃박스 — 에이지샷 번들만 채움, 그 외 '-'
+        if _is_agetshot_bundle_secondary(it):
+            inbox_label = "에이지샷 1호"
+            obox, _fit = _select_outbox(inbox_label, it.box_qty or 1)
+            outbox_label = obox or "-"
+        else:
+            inbox_label = "-"
+            outbox_label = "-"
+
         row_data = [
-            it.wms_product_name or it.product_name,    # 1 WMS 제품명 우선
-            it.own_wms_barcode or "",                 # 2
-            attached_barcode_and_type(it)[0],         # 3
-            qty_here,                                 # 4
-            it.expiry_date.strftime("%Y-%m-%d") if it.expiry_date else "",   # 5
-            it.manufacture_date.strftime("%Y-%m-%d") if it.manufacture_date else "",  # 6
-            it.box_qty,                               # 7
-            boxes_here,                               # 8
-            pallet_no,                                # 9
-            None,                                     # 10 — 병합 후 채움
-            weight,                                   # 11
+            it.wms_product_name or it.product_name,    # 1 A
+            it.own_wms_barcode or "",                 # 2 B
+            attached_barcode_and_type(it)[0],         # 3 C
+            qty_here,                                 # 4 D
+            it.expiry_date.strftime("%Y-%m-%d") if it.expiry_date else "",   # 5 E
+            it.manufacture_date.strftime("%Y-%m-%d") if it.manufacture_date else "",  # 6 F
+            it.box_qty,                               # 7 G
+            boxes_here,                               # 8 H
+            inbox_label,                              # 9 I
+            outbox_label,                             # 10 J
+            pallet_no,                                # 11 K
+            None,                                     # 12 L — 병합 후 채움
+            weight,                                   # 13 M
         ]
         for i, v in enumerate(row_data, start=1):
             c = ws.cell(row=r, column=i, value=v)
-            # A열(1) 만 좌측 정렬, 나머지 가운데
             c.alignment = left_align if i == 1 else center
             c.border = border
             if pallet_no % 2 == 0:
@@ -372,14 +380,16 @@ def build_consolidation_list(
         pallet_row_ranges.setdefault(pallet_no, []).append(r)
         r += 1
 
-        # 선물세트면 쇼핑백 합포장 행 1개 추가 (합계 / 팔레트 미반영)
+        # 선물세트면 쇼핑백 합포장 행 1개 추가
         if str(it.own_wms_barcode or "") == GIFT_SET_BC:
             bag_row = [
-                GIFT_BAG_NAME,  # 1 상품명
-                GIFT_BAG_BC,    # 2 바코드(WMS)
-                GIFT_BAG_BC,    # 3 바코드(부착)
-                qty_here,       # 4 수량 = 선물세트 수량
-                "", "", "", "", "", "", "",
+                GIFT_BAG_NAME,  # 1 A
+                GIFT_BAG_BC,    # 2 B
+                GIFT_BAG_BC,    # 3 C
+                qty_here,       # 4 D
+                "", "", "", "",  # 5~8 (소비기한~박스수)
+                "-", "-",        # 9~10 (인박스/아웃박스)
+                "", "", "",      # 11~13 (파레트번호/수/중량)
             ]
             for i, v in enumerate(bag_row, start=1):
                 c = ws.cell(row=r, column=i, value=v)
@@ -389,23 +399,19 @@ def build_consolidation_list(
                     c.fill = even_pallet_fill
             r += 1
 
-    # 파레트수 컬럼 (10) 병합 + 값 = 1
+    # 파레트수 컬럼 (12, L) 병합 + 값 = 1
     for pallet_no, rows in pallet_row_ranges.items():
         if not rows:
             continue
         first, last = rows[0], rows[-1]
-        # 첫 셀에 1
-        ws.cell(row=first, column=10, value=1).alignment = center
-        ws.cell(row=first, column=10).border = border
+        ws.cell(row=first, column=12, value=1).alignment = center
+        ws.cell(row=first, column=12).border = border
         if pallet_no % 2 == 0:
-            ws.cell(row=first, column=10).fill = even_pallet_fill
-        # 여러 행이면 병합
+            ws.cell(row=first, column=12).fill = even_pallet_fill
         if last > first:
-            ws.merge_cells(start_row=first, end_row=last, start_column=10, end_column=10)
+            ws.merge_cells(start_row=first, end_row=last, start_column=12, end_column=12)
 
-    # ===== 우측 번들 데이터 (R9~ col 14-18) =====
-    # 번들 SKU = unit_qty >= 2 + 입고수량 > 0. (boxes 가 아닌 inbound_qty 기준 —
-    # qty<box_qty 인 번들도 포함되도록.)
+    # ===== 우측 번들 데이터 (R9~ col 16-20 = P~T) =====
     bundle_items = [
         it for it in items
         if it.unit_qty and it.unit_qty >= 2 and (it.inbound_qty or 0) > 0
@@ -415,26 +421,27 @@ def build_consolidation_list(
     for it in bundle_items:
         attached, _ = attached_barcode_and_type(it)
         right_data = [
-            (it.own_wms_barcode or "", 14),
-            (attached, 15),
-            (it.wms_product_name or it.product_name, 16),
-            (it.inbound_qty, 17),
-            (it.expiry_date.strftime("%Y-%m-%d") if it.expiry_date else "", 18),
+            (it.own_wms_barcode or "", 16),  # P
+            (attached, 17),                   # Q
+            (it.wms_product_name or it.product_name, 18),  # R
+            (it.inbound_qty, 19),             # S
+            (it.expiry_date.strftime("%Y-%m-%d") if it.expiry_date else "", 20),  # T
         ]
         for v, col in right_data:
             c = ws.cell(row=rb, column=col, value=v)
-            # P열(16, 상품명) 좌측, 나머지 가운데
-            c.alignment = left_align if col == 16 else center
+            # R열(18, 상품명) 좌측, 나머지 가운데
+            c.alignment = left_align if col == 18 else center
             c.border = border
         rb += 1
 
-    # ===== 컬럼 너비 (사용자 지정) =====
-    # A, P = 70 / B, C, N, O = 16 / D~M, Q, R = 10
+    # ===== 컬럼 너비 =====
+    # A, R = 70 / B, C, P, Q = 16 / I, J(인박스/아웃박스) = 13 / 나머지 = 10.7
     width_map = {
         "A": 70, "B": 16, "C": 16,
         "D": 10.7, "E": 10.7, "F": 10.7, "G": 10.7, "H": 10.7,
-        "I": 10.7, "J": 10.7, "K": 10.7, "L": 10.7, "M": 10.7,
-        "N": 16, "O": 16, "P": 70, "Q": 10.7, "R": 10.7,
+        "I": 13, "J": 13,
+        "K": 10.7, "L": 10.7, "M": 10.7,
+        "P": 16, "Q": 16, "R": 70, "S": 10.7, "T": 10.7,
     }
     for col_letter, w in width_map.items():
         ws.column_dimensions[col_letter].width = w
