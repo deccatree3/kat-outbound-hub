@@ -19,6 +19,7 @@
 import io
 import os
 import datetime
+from copy import copy as _copy
 from typing import Dict
 
 import openpyxl
@@ -43,6 +44,28 @@ def _normalize_barcode(value) -> str:
 
 
 GIFT_KEYWORD = '선물세트'
+
+
+def _barcode_cell(bar) -> object:
+    """바코드 셀값 — 전부 숫자면 int(템플릿과 동일 표시형식), 아니면 원본 string."""
+    s = _normalize_barcode(bar)
+    return int(s) if s.isdigit() else s
+
+
+def _clone_cell_style(dst, src) -> None:
+    """src 셀의 서식(폰트/테두리/채움/정렬/표시형식/보호)을 dst 셀에 복사.
+
+    openpyxl append 행은 기본 서식이라 템플릿 행(테두리·가운데정렬·표시형식)과
+    어긋난다 → 대표 템플릿 행 스타일을 그대로 입힌다.
+    """
+    if src is None or not src.has_style:
+        return
+    dst.font = _copy(src.font)
+    dst.border = _copy(src.border)
+    dst.fill = _copy(src.fill)
+    dst.alignment = _copy(src.alignment)
+    dst.number_format = src.number_format
+    dst.protection = _copy(src.protection)
 
 
 def load_master_parent_names() -> list:
@@ -194,6 +217,19 @@ def build_bundle_xlsx(eza_bytes,
         _extras = _nbe.load_all()
     except Exception:
         _extras = []
+    # append 행에 입힐 대표 템플릿 행 스타일 출처 (append 전이라 모두 템플릿 행)
+    _set_style_row = next(iter(set_row_index_by_bar.values()), None)
+    _single_style_row = next(iter(single_row_by_name.values()), None)
+
+    def _style_append_row(row_idx, src_row):
+        if not src_row:
+            return
+        for _c in range(1, 8):
+            _clone_cell_style(ws.cell(row_idx, _c), ws.cell(src_row, _c))
+        _h = ws.row_dimensions[src_row].height
+        if _h is not None:
+            ws.row_dimensions[row_idx].height = _h
+
     _append_row = ws.max_row + 1
     _overlay_parents = set()
     # 모체 단품명 → 모체 바코드 (신규 모체 자동 단품 행 A열용; 첫 비어있지 않은 값)
@@ -207,7 +243,7 @@ def build_bundle_xlsx(eza_bytes,
         bar = _normalize_barcode(ex.get('barcode'))
         if not bar or bar in set_barcodes:
             continue  # 템플릿/이미 추가분에 있으면 skip
-        ws.cell(_append_row, 1, ex.get('barcode'))
+        ws.cell(_append_row, 1, _barcode_cell(ex.get('barcode')))
         ws.cell(_append_row, 2, ex.get('product_name'))
         ws.cell(_append_row, 3, '#')
         ws.cell(_append_row, 5, int(ex.get('set_units') or 1))
@@ -217,6 +253,7 @@ def build_bundle_xlsx(eza_bytes,
             ws.cell(_append_row, 7, parent)
             parent_name_by_set_row[_append_row] = parent
             _overlay_parents.add(parent)
+        _style_append_row(_append_row, _set_style_row)
         set_barcodes.add(bar)
         set_row_index_by_bar[bar] = _append_row
         _append_row += 1
@@ -228,11 +265,12 @@ def build_bundle_xlsx(eza_bytes,
             continue
         pb = _parent_barcode_by_name.get(parent)
         if pb:
-            ws.cell(_append_row, 1, pb)
+            ws.cell(_append_row, 1, _barcode_cell(pb))
             single_barcodes.add(pb)
         ws.cell(_append_row, 2, parent)
         ws.cell(_append_row, 3, f"=SUMIFS($F:$F,$G:$G,B{_append_row})")
         ws.cell(_append_row, 4, '#')
+        _style_append_row(_append_row, _single_style_row)
         single_row_by_name[parent] = _append_row
         _append_row += 1
 
