@@ -376,7 +376,7 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
             d_units, d_parent = _derive_bundle_set_meta(nm)
             with st.container(border=True):
                 st.markdown(f"**{nm or '(상품명 없음)'}**")
-                st.caption(f"바코드 `{bc}` · 주문수량 {u.get('qty', 0)}")
+                st.caption(f"바코드 `{bc}`")
                 ac1, ac2 = st.columns(2)
                 with ac1:
                     units = st.number_input(
