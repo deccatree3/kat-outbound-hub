@@ -44,6 +44,9 @@ def _normalize_barcode(value) -> str:
 
 
 GIFT_KEYWORD = '선물세트'
+# '선물세트'가 들어가도 번들작업 대상이 아닌 상품 (예: '스키니퓨리티 선물세트' —
+# 로켓그로스 쇼핑백 합포장 건이라 네뉴 번들이 아님).
+GIFT_EXCLUDE_KEYWORDS = ('스키니퓨리티',)
 
 
 def _barcode_cell(bar) -> object:
@@ -100,9 +103,11 @@ def load_master_parent_names() -> list:
 def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Dict[str, int], Dict[str, str]]:
     """이지어드민 확장주문검색.xls bytes → ({바코드: 상품수량 합계}, {바코드: 상품명}).
 
-    필터 (둘 다 적용):
+    필터 (모두 적용):
       - 판매처그룹 ∈ exclude_groups (기본 '캐처스') 제외 — 번들은 네뉴 전용
       - 상품명에 '선물세트' 미포함 행 제외 — 번들작업은 선물세트 건만 해당
+      - 상품명에 GIFT_EXCLUDE_KEYWORDS('스키니퓨리티' 등) 포함 행 제외 —
+        '선물세트'가 들어가도 네뉴 번들이 아닌 건
     """
     wb = xlrd.open_workbook(file_contents=data)
     ws = wb.sheet_by_index(0)
@@ -130,6 +135,8 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Di
                 continue
         name = str(ws.cell_value(r, name_idx) or '')
         if GIFT_KEYWORD not in name:
+            continue
+        if any(kw in name for kw in GIFT_EXCLUDE_KEYWORDS):
             continue
         bar = _normalize_barcode(ws.cell_value(r, bar_idx))
         qty_raw = ws.cell_value(r, qty_idx)
