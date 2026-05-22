@@ -395,11 +395,20 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
                             "신규 모체 단품명", value=d_parent,
                             key=f"nbe_parentnew_{bc}",
                             help="새 모체 — 단품 행도 자동 생성되어 단품 출고수량 집계됨")
+                        parent_bc = st.text_input(
+                            "신규 모체 바코드", value="",
+                            key=f"nbe_parentbc_{bc}",
+                            help="새 모체 단품의 바코드 — 자동 생성되는 단품 행 A열에 채워짐")
                     else:
                         parent = sel
+                        parent_bc = ""
                 if st.button("➕ 템플릿에 추가", type="primary",
                              key=f"nbe_add_{bc}"):
-                    if _nbe.upsert(bc, nm, int(units), (parent or '').strip() or None):
+                    _p = (parent or '').strip()
+                    _pbc = (parent_bc or '').strip()
+                    if sel == _NEW_PARENT and not _pbc:
+                        st.error("신규 모체 바코드를 입력해주세요.")
+                    elif _nbe.upsert(bc, nm, int(units), _p or None, _pbc or None):
                         st.success(f"추가됨: {nm} (개입수 {int(units)}). 번들파일 재생성 시 반영.")
                         st.rerun()
                     else:

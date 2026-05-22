@@ -5,12 +5,13 @@
 이 DB 테이블에 저장하고, 번들파일 생성(build_bundle_xlsx) 시 세트 행으로 병합한다.
 
 스키마:
-  barcode      TEXT PK   -- 세트 상품 바코드 (예: 8809744303840)
-  product_name TEXT      -- 세트 상품명 (예: ...류신 타블렛 단백질(60정) 선물세트(3개입))
-  set_units    INTEGER   -- 세트 개입수 (E열, 예: 3)
-  parent_name  TEXT      -- 모체 단품명 (G열, SUMIFS 집계 연결용; 템플릿 단품명과 일치해야 함)
-  note         TEXT
-  updated_at   TIMESTAMP
+  barcode        TEXT PK   -- 세트 상품 바코드 (예: 8809744303840)
+  product_name   TEXT      -- 세트 상품명 (예: ...류신 타블렛 단백질(60정) 선물세트(3개입))
+  set_units      INTEGER   -- 세트 개입수 (E열, 예: 3)
+  parent_name    TEXT      -- 모체 단품명 (G열, SUMIFS 집계 연결용; 템플릿 단품명과 일치해야 함)
+  parent_barcode TEXT      -- 모체 단품 바코드 (A열; 신규 모체 자동 단품 행에 채움)
+  note           TEXT
+  updated_at     TIMESTAMP
 """
 from typing import Dict, List, Optional
 
@@ -19,12 +20,13 @@ from db import pg
 
 SCHEMA_DDL = """
 CREATE TABLE IF NOT EXISTS nenu_bundle_extra (
-    barcode      TEXT PRIMARY KEY,
-    product_name TEXT NOT NULL,
-    set_units    INTEGER NOT NULL DEFAULT 1,
-    parent_name  TEXT,
-    note         TEXT,
-    updated_at   TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
+    barcode        TEXT PRIMARY KEY,
+    product_name   TEXT NOT NULL,
+    set_units      INTEGER NOT NULL DEFAULT 1,
+    parent_name    TEXT,
+    parent_barcode TEXT,
+    note           TEXT,
+    updated_at     TIMESTAMP DEFAULT (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
 );
 """
 
@@ -39,6 +41,10 @@ def ensure_schema() -> bool:
         conn = pg.connect()
         with conn.cursor() as cur:
             cur.execute(SCHEMA_DDL)
+            # 기존 테이블 마이그레이션 (신규 모체 바코드 컬럼)
+            cur.execute(
+                "ALTER TABLE nenu_bundle_extra "
+                "ADD COLUMN IF NOT EXISTS parent_barcode TEXT")
         conn.commit()
         conn.close()
         _ENSURED = True
@@ -48,7 +54,9 @@ def ensure_schema() -> bool:
 
 
 def upsert(barcode: str, product_name: str, set_units: int,
-           parent_name: Optional[str] = None, note: Optional[str] = None) -> bool:
+           parent_name: Optional[str] = None,
+           parent_barcode: Optional[str] = None,
+           note: Optional[str] = None) -> bool:
     """세트 SKU 오버레이 upsert. barcode 필수."""
     ensure_schema()
     bc = str(barcode or '').strip()
@@ -59,16 +67,18 @@ def upsert(barcode: str, product_name: str, set_units: int,
         with conn.cursor() as cur:
             cur.execute("""
                 INSERT INTO nenu_bundle_extra
-                    (barcode, product_name, set_units, parent_name, note)
-                VALUES (%s, %s, %s, %s, %s)
+                    (barcode, product_name, set_units, parent_name, parent_barcode, note)
+                VALUES (%s, %s, %s, %s, %s, %s)
                 ON CONFLICT (barcode) DO UPDATE SET
-                    product_name = EXCLUDED.product_name,
-                    set_units    = EXCLUDED.set_units,
-                    parent_name  = EXCLUDED.parent_name,
-                    note         = COALESCE(EXCLUDED.note, nenu_bundle_extra.note),
-                    updated_at   = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
+                    product_name   = EXCLUDED.product_name,
+                    set_units      = EXCLUDED.set_units,
+                    parent_name    = EXCLUDED.parent_name,
+                    parent_barcode = COALESCE(EXCLUDED.parent_barcode, nenu_bundle_extra.parent_barcode),
+                    note           = COALESCE(EXCLUDED.note, nenu_bundle_extra.note),
+                    updated_at     = (CURRENT_TIMESTAMP AT TIME ZONE 'Asia/Seoul')
             """, (bc, str(product_name).strip(), int(set_units or 1),
-                  (parent_name or '').strip() or None, note))
+                  (parent_name or '').strip() or None,
+                  (parent_barcode or '').strip() or None, note))
         conn.commit()
         conn.close()
         return True
@@ -83,14 +93,15 @@ def load_all() -> List[Dict]:
         conn = pg.connect()
         with conn.cursor() as cur:
             cur.execute(
-                "SELECT barcode, product_name, set_units, parent_name "
+                "SELECT barcode, product_name, set_units, parent_name, parent_barcode "
                 "FROM nenu_bundle_extra ORDER BY barcode"
             )
             rows = cur.fetchall()
         conn.close()
         return [
             {'barcode': r[0], 'product_name': r[1],
-             'set_units': r[2] or 1, 'parent_name': r[3]}
+             'set_units': r[2] or 1, 'parent_name': r[3],
+             'parent_barcode': r[4]}
             for r in rows
         ]
     except Exception:

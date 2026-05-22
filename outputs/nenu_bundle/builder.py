@@ -196,6 +196,13 @@ def build_bundle_xlsx(eza_bytes,
         _extras = []
     _append_row = ws.max_row + 1
     _overlay_parents = set()
+    # 모체 단품명 → 모체 바코드 (신규 모체 자동 단품 행 A열용; 첫 비어있지 않은 값)
+    _parent_barcode_by_name = {}
+    for ex in _extras:
+        p = (ex.get('parent_name') or '').strip()
+        pb = _normalize_barcode(ex.get('parent_barcode'))
+        if p and pb and p not in _parent_barcode_by_name:
+            _parent_barcode_by_name[p] = pb
     for ex in _extras:
         bar = _normalize_barcode(ex.get('barcode'))
         if not bar or bar in set_barcodes:
@@ -219,6 +226,10 @@ def build_bundle_xlsx(eza_bytes,
     for parent in sorted(_overlay_parents):
         if parent in single_row_by_name:
             continue
+        pb = _parent_barcode_by_name.get(parent)
+        if pb:
+            ws.cell(_append_row, 1, pb)
+            single_barcodes.add(pb)
         ws.cell(_append_row, 2, parent)
         ws.cell(_append_row, 3, f"=SUMIFS($F:$F,$G:$G,B{_append_row})")
         ws.cell(_append_row, 4, '#')
