@@ -366,9 +366,8 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     ]
     if _unmatched:
         st.error(
-            f"🆕 **번들작업 대상이나 마스터에 없는 상품 {len(_unmatched)}건** — "
-            "(A) 네뉴+선물세트는 통과했으나 (B) 템플릿 세트 행 미등록이라 채워지지 않음. "
-            "아래에서 **템플릿에 추가**하면 다음 생성부터 자동 반영됩니다."
+            f"🆕 **번들작업 대상이나 마스터에 없는 상품 {len(_unmatched)}건** "
+            "- 아래에서 템플릿에 추가해주세요"
         )
         for u in _unmatched:
             bc = str(u['barcode']); nm = str(u.get('name') or '')
