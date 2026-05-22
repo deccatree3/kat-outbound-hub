@@ -22,7 +22,7 @@ from outputs.daone.builder import (
     transform_to_daone,
     build_daone_xlsx,
 )
-from outputs.nenu_bundle.builder import build_bundle_xlsx
+from outputs.nenu_bundle.builder import build_bundle_xlsx, load_master_parent_names
 from outputs.eza.builder import (
     build_eza_waybill_xlsx, EZA_WAYBILL_DEFAULT_CARRIER,
     parse_daone_invoice_xls, parse_3pl_invoice_xlsx, build_eza_waybill_from_triples,
@@ -369,6 +369,8 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
             f"🆕 **번들작업 대상이나 마스터에 없는 상품 {len(_unmatched)}건** "
             "- 아래에서 템플릿에 추가해주세요"
         )
+        _parent_opts = load_master_parent_names()
+        _NEW_PARENT = "➕ 직접 입력 (신규 모체 추가)"
         for u in _unmatched:
             bc = str(u['barcode']); nm = str(u.get('name') or '')
             d_units, d_parent = _derive_bundle_set_meta(nm)
@@ -382,13 +384,22 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
                         key=f"nbe_units_{bc}",
                         help="세트 1개 = 단품 몇 개인지 (예: 선물세트(3개입)→3)")
                 with ac2:
-                    parent = st.text_input(
-                        "모체 단품명", value=d_parent,
-                        key=f"nbe_parent_{bc}",
-                        help="템플릿의 단품명과 정확히 일치해야 단품 출고수량 자동집계됨")
+                    sel_opts = _parent_opts + [_NEW_PARENT]
+                    sel_idx = _parent_opts.index(d_parent) if d_parent in _parent_opts else len(_parent_opts)
+                    sel = st.selectbox(
+                        "모체 단품명", sel_opts, index=sel_idx,
+                        key=f"nbe_parentsel_{bc}",
+                        help="템플릿 G열(기존 모체) 중 검색·선택. 없으면 '직접 입력'.")
+                    if sel == _NEW_PARENT:
+                        parent = st.text_input(
+                            "신규 모체 단품명", value=d_parent,
+                            key=f"nbe_parentnew_{bc}",
+                            help="새 모체 — 단품 행도 자동 생성되어 단품 출고수량 집계됨")
+                    else:
+                        parent = sel
                 if st.button("➕ 템플릿에 추가", type="primary",
                              key=f"nbe_add_{bc}"):
-                    if _nbe.upsert(bc, nm, int(units), parent.strip() or None):
+                    if _nbe.upsert(bc, nm, int(units), (parent or '').strip() or None):
                         st.success(f"추가됨: {nm} (개입수 {int(units)}). 번들파일 재생성 시 반영.")
                         st.rerun()
                     else:

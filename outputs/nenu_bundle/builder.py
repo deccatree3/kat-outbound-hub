@@ -45,6 +45,35 @@ def _normalize_barcode(value) -> str:
 GIFT_KEYWORD = '선물세트'
 
 
+def load_master_parent_names() -> list:
+    """모체 단품명 후보 — 템플릿 form 시트 **G열(2행~) 고유값** + DB 오버레이 parent. 정렬.
+
+    추가폼의 '모체 단품명' 드롭다운(검색·선택)용. 1행(헤더) 제외, 중복 제거.
+    """
+    names = set()
+    try:
+        if os.path.exists(TEMPLATE_PATH):
+            wb = openpyxl.load_workbook(TEMPLATE_PATH, read_only=True)
+            if 'form' in wb.sheetnames:
+                ws = wb['form']
+                for row in ws.iter_rows(min_row=2, min_col=7, max_col=7, values_only=True):
+                    v = row[0]
+                    if v is not None and str(v).strip():
+                        names.add(str(v).strip())
+            wb.close()
+    except Exception:
+        pass
+    try:
+        from db import nenu_bundle_extra as _nbe
+        for ex in _nbe.load_all():
+            p = (ex.get('parent_name') or '').strip()
+            if p:
+                names.add(p)
+    except Exception:
+        pass
+    return sorted(names)
+
+
 def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Dict[str, int], Dict[str, str]]:
     """이지어드민 확장주문검색.xls bytes → ({바코드: 상품수량 합계}, {바코드: 상품명}).
 
@@ -166,6 +195,7 @@ def build_bundle_xlsx(eza_bytes,
     except Exception:
         _extras = []
     _append_row = ws.max_row + 1
+    _overlay_parents = set()
     for ex in _extras:
         bar = _normalize_barcode(ex.get('barcode'))
         if not bar or bar in set_barcodes:
@@ -179,8 +209,20 @@ def build_bundle_xlsx(eza_bytes,
         if parent:
             ws.cell(_append_row, 7, parent)
             parent_name_by_set_row[_append_row] = parent
+            _overlay_parents.add(parent)
         set_barcodes.add(bar)
         set_row_index_by_bar[bar] = _append_row
+        _append_row += 1
+
+    # 오버레이 세트의 모체 단품이 템플릿 단품에 없으면 단품 행도 append
+    # (단품 출고수량 C=SUMIFS 가 그 모체의 세트들을 자동 집계하도록)
+    for parent in sorted(_overlay_parents):
+        if parent in single_row_by_name:
+            continue
+        ws.cell(_append_row, 2, parent)
+        ws.cell(_append_row, 3, f"=SUMIFS($F:$F,$G:$G,B{_append_row})")
+        ws.cell(_append_row, 4, '#')
+        single_row_by_name[parent] = _append_row
         _append_row += 1
 
     # 세트 D 채움 + visible 결정
