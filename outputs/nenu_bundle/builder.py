@@ -45,8 +45,8 @@ def _normalize_barcode(value) -> str:
 GIFT_KEYWORD = '선물세트'
 
 
-def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> Dict[str, int]:
-    """이지어드민 확장주문검색.xls bytes → {바코드: 상품수량 합계}.
+def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Dict[str, int], Dict[str, str]]:
+    """이지어드민 확장주문검색.xls bytes → ({바코드: 상품수량 합계}, {바코드: 상품명}).
 
     필터 (둘 다 적용):
       - 판매처그룹 ∈ exclude_groups (기본 '캐처스') 제외 — 번들은 네뉴 전용
@@ -70,6 +70,7 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> Dict[str
     excluded = set(exclude_groups or ())
 
     totals: Dict[str, int] = {}
+    names: Dict[str, str] = {}
     for r in range(1, ws.nrows):
         if grp_idx is not None:
             g = str(ws.cell_value(r, grp_idx)).strip()
@@ -86,7 +87,8 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> Dict[str
             qty = 0
         if bar:
             totals[bar] = totals.get(bar, 0) + qty
-    return totals
+            names.setdefault(bar, name.strip())
+    return totals, names
 
 
 def build_bundle_xlsx(eza_bytes,
@@ -98,13 +100,15 @@ def build_bundle_xlsx(eza_bytes,
     if not os.path.exists(TEMPLATE_PATH):
         raise RuntimeError(f"마스터 템플릿이 없습니다: {TEMPLATE_PATH}")
 
-    if isinstance(eza_bytes, (list, tuple)):
-        eza_totals: Dict[str, int] = {}
-        for b in eza_bytes:
-            for bar, qty in parse_eza_for_bundle(b).items():
-                eza_totals[bar] = eza_totals.get(bar, 0) + qty
-    else:
-        eza_totals = parse_eza_for_bundle(eza_bytes)
+    eza_totals: Dict[str, int] = {}
+    eza_names: Dict[str, str] = {}
+    sources = eza_bytes if isinstance(eza_bytes, (list, tuple)) else [eza_bytes]
+    for b in sources:
+        t, n = parse_eza_for_bundle(b)
+        for bar, qty in t.items():
+            eza_totals[bar] = eza_totals.get(bar, 0) + qty
+        for bar, nm in n.items():
+            eza_names.setdefault(bar, nm)
 
     wb = openpyxl.load_workbook(TEMPLATE_PATH)
     if 'form' not in wb.sheetnames:
@@ -154,6 +158,31 @@ def build_bundle_xlsx(eza_bytes,
             if b_val:
                 single_row_by_name[str(b_val).strip()] = row
 
+    # ── DB 오버레이 병합 — 마스터 템플릿에 없는 신규 선물세트 세트 행을 append ──
+    # (template.xlsx 는 git 레포 파일이라 런타임 직접수정 불가 → DB 에 보관, 여기서 합성)
+    try:
+        from db import nenu_bundle_extra as _nbe
+        _extras = _nbe.load_all()
+    except Exception:
+        _extras = []
+    _append_row = ws.max_row + 1
+    for ex in _extras:
+        bar = _normalize_barcode(ex.get('barcode'))
+        if not bar or bar in set_barcodes:
+            continue  # 템플릿/이미 추가분에 있으면 skip
+        ws.cell(_append_row, 1, ex.get('barcode'))
+        ws.cell(_append_row, 2, ex.get('product_name'))
+        ws.cell(_append_row, 3, '#')
+        ws.cell(_append_row, 5, int(ex.get('set_units') or 1))
+        ws.cell(_append_row, 6, f"=D{_append_row}*E{_append_row}")
+        parent = (ex.get('parent_name') or '').strip()
+        if parent:
+            ws.cell(_append_row, 7, parent)
+            parent_name_by_set_row[_append_row] = parent
+        set_barcodes.add(bar)
+        set_row_index_by_bar[bar] = _append_row
+        _append_row += 1
+
     # 세트 D 채움 + visible 결정
     set_rows_filled = 0
     total_qty = 0
@@ -188,6 +217,11 @@ def build_bundle_xlsx(eza_bytes,
     set_matched = sorted(eza_bars & set_barcodes)
     single_matched = sorted(eza_bars & single_barcodes)
     unmatched = sorted(eza_bars - set_barcodes - single_barcodes)
+    # 미매칭 상세 (얼럿/템플릿 추가폼용) — 상품명·수량 동반
+    unmatched_detail = [
+        {'barcode': b, 'name': eza_names.get(b, ''), 'qty': eza_totals.get(b, 0)}
+        for b in unmatched
+    ]
 
     buf = io.BytesIO()
     wb.save(buf)
@@ -198,6 +232,7 @@ def build_bundle_xlsx(eza_bytes,
         'set_matched_barcodes': set_matched,
         'single_matched_barcodes': single_matched,
         'unmatched_barcodes': unmatched,
+        'unmatched_detail': unmatched_detail,
         'eza_total_rows': sum(1 for v in eza_totals.values() if v),
         'eza_total_qty': sum(eza_totals.values()),
         'master_set_count': len(set_barcodes),

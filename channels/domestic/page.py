@@ -8,11 +8,14 @@ EZA 확장주문검색.xls 한 번 업로드 → 두 출력 동시 제공:
 EZA ↔ 다원 자동 연동은 네뉴만 활성. 캐처스는 다원 수기 업로드.
 """
 import datetime
+import re
 from pathlib import Path
 
 import pandas as pd
 import streamlit as st
 from sqlalchemy import select
+
+from db import nenu_bundle_extra as _nbe
 
 from outputs.daone.builder import (
     parse_eza_xls,
@@ -321,6 +324,23 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
     _render_daone_download(shipped, work_date, sequence, source_filename, session_info)
 
 
+def _derive_bundle_set_meta(name: str) -> tuple[int, str]:
+    """상품명에서 (세트 개입수, 모체 단품명) 추출 — 추가폼 prefill 용.
+
+    '...단백질(60정) 선물세트(3개입)' → (3, '...단백질(60정)')
+    '...(번들/2개입)'                → (2, '...')
+    매칭 실패 시 (1, 원본명).
+    """
+    s = (name or '').strip()
+    m = re.search(
+        r'\s*(?:선물세트\s*\((\d+)\s*개입\)|\(\s*번들\s*/\s*(\d+)\s*개입\s*\))\s*$', s)
+    if not m:
+        return 1, s
+    units = int(m.group(1) or m.group(2) or 1)
+    parent = s[:m.start()].strip()
+    return units, (parent or s)
+
+
 def _section_bundle(eza_bytes_list, work_date, sequence):
     st.markdown("### 📦 [네뉴]번들작업요청")
     st.caption(
@@ -341,13 +361,39 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     c4.metric("이지어드민(네뉴) 종/수량", f"{info['eza_total_rows']} / {info['eza_total_qty']}")
     st.caption(f"마스터 = 단품 {info['master_single_count']}개 + 세트 {info['master_set_count']}개.")
 
-    if info['unmatched_barcodes']:
-        st.warning(
-            f"⚠️ 이지어드민(네뉴)에 있으나 마스터에 없는 바코드 **{len(info['unmatched_barcodes'])}건** — "
-            "신규 SKU 또는 마스터 누락 가능성. `outputs/nenu_bundle/template.xlsx` 검토 필요."
+    _unmatched = info.get('unmatched_detail') or [
+        {'barcode': b, 'name': '', 'qty': 0} for b in info['unmatched_barcodes']
+    ]
+    if _unmatched:
+        st.error(
+            f"🆕 **번들작업 대상이나 마스터에 없는 상품 {len(_unmatched)}건** — "
+            "(A) 네뉴+선물세트는 통과했으나 (B) 템플릿 세트 행 미등록이라 채워지지 않음. "
+            "아래에서 **템플릿에 추가**하면 다음 생성부터 자동 반영됩니다."
         )
-        with st.expander("미매칭 바코드 목록", expanded=False):
-            st.code('\n'.join(info['unmatched_barcodes']))
+        for u in _unmatched:
+            bc = str(u['barcode']); nm = str(u.get('name') or '')
+            d_units, d_parent = _derive_bundle_set_meta(nm)
+            with st.container(border=True):
+                st.markdown(f"**{nm or '(상품명 없음)'}**")
+                st.caption(f"바코드 `{bc}` · 주문수량 {u.get('qty', 0)}")
+                ac1, ac2 = st.columns(2)
+                with ac1:
+                    units = st.number_input(
+                        "세트 개입수", min_value=1, step=1, value=int(d_units or 1),
+                        key=f"nbe_units_{bc}",
+                        help="세트 1개 = 단품 몇 개인지 (예: 선물세트(3개입)→3)")
+                with ac2:
+                    parent = st.text_input(
+                        "모체 단품명", value=d_parent,
+                        key=f"nbe_parent_{bc}",
+                        help="템플릿의 단품명과 정확히 일치해야 단품 출고수량 자동집계됨")
+                if st.button("➕ 템플릿에 추가", type="primary",
+                             key=f"nbe_add_{bc}"):
+                    if _nbe.upsert(bc, nm, int(units), parent.strip() or None):
+                        st.success(f"추가됨: {nm} (개입수 {int(units)}). 번들파일 재생성 시 반영.")
+                        st.rerun()
+                    else:
+                        st.error("템플릿 추가 실패 (DB 연결 확인).")
 
     if info['single_matched_barcodes']:
         with st.expander(
