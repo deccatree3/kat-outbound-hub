@@ -44,9 +44,27 @@ def _normalize_barcode(value) -> str:
 
 
 GIFT_KEYWORD = '선물세트'
-# '선물세트'가 들어가도 번들작업 대상이 아닌 상품 (예: '스키니퓨리티 선물세트' —
-# 로켓그로스 쇼핑백 합포장 건이라 네뉴 번들이 아님).
+# '선물세트'가 들어가도 번들작업 대상이 아닌 상품.
+# (1) 키워드 단위 제외 — 상품명에 포함되면 제외 (예: '스키니퓨리티 선물세트').
 GIFT_EXCLUDE_KEYWORDS = ('스키니퓨리티',)
+# (2) 정확한 상품명 단위 제외 — 지함/쇼핑백 등 포장재성 선물세트(네뉴 번들 아님).
+#     공백 정규화(_norm_name) 후 정확히 일치하면 제외.
+GIFT_EXCLUDE_NAMES = (
+    '퍼펙토 선물세트 6개입(단상자) 지함',
+    '퍼펙토 선물세트 3개입(단상자) 지함',
+    '퍼펙토 선물세트 3개입(용기) 쇼핑백',
+    '퍼펙토 선물세트 3개입(용기) 지함',
+    '스키니퓨리티 선물세트 쇼핑백',
+    '퍼펙토 선물세트 3개입(단상자) 쇼핑백',
+)
+
+
+def _norm_name(s) -> str:
+    """상품명 공백 정규화 — 앞뒤 공백 제거 + 연속 공백 1칸으로."""
+    return ' '.join(str(s or '').split())
+
+
+_GIFT_EXCLUDE_NAMES_NORM = frozenset(_norm_name(n) for n in GIFT_EXCLUDE_NAMES)
 
 
 def _barcode_cell(bar) -> object:
@@ -108,6 +126,8 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Di
       - 상품명에 '선물세트' 미포함 행 제외 — 번들작업은 선물세트 건만 해당
       - 상품명에 GIFT_EXCLUDE_KEYWORDS('스키니퓨리티' 등) 포함 행 제외 —
         '선물세트'가 들어가도 네뉴 번들이 아닌 건
+      - 상품명이 GIFT_EXCLUDE_NAMES(정확 일치, 공백정규화) 에 들면 제외 —
+        지함/쇼핑백 등 포장재성 선물세트
     """
     wb = xlrd.open_workbook(file_contents=data)
     ws = wb.sheet_by_index(0)
@@ -137,6 +157,8 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Di
         if GIFT_KEYWORD not in name:
             continue
         if any(kw in name for kw in GIFT_EXCLUDE_KEYWORDS):
+            continue
+        if _norm_name(name) in _GIFT_EXCLUDE_NAMES_NORM:
             continue
         bar = _normalize_barcode(ws.cell_value(r, bar_idx))
         qty_raw = ws.cell_value(r, qty_idx)
