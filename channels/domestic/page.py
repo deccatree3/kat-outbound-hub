@@ -164,7 +164,7 @@ def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
     st.markdown("### 📋 [캐처스]다원 출고요청")
     st.caption(
         f"판매처그룹='캐처스' 행만 변환. 공급처='{_3PL_SUPPLIER}' 행은 추가 제외 "
-        "(별도 [캐처스]3PL-자연미앤 섹션에서 처리). "
+        "(별도 [캐처스]3PL-자연앤미 섹션에서 처리). "
         "캐처스 WMS 재고현황 동시 업로드 시 네뉴 매입리스트 품절분 합포장 홀딩."
     )
 
@@ -440,8 +440,8 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
 
 
 def _section_3pl(eza_rows, work_date, sequence):
-    """캐처스 3PL-자연미앤 출고요청서 (공급처 필터)."""
-    st.markdown("### 🥡 [캐처스]3PL-자연미앤")
+    """캐처스 3PL-자연앤미 출고요청서 (공급처 필터)."""
+    st.markdown("### 🥡 [캐처스]3PL-자연앤미")
     st.caption(
         f"이지어드민 의 공급처 = `{_3PL_SUPPLIER}` 행만 추출. 25컬럼 양식. "
         "몰명 컬럼은 빈값 (이지어드민 에 없음)."
@@ -472,7 +472,7 @@ def _section_3pl(eza_rows, work_date, sequence):
         return
 
     yymmdd = work_date.strftime('%y%m%d')
-    out_name = f"{yymmdd}_{int(sequence)}차_3PL자연미앤출고요청서(주문건수 {unique_orders}, 주문수량 {total_qty}).xls"
+    out_name = f"{yymmdd}_{int(sequence)}차_3PL자연앤미출고요청서(주문건수 {unique_orders}, 주문수량 {total_qty}).xls"
     st.download_button(
         f"📥 {out_name}",
         data=xlsx_bytes,
