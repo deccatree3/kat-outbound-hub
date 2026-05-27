@@ -331,7 +331,7 @@ def build_kse_kr_order_xlsx(daone_rows: List[Dict]) -> bytes:
     daone_rows (다원 19컬럼 dict) 기반으로 추출:
       몰명         ← 몰명(또는 몰코드)
       출하의뢰번호  ← 출하의뢰번호
-      고객주문번호  ← 출하의뢰항번 (큐텐 주문번호)
+      고객주문번호  ← 장바구니번호 (큐텐 카트번호, 빈값→출하의뢰항번=주문번호 폴백)
       접수번호      ← 주문번호 (KSE 송장번호)
       제품코드      ← 제품코드
       주문수량      ← 주문수량
@@ -348,7 +348,7 @@ def build_kse_kr_order_xlsx(daone_rows: List[Dict]) -> bytes:
         ws.append([
             r.get('몰명(또는 몰코드)', DEFAULT_몰코드),
             r.get('출하의뢰번호', ''),
-            r.get('출하의뢰항번', ''),  # 큐텐 주문번호
+            r.get('_cart_no', '') or r.get('출하의뢰항번', ''),  # 장바구니번호 (폴백: 큐텐 주문번호)
             r.get('고객주문번호', ''),   # KSE 송장(접수)번호
             r.get('제품코드', ''),
             r.get('주문수량', ''),
@@ -449,6 +449,8 @@ def kse_oms_to_daone_with_mapping(kse_rows: List[Dict], mappings: Dict) -> Dict:
             # 패킹 그룹 키 보존 (도착지송장번호 + 장바구니번호 → 같은 인박스NO)
             d['_group_key']      = (str(k.get('도착지송장번호', '')),
                                     str(k.get('장바구니번호', '')))
+            # 발주서 고객주문번호용 — 큐텐 장바구니번호 (빈값이면 build 단계서 주문번호 폴백)
+            d['_cart_no']        = str(k.get('장바구니번호', ''))
             # 다원 → KSE 한국 집하지 고정 정보 (일본 고객 정보 아님)
             # 도착지송장번호 + KSE 송장 PDF 는 인박스에 부착되어 KSE 가 일본으로 이동.
             d['주문자명']         = KSE_KR_DEPOT['name']
