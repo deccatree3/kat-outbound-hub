@@ -706,33 +706,58 @@ def render(brand: str):
                         "신규 업로드하지 않은 PDF/필드는 그대로 유지됩니다."
                     ),
                 ):
-                    with get_session() as ps:
-                        pdb_ctx = ps.get(InboundPlan, plan.id)
-                        for k, (old, new) in _changed_fields.items():
-                            setattr(pdb_ctx, k, new)
-                        # 이미 입고확정 이후 plan 이면 변경 이력을 결과로그에 1줄 추가
-                        if (pdb_ctx.status or "") in (
-                            "inbound_confirmed", "verified", "completed",
-                        ):
-                            ps.add(CoupangResultLog(
-                                company_name=brand_company,
-                                milkrun_id=pdb_ctx.milkrun_id or "",
-                                fc_name=pdb_ctx.fc_name or "",
-                                arrival_date=pdb_ctx.arrival_date,
-                                total_pallets=pdb_ctx.total_pallets,
-                                total_boxes=None,
-                                total_skus=None,
-                                plan_id=plan.id,
-                                label_filename=None,
-                                attachment_filename=aname,
-                            ))
-                        ps.commit()
-                    # PlanFile 도 신규 업로드 파일로 교체 (보류분이 있으면)
-                    if _pending_replace_pdfs:
-                        save_plan_files(plan.id, _pending_replace_pdfs)
-                    st.session_state.pop(_ignore_key, None)
-                    st.success("✅ 발주 변경 반영됨")
-                    st.rerun()
+                    try:
+                        _log_skipped_reason = None
+                        with get_session() as ps:
+                            pdb_ctx = ps.get(InboundPlan, plan.id)
+                            for k, (old, new) in _changed_fields.items():
+                                setattr(pdb_ctx, k, new)
+                            # 이미 입고확정 이후 plan 이면 변경 이력을 결과로그에 1줄 추가.
+                            # 단, (company, milkrun_id) UNIQUE 충돌 시 기존 행이 있으므로
+                            # 중복 INSERT 회피 — 같은 milkrun 으로 되돌리는 케이스 등.
+                            if (pdb_ctx.status or "") in (
+                                "inbound_confirmed", "verified", "completed",
+                            ):
+                                _mid = pdb_ctx.milkrun_id or ""
+                                _existing_log = None
+                                if _mid:
+                                    _existing_log = ps.execute(
+                                        select(CoupangResultLog).where(
+                                            CoupangResultLog.company_name == brand_company,
+                                            CoupangResultLog.milkrun_id == _mid,
+                                        )
+                                    ).scalar_one_or_none()
+                                if _existing_log is None:
+                                    ps.add(CoupangResultLog(
+                                        company_name=brand_company,
+                                        milkrun_id=_mid,
+                                        fc_name=pdb_ctx.fc_name or "",
+                                        arrival_date=pdb_ctx.arrival_date,
+                                        total_pallets=pdb_ctx.total_pallets,
+                                        total_boxes=None,
+                                        total_skus=None,
+                                        plan_id=plan.id,
+                                        label_filename=None,
+                                        attachment_filename=aname,
+                                    ))
+                                else:
+                                    _log_skipped_reason = (
+                                        f"milkrun `{_mid}` 결과로그가 이미 있음 "
+                                        f"(plan #{_existing_log.plan_id}, "
+                                        f"FC={_existing_log.fc_name}, "
+                                        f"기록 {_existing_log.verified_at:%Y-%m-%d %H:%M})"
+                                    )
+                            ps.commit()
+                        # PlanFile 도 신규 업로드 파일로 교체 (보류분이 있으면)
+                        if _pending_replace_pdfs:
+                            save_plan_files(plan.id, _pending_replace_pdfs)
+                        st.session_state.pop(_ignore_key, None)
+                        st.success("✅ 발주 변경 반영됨")
+                        if _log_skipped_reason:
+                            st.info(f"ℹ️ 변경 이력 로그는 건너뜀 — {_log_skipped_reason}.")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"변경 반영 실패: {ex}")
             with c_ignore:
                 if st.button(
                     "↩ 무시 (기존 유지)",
@@ -1048,15 +1073,27 @@ def render(brand: str):
                                             dbi.barcode_attached = bc7
                                             dbi.barcode_type = bt7
                             tb = sum(s.boxes for s in planned)
-                            s4.add(CoupangResultLog(
-                                company_name=brand_company,
-                                milkrun_id=_derived_milkrun_id or "",
-                                fc_name=meta['fc_name'], arrival_date=meta['arrival_date'],
-                                total_pallets=pa.pallet_count, total_boxes=tb,
-                                total_skus=len([s for s in planned if s.boxes > 0]),
-                                plan_id=plan.id,
-                                label_filename=lname, attachment_filename=aname,
-                            ))
+                            # UNIQUE(company, milkrun_id) 중복 회피 — 같은 milkrun 으로
+                            # 두 번째 입고확정 (예: 재확정 사이클) 진입 시 기존 행 보존.
+                            _mid_now = _derived_milkrun_id or ""
+                            _existing_log_now = None
+                            if _mid_now:
+                                _existing_log_now = s4.execute(
+                                    select(CoupangResultLog).where(
+                                        CoupangResultLog.company_name == brand_company,
+                                        CoupangResultLog.milkrun_id == _mid_now,
+                                    )
+                                ).scalar_one_or_none()
+                            if _existing_log_now is None:
+                                s4.add(CoupangResultLog(
+                                    company_name=brand_company,
+                                    milkrun_id=_mid_now,
+                                    fc_name=meta['fc_name'], arrival_date=meta['arrival_date'],
+                                    total_pallets=pa.pallet_count, total_boxes=tb,
+                                    total_skus=len([s for s in planned if s.boxes > 0]),
+                                    plan_id=plan.id,
+                                    label_filename=lname, attachment_filename=aname,
+                                ))
                             s4.commit()
                         st.success(f"✅ 입고확정 (plan #{plan.id}). 수량 잠금됨.")
                         st.rerun()
