@@ -466,14 +466,19 @@ def render(brand: str):
     )
 
     label_pdf = attach_pdf = invoice_pdf = None
+    # *_fresh = 사용자가 이번 렌더에 신규 업로드한 것 (DB fallback과 구분)
+    label_pdf_fresh = attach_pdf_fresh = invoice_pdf_fresh = False
     for f in (pdf_up or []):
         nm = f.name.lower()
         if "label" in nm or "barcode" in nm:
             label_pdf = f
+            label_pdf_fresh = True
         elif "물류부착" in f.name or "부착문서" in f.name:
             attach_pdf = f
+            attach_pdf_fresh = True
         elif "물류동봉" in f.name or "동봉문서" in f.name:
             invoice_pdf = f
+            invoice_pdf_fresh = True
 
     # DB fallback
     if not label_pdf and "label_pdf" in plan_files:
@@ -542,16 +547,29 @@ def render(brand: str):
         ib = invoice_pdf.getvalue() if hasattr(invoice_pdf, 'getvalue') else invoice_pdf.read()
         iname = getattr(invoice_pdf, 'name', 'invoice.pdf')
 
-    # PDF 신규 → DB 저장 (label 은 업로드 시에만)
+    # PDF 저장 정책:
+    #   최초 (DB 미존재) — 신규 업로드 시 즉시 저장
+    #   교체 (DB 존재)   — 즉시 저장하지 않고, 아래 "변경하기" 결정 시까지 보류
+    #                     (혹은 차이 없으면 그대로 두고 새 파일은 메모리에서만 사용)
     new_pdfs: dict[str, tuple[str, bytes]] = {}
-    if lb and "label_pdf" not in plan_files:
+    if lb and label_pdf_fresh and "label_pdf" not in plan_files:
         new_pdfs["label_pdf"] = (lname, lb)
-    if "attach_pdf" not in plan_files:
+    if attach_pdf_fresh and "attach_pdf" not in plan_files:
         new_pdfs["attach_pdf"] = (aname, ab)
-    if ib and "invoice_pdf" not in plan_files:
+    if ib and invoice_pdf_fresh and "invoice_pdf" not in plan_files:
         new_pdfs["invoice_pdf"] = (iname, ib)
     if new_pdfs:
         save_plan_files(plan.id, new_pdfs)
+
+    # 교체 후보 — 이미 PlanFile 에 있는 항목을 신규로 덮어쓰기 위함.
+    # "변경하기" 클릭 시 한꺼번에 save_plan_files 로 갱신.
+    _pending_replace_pdfs: dict[str, tuple[str, bytes]] = {}
+    if lb and label_pdf_fresh and "label_pdf" in plan_files:
+        _pending_replace_pdfs["label_pdf"] = (lname, lb)
+    if attach_pdf_fresh and "attach_pdf" in plan_files:
+        _pending_replace_pdfs["attach_pdf"] = (aname, ab)
+    if ib and invoice_pdf_fresh and "invoice_pdf" in plan_files:
+        _pending_replace_pdfs["invoice_pdf"] = (iname, ib)
 
     # 라벨 없으면 빈 dict — 다운스트림 .get(bc) 안전, label-기대 SKU 시만 경고
     labels_parsed = parse_barcode_labels(lb) if lb else {}
@@ -614,23 +632,111 @@ def render(brand: str):
     if _derived_milkrun_id:
         meta['milkrun_id'] = _derived_milkrun_id
 
-    # 첨부 파싱 결과를 plan 에 영구 반영 → 다음 렌더 시 컨텍스트 바 갱신
-    _ctx_changed = False
+    # 첨부 파싱 결과 vs plan 비교 — 첫 설정/변경 케이스 구분.
+    #   첫 설정 (plan 값 없음)         → 자동 반영 (신규 발주 흐름 유지)
+    #   변경 (plan 값 있고 attachment 와 다름)
+    #                                  → 사용자에게 "변경하기/무시" 명시 확인 (자동 덮어쓰기 금지)
+    _first_time_fields: dict = {}
+    _changed_fields: dict = {}
     with get_session() as ps:
         pdb_ctx = ps.get(InboundPlan, plan.id)
-        if attachment.fc_name and pdb_ctx.fc_name != attachment.fc_name:
-            pdb_ctx.fc_name = attachment.fc_name
-            _ctx_changed = True
-        if attachment.arrival_date and pdb_ctx.arrival_date != attachment.arrival_date:
-            pdb_ctx.arrival_date = attachment.arrival_date
-            _ctx_changed = True
-        if _derived_milkrun_id and pdb_ctx.milkrun_id != _derived_milkrun_id:
-            pdb_ctx.milkrun_id = _derived_milkrun_id
-            _ctx_changed = True
-        if _ctx_changed:
+        if attachment.fc_name:
+            if not pdb_ctx.fc_name:
+                _first_time_fields['fc_name'] = attachment.fc_name
+            elif pdb_ctx.fc_name != attachment.fc_name:
+                _changed_fields['fc_name'] = (pdb_ctx.fc_name, attachment.fc_name)
+        if attachment.arrival_date:
+            if not pdb_ctx.arrival_date:
+                _first_time_fields['arrival_date'] = attachment.arrival_date
+            elif pdb_ctx.arrival_date != attachment.arrival_date:
+                _changed_fields['arrival_date'] = (pdb_ctx.arrival_date, attachment.arrival_date)
+        if _derived_milkrun_id:
+            if not pdb_ctx.milkrun_id:
+                _first_time_fields['milkrun_id'] = _derived_milkrun_id
+            elif pdb_ctx.milkrun_id != _derived_milkrun_id:
+                _changed_fields['milkrun_id'] = (pdb_ctx.milkrun_id, _derived_milkrun_id)
+
+    # 첫 설정 — 자동 반영 후 rerun
+    if _first_time_fields:
+        with get_session() as ps:
+            pdb_ctx = ps.get(InboundPlan, plan.id)
+            for k, v in _first_time_fields.items():
+                setattr(pdb_ctx, k, v)
             ps.commit()
-    if _ctx_changed:
         st.rerun()
+
+    # 변경 감지 — 명시 확인 UI
+    if _changed_fields:
+        _diff_sig = tuple(sorted(
+            (k, str(old), str(new)) for k, (old, new) in _changed_fields.items()
+        ))
+        _ignore_key = f"pkg_{brand}_ignore_diff_{plan.id}"
+        _ignored_sig = st.session_state.get(_ignore_key)
+
+        if _ignored_sig != _diff_sig:
+            st.warning("⚠️ 부착문서 내용이 기존 발주와 다릅니다")
+            _labels = {'fc_name': 'FC', 'arrival_date': '입고일', 'milkrun_id': 'milkrun_id'}
+            for k, (old, new) in _changed_fields.items():
+                st.markdown(f"  - **{_labels.get(k, k)}**: `{old}` → `{new}`")
+            c_apply, c_ignore = st.columns(2)
+            with c_apply:
+                if st.button(
+                    "✅ 새 부착문서대로 변경",
+                    key=f"pkg_{brand}_apply_change_{plan.id}",
+                    type="primary", width="stretch",
+                    help="발주의 FC/입고일/milkrun을 새 부착문서 값으로 갱신하고 PDF도 교체합니다.",
+                ):
+                    with get_session() as ps:
+                        pdb_ctx = ps.get(InboundPlan, plan.id)
+                        for k, (old, new) in _changed_fields.items():
+                            setattr(pdb_ctx, k, new)
+                        # 이미 입고확정 이후 plan 이면 변경 이력을 결과로그에 1줄 추가
+                        if (pdb_ctx.status or "") in (
+                            "inbound_confirmed", "verified", "completed",
+                        ):
+                            ps.add(CoupangResultLog(
+                                company_name=brand_company,
+                                milkrun_id=pdb_ctx.milkrun_id or "",
+                                fc_name=pdb_ctx.fc_name or "",
+                                arrival_date=pdb_ctx.arrival_date,
+                                total_pallets=pdb_ctx.total_pallets,
+                                total_boxes=None,
+                                total_skus=None,
+                                plan_id=plan.id,
+                                label_filename=None,
+                                attachment_filename=aname,
+                            ))
+                        ps.commit()
+                    # PlanFile 도 신규 업로드 파일로 교체 (보류분이 있으면)
+                    if _pending_replace_pdfs:
+                        save_plan_files(plan.id, _pending_replace_pdfs)
+                    st.session_state.pop(_ignore_key, None)
+                    st.success("✅ 발주 변경 반영됨")
+                    st.rerun()
+            with c_ignore:
+                if st.button(
+                    "↩ 무시 (기존 유지)",
+                    key=f"pkg_{brand}_ignore_change_{plan.id}",
+                    width="stretch",
+                    help="기존 등록된 FC/입고일/milkrun을 유지합니다. 신규 업로드 PDF는 DB에 저장하지 않고 메모리에서만 사용.",
+                ):
+                    st.session_state[_ignore_key] = _diff_sig
+                    st.rerun()
+            return  # 결정 전엔 하단 검수/확정 UI 차단
+        else:
+            # 무시 선택됨 — meta 를 plan 기존값으로 되돌려 다운스트림 일관성 유지
+            if 'fc_name' in _changed_fields and plan.fc_name:
+                meta['fc_name'] = plan.fc_name
+            if 'arrival_date' in _changed_fields and plan.arrival_date:
+                meta['arrival_date'] = plan.arrival_date
+            if 'milkrun_id' in _changed_fields and plan.milkrun_id:
+                meta['milkrun_id'] = plan.milkrun_id
+                _derived_milkrun_id = plan.milkrun_id
+            st.info(
+                f"ℹ️ 부착문서 차이를 무시하고 기존 발주를 유지: "
+                f"FC=`{plan.fc_name}` · 입고=`{plan.arrival_date}` · milkrun=`{plan.milkrun_id}`. "
+                "되돌리려면 부착문서 PDF를 다시 업로드하세요."
+            )
 
     # PlannedSku 빌드
     planned: list[PlannedSku] = []
