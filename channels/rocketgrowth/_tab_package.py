@@ -636,25 +636,39 @@ def render(brand: str):
     #   첫 설정 (plan 값 없음)         → 자동 반영 (신규 발주 흐름 유지)
     #   변경 (plan 값 있고 attachment 와 다름)
     #                                  → 사용자에게 "변경하기/무시" 명시 확인 (자동 덮어쓰기 금지)
+    #
+    # 변경 감지는 **신규 업로드된 PDF 에서 파생된 필드만** 대상. DB fallback PDF 는
+    # 저장 당시 plan 과 정합성이 맞춰진 것이므로 신뢰. 이렇게 안 하면 사용자가 부착문서만
+    # 새로 올리고 거래명세서는 옛것(DB fallback)을 쓸 때 옛 milkrun 으로 역방향 배너가 뜸.
+    _is_parcel = (plan.shipment_type or 'milkrun') == 'parcel'
+    _fc_src_fresh = attach_pdf_fresh
+    _arr_src_fresh = attach_pdf_fresh
+    _mid_src_fresh = attach_pdf_fresh if _is_parcel else invoice_pdf_fresh
+    _mid_src_label = '부착문서' if _is_parcel else '거래명세서'
+
     _first_time_fields: dict = {}
     _changed_fields: dict = {}
+    _change_sources: dict = {}  # 배너에 표시할 출처 라벨
     with get_session() as ps:
         pdb_ctx = ps.get(InboundPlan, plan.id)
         if attachment.fc_name:
             if not pdb_ctx.fc_name:
                 _first_time_fields['fc_name'] = attachment.fc_name
-            elif pdb_ctx.fc_name != attachment.fc_name:
+            elif pdb_ctx.fc_name != attachment.fc_name and _fc_src_fresh:
                 _changed_fields['fc_name'] = (pdb_ctx.fc_name, attachment.fc_name)
+                _change_sources['fc_name'] = '부착문서'
         if attachment.arrival_date:
             if not pdb_ctx.arrival_date:
                 _first_time_fields['arrival_date'] = attachment.arrival_date
-            elif pdb_ctx.arrival_date != attachment.arrival_date:
+            elif pdb_ctx.arrival_date != attachment.arrival_date and _arr_src_fresh:
                 _changed_fields['arrival_date'] = (pdb_ctx.arrival_date, attachment.arrival_date)
+                _change_sources['arrival_date'] = '부착문서'
         if _derived_milkrun_id:
             if not pdb_ctx.milkrun_id:
                 _first_time_fields['milkrun_id'] = _derived_milkrun_id
-            elif pdb_ctx.milkrun_id != _derived_milkrun_id:
+            elif pdb_ctx.milkrun_id != _derived_milkrun_id and _mid_src_fresh:
                 _changed_fields['milkrun_id'] = (pdb_ctx.milkrun_id, _derived_milkrun_id)
+                _change_sources['milkrun_id'] = _mid_src_label
 
     # 첫 설정 — 자동 반영 후 rerun
     if _first_time_fields:
@@ -674,10 +688,12 @@ def render(brand: str):
         _ignored_sig = st.session_state.get(_ignore_key)
 
         if _ignored_sig != _diff_sig:
-            st.warning("⚠️ 부착문서 내용이 기존 발주와 다릅니다")
+            st.warning("⚠️ 새로 업로드한 PDF 의 내용이 기존 발주와 다릅니다")
             _labels = {'fc_name': 'FC', 'arrival_date': '입고일', 'milkrun_id': 'milkrun_id'}
             for k, (old, new) in _changed_fields.items():
-                st.markdown(f"  - **{_labels.get(k, k)}**: `{old}` → `{new}`")
+                src = _change_sources.get(k, '')
+                src_tag = f" *({src})*" if src else ''
+                st.markdown(f"  - **{_labels.get(k, k)}**{src_tag}: `{old}` → `{new}`")
             c_apply, c_ignore = st.columns(2)
             with c_apply:
                 if st.button(
