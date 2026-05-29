@@ -697,10 +697,14 @@ def render(brand: str):
             c_apply, c_ignore = st.columns(2)
             with c_apply:
                 if st.button(
-                    "✅ 새 부착문서대로 변경",
+                    "✅ 위 변경사항 반영",
                     key=f"pkg_{brand}_apply_change_{plan.id}",
                     type="primary", width="stretch",
-                    help="발주의 FC/입고일/milkrun을 새 부착문서 값으로 갱신하고 PDF도 교체합니다.",
+                    help=(
+                        "이번에 신규 업로드한 PDF 의 값으로 위 필드(들)을 갱신하고, "
+                        "신규 업로드한 PDF 들을 PlanFile 에 교체 저장합니다. "
+                        "신규 업로드하지 않은 PDF/필드는 그대로 유지됩니다."
+                    ),
                 ):
                     with get_session() as ps:
                         pdb_ctx = ps.get(InboundPlan, plan.id)
