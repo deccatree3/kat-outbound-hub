@@ -118,8 +118,11 @@ def render_page():
         edit_ch = new_ch
         edit_pn = st.text_area("상품명", value="", height=80, key="adm_map_new_pn")
         edit_po = st.text_input("옵션 (없으면 빈칸)", value="", key="adm_map_new_po")
+        _new_active_key = "adm_map_new_active"
+        _new_active_cur = bool(st.session_state.get(_new_active_key, True))
+        _new_active_label = "🟢 사용중 (운영 흐름에 적용)" if _new_active_cur else "⏸ 사용안함 (운영 흐름에서 제외)"
         edit_active = st.toggle(
-            "🟢 사용중 (운영 흐름에 적용)", value=True, key="adm_map_new_active",
+            _new_active_label, value=True, key=_new_active_key,
             help="OFF (⏸ 비활성) 로 두면 같은 채널 운영 lookup 에서 제외됨.",
         )
         init_sku_df = pd.DataFrame({
@@ -136,10 +139,14 @@ def render_page():
         edit_ch = ch_orig
         edit_pn = pn_orig
         edit_po = po_orig
+        _act_key = f"adm_map_active_{sel_idx}"
+        _act_default = bool(src_row.get('is_active', True))
+        _act_cur = bool(st.session_state.get(_act_key, _act_default))
+        _act_label = "🟢 사용중 (운영 흐름에 적용)" if _act_cur else "⏸ 사용안함 (운영 흐름에서 제외)"
         edit_active = st.toggle(
-            "🟢 사용중 (운영 흐름에 적용)",
-            value=bool(src_row.get('is_active', True)),
-            key=f"adm_map_active_{sel_idx}",
+            _act_label,
+            value=_act_default,
+            key=_act_key,
             help="OFF (⏸ 비활성) 로 두면 같은 채널 운영 lookup 에서 제외됨.",
         )
         names = [n.strip() for n in (src_row['item_codes'] or '').split(',')]
