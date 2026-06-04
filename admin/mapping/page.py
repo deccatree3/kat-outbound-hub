@@ -120,7 +120,7 @@ def render_page():
         edit_po = st.text_input("옵션 (없으면 빈칸)", value="", key="adm_map_new_po")
         _new_active_key = "adm_map_new_active"
         _new_active_cur = bool(st.session_state.get(_new_active_key, True))
-        _new_active_label = "🟢 사용중 (운영 흐름에 적용)" if _new_active_cur else "⏸ 사용안함 (운영 흐름에서 제외)"
+        _new_active_label = "🟢 사용중" if _new_active_cur else "⏸ 사용안함"
         edit_active = st.toggle(
             _new_active_label, value=True, key=_new_active_key,
             help="OFF (⏸ 비활성) 로 두면 같은 채널 운영 lookup 에서 제외됨.",
@@ -142,7 +142,7 @@ def render_page():
         _act_key = f"adm_map_active_{sel_idx}"
         _act_default = bool(src_row.get('is_active', True))
         _act_cur = bool(st.session_state.get(_act_key, _act_default))
-        _act_label = "🟢 사용중 (운영 흐름에 적용)" if _act_cur else "⏸ 사용안함 (운영 흐름에서 제외)"
+        _act_label = "🟢 사용중" if _act_cur else "⏸ 사용안함"
         edit_active = st.toggle(
             _act_label,
             value=_act_default,
