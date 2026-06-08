@@ -6,6 +6,7 @@ import csv
 import copy
 import io
 import os
+import re
 import sys
 import datetime
 from typing import List, Dict, Optional, Tuple
@@ -262,6 +263,18 @@ def clean_special_chars(text: str) -> Tuple[str, List[str]]:
     return ''.join(out_chars), reasons
 
 
+def _phone_has_digits(raw: str) -> bool:
+    """국가코드(+숫자) prefix 와 구분자(-, 공백) 를 제거한 뒤 숫자가 1자 이상 남아 있는지.
+    Qoo10 API 가 빈 번호도 '+81--' / '+81-' 형태로 반환하기 때문에
+    단순 truthy 체크로는 빈 번호와 실제 번호를 구분할 수 없음.
+    """
+    s = (raw or '').strip()
+    if not s:
+        return False
+    s = re.sub(r'^\+\d+', '', s)
+    return bool(re.search(r'\d', s))
+
+
 def normalize_order_date(qsm_date: str) -> str:
     """2026/04/15 19:12:16 → 20260415"""
     if not qsm_date:
@@ -327,12 +340,14 @@ def generate_outbound_rows(qsm_rows: List[Dict], mappings: Dict) -> Tuple[List[D
                 '사유': ' / '.join(unique_reasons),
             })
 
-        # 전화번호: 수취인핸드폰 > 수취인전화 (값이 "-"면 skip)
+        # 전화번호: 수취인핸드폰 > 수취인전화
+        # Qoo10 API 는 빈 번호도 '+81--' / '+81-' 같이 국가코드 prefix 만 붙은 형태로 반환함.
+        # 국가코드 prefix(+숫자) 제거 후 잔여에 숫자가 1자 이상 있는 후보만 채택.
         tel_cands = [
             q.get('수취인핸드폰번호', '').strip(),
             q.get('수취인전화번호', '').strip(),
         ]
-        tel = next((t for t in tel_cands if t and t != '-'), '')
+        tel = next((t for t in tel_cands if _phone_has_digits(t)), '')
 
         # SKU별 1행 생성 (세트 상품은 N행으로 분할)
         for sku_code, sku_unit_qty in zip(m['sku_codes'], m['quantities']):
