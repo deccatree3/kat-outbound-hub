@@ -186,14 +186,16 @@ def render(brand: str):
     # 입고확정 이상은 변경 불가 (이미 운송수단 결정됨)
     _ship_locked = (plan.status or "") in ("inbound_confirmed", "verified", "completed")
     _ship_options = ['milkrun', 'parcel']
-    _ship_labels = {'milkrun': '밀크런', 'parcel': '택배'}
+    _ship_labels = {'milkrun': '🚚 밀크런', 'parcel': '📦 택배'}
     _cur_ship = plan.shipment_type if plan.shipment_type in _ship_options else 'milkrun'
-    selected_ship = st.radio(
-        "입고방법",
+    st.markdown("### 🚚 입고방법" + ("  🔒" if _ship_locked else ""))
+    selected_ship = st.segmented_control(
+        label="입고방법",
+        label_visibility="collapsed",
         options=_ship_options,
         format_func=lambda v: _ship_labels.get(v, v),
-        index=_ship_options.index(_cur_ship),
-        horizontal=True,
+        default=_cur_ship,
+        selection_mode="single",
         disabled=_ship_locked,
         key=f"pkg_{brand}_ship_select_{plan.id}",
         help=(
@@ -201,6 +203,8 @@ def render(brand: str):
             else "밀크런: 팔레트 단위 트럭. 택배: 박스 단위."
         ),
     )
+    if selected_ship is None:
+        selected_ship = _cur_ship
     # 변경 시 DB 저장
     if not _ship_locked and selected_ship != plan.shipment_type:
         try:
