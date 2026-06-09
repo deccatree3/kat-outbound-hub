@@ -3,7 +3,7 @@
 파일 타입 판별 (파일명 기반):
   - inventory_health_sku_info_* → 'coupang_inventory'
   - Document_* → 'wms_inventory'
-  - generated_excel* → 'coupang_template'
+  - generated_excel* / A<업체코드>_<YYYYMMDD>* → 'coupang_template'
   - 쿠팡 재고이동건_* / *재고이동* → 'movement'
 
 업체 식별 (내용 기반):
@@ -11,6 +11,7 @@
 """
 from __future__ import annotations
 
+import re
 from collections import Counter
 from dataclasses import dataclass, field
 from io import BytesIO
@@ -29,6 +30,14 @@ FILE_TYPE_WMS = "wms_inventory"
 FILE_TYPE_TEMPLATE = "coupang_template"
 FILE_TYPE_MOVEMENT = "movement"
 FILE_TYPE_UNKNOWN = "unknown"
+
+# 쿠팡 입고생성 파일 신규 파일명 (2026-06~) : 'A<업체코드 8자리>_<YYYYMMDD>.xlsx'
+# A00371983 = 네뉴(=네이처뉴트리션 외, DB 업체명 '서현'), A00814773 = 캐처스
+_COUPANG_TEMPLATE_VENDOR_RE = re.compile(r'^(A\d{8})_\d{8}', re.IGNORECASE)
+COUPANG_VENDOR_CODE_HINTS = {
+    'A00371983': '서현',
+    'A00814773': '캐처스',
+}
 
 FILE_TYPE_LABELS = {
     FILE_TYPE_COUPANG: "쿠팡 재고",
@@ -76,9 +85,17 @@ def classify_file_type(filename: str) -> str:
         return FILE_TYPE_WMS
     if "generated_excel" in name:
         return FILE_TYPE_TEMPLATE
+    if _COUPANG_TEMPLATE_VENDOR_RE.match(filename):
+        return FILE_TYPE_TEMPLATE
     if "재고이동" in filename:
         return FILE_TYPE_MOVEMENT
     return FILE_TYPE_UNKNOWN
+
+
+def extract_coupang_vendor_code(filename: str) -> str | None:
+    """쿠팡 입고생성 파일명에서 업체코드(A+8자리) 추출. 없으면 None."""
+    m = _COUPANG_TEMPLATE_VENDOR_RE.match(filename or '')
+    return m.group(1).upper() if m else None
 
 
 def identify_company_from_coupang_file(file_bytes: bytes) -> str | None:
@@ -306,6 +323,19 @@ def classify_uploaded_files(uploaded_files: list) -> tuple[list[ClassifiedFile],
 
         # 1순위: 파일명에서 업체명 식별
         company = identify_company_from_filename(f.name, known)
+
+        # 1.5순위: 쿠팡 입고생성 신규 파일명 (A<업체코드>_YYYYMMDD) 의 vendor code 로 식별
+        if not company and ftype == FILE_TYPE_TEMPLATE:
+            vc = extract_coupang_vendor_code(f.name)
+            hint = COUPANG_VENDOR_CODE_HINTS.get(vc) if vc else None
+            if hint:
+                if hint in known:
+                    company = hint
+                else:
+                    for c in known:
+                        if hint in c or c in hint:
+                            company = c
+                            break
 
         # 2순위: 파일 내용에서 식별
         if not company:

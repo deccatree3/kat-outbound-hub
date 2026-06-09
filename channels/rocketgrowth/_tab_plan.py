@@ -70,7 +70,7 @@ _UPLOAD_GUIDE_ROWS = [
      "inventory_health_sku_info_YYYYMMDDhhmmss.xlsx"),
     ("쿠팡 입고생성 파일", FILE_TYPE_TEMPLATE,
      "쿠팡Wing > 로켓그로스 > 입고관리 > 새로운 입고 생성 > 엑셀 다운로드",
-     "generated_excel.xlsx"),
+     "A<업체코드>_YYYYMMDD.xlsx (구: generated_excel.xlsx)"),
     ("재고이동 파일", FILE_TYPE_MOVEMENT,
      "이번달 '쿠팡 재고이동건' 파일",
      "쿠팡 재고이동건_YYYY_MM월.xlsx"),
