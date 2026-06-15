@@ -11,7 +11,7 @@ from __future__ import annotations
 import math
 from typing import Sequence
 
-from sqlalchemy import delete as sa_delete, select
+from sqlalchemy import delete as sa_delete, inspect as sa_inspect, select
 from sqlalchemy.orm import Session
 
 from rocketgrowth.models import (
@@ -27,6 +27,24 @@ from rocketgrowth.pallet_assign import (
 )
 
 
+_PALLET_ENTRY_TABLE_EXISTS: bool | None = None
+
+
+def _pallet_entry_table_available(session: Session) -> bool:
+    """inbound_plan_pallet_entry 테이블 존재 여부. 운영 DB 마이그레이션 전 안전망.
+
+    한 번 확인한 결과는 프로세스 내에 캐시. 마이그레이션 후 첫 재시작 시 갱신됨.
+    """
+    global _PALLET_ENTRY_TABLE_EXISTS
+    if _PALLET_ENTRY_TABLE_EXISTS is None:
+        try:
+            insp = sa_inspect(session.get_bind())
+            _PALLET_ENTRY_TABLE_EXISTS = insp.has_table("inbound_plan_pallet_entry")
+        except Exception:
+            _PALLET_ENTRY_TABLE_EXISTS = False
+    return _PALLET_ENTRY_TABLE_EXISTS
+
+
 def save_pallet_assignment(
     session: Session,
     plan_id: int,
@@ -37,6 +55,8 @@ def save_pallet_assignment(
 
     기존 plan_id 행은 먼저 삭제. qty = boxes * box_qty(없으면 1).
     """
+    if not _pallet_entry_table_available(session):
+        return  # 마이그레이션 미실행 — InboundPlanItem.pallet_no fallback 으로 진행
     session.execute(
         sa_delete(InboundPlanPalletEntry)
         .where(InboundPlanPalletEntry.plan_id == plan_id)
@@ -68,14 +88,17 @@ def load_pallet_assignment(
     """
     name_by_opt = {it.coupang_option_id: it.product_name or "" for it in items}
 
-    entries = session.execute(
-        select(InboundPlanPalletEntry)
-        .where(InboundPlanPalletEntry.plan_id == plan.id)
-        .order_by(
-            InboundPlanPalletEntry.pallet_no,
-            InboundPlanPalletEntry.seq,
-        )
-    ).scalars().all()
+    if _pallet_entry_table_available(session):
+        entries = session.execute(
+            select(InboundPlanPalletEntry)
+            .where(InboundPlanPalletEntry.plan_id == plan.id)
+            .order_by(
+                InboundPlanPalletEntry.pallet_no,
+                InboundPlanPalletEntry.seq,
+            )
+        ).scalars().all()
+    else:
+        entries = []
 
     def _boxes_of(it: InboundPlanItem) -> int:
         q = it.inbound_qty_final or 0
