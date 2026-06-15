@@ -708,6 +708,8 @@ def build_pallet_loading_list(
     - 한 섹션 = 27행 (라벨~빈 데이터 슬롯 포함)
     - 병합: A:F + G:M (라벨/날짜), A:M (업체/요청), C:K (상품명 헤더)
     """
+    from rocketgrowth.pallet_storage import assert_pa_within_pallet_size
+    assert_pa_within_pallet_size(pallet_assignment, pallet_size)
     wb = openpyxl.Workbook()
     ws = wb.active
     ws.title = "Sheet3"

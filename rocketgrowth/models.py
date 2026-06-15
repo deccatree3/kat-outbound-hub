@@ -202,6 +202,32 @@ class InboundPlan(Base):
     )
 
 
+class InboundPlanPalletEntry(Base):
+    """팔레트 적재 1행 = 1 row.
+
+    같은 SKU 가 두 팔레트로 분할되는 경우(예: 30박스, pallet_size=19 → 19+11)도
+    구조적으로 표현된다. InboundPlanItem.pallet_no 는 deprecated.
+    """
+
+    __tablename__ = "inbound_plan_pallet_entry"
+
+    plan_id: Mapped[int] = mapped_column(
+        BigInteger, ForeignKey("inbound_plan.id", ondelete="CASCADE")
+    )
+    pallet_no: Mapped[int] = mapped_column(Integer)
+    coupang_option_id: Mapped[int] = mapped_column(BigInteger)
+    boxes: Mapped[int] = mapped_column(Integer)
+    qty: Mapped[int] = mapped_column(Integer)
+    seq: Mapped[int | None] = mapped_column(Integer)
+
+    __table_args__ = (
+        PrimaryKeyConstraint(
+            "plan_id", "pallet_no", "coupang_option_id",
+            name="pk_inbound_plan_pallet_entry",
+        ),
+    )
+
+
 class InboundPlanItem(Base):
     __tablename__ = "inbound_plan_item"
 
@@ -226,6 +252,8 @@ class InboundPlanItem(Base):
     wms_short_expiry: Mapped[date | None] = mapped_column(Date)
     wms_long_expiry: Mapped[date | None] = mapped_column(Date)
     # 검수 단계에서 채워지는 필드
+    # NOTE: pallet_no 는 deprecated — 분할 정보 손실 문제로 inbound_plan_pallet_entry 로 이전.
+    # 호환을 위해 컬럼은 유지하되 신규 코드는 InboundPlanPalletEntry 를 사용한다.
     pallet_no: Mapped[int | None] = mapped_column(Integer)
     barcode_attached: Mapped[str | None] = mapped_column(String(64))
     barcode_type: Mapped[str | None] = mapped_column(String(16))  # 88코드|쿠팡바코드

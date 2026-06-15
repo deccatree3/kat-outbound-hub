@@ -21,7 +21,7 @@ from typing import Any
 
 import pandas as pd
 import streamlit as st
-from sqlalchemy import desc, select
+from sqlalchemy import delete as sa_delete, desc, select
 
 from rocketgrowth.config import load_config
 from rocketgrowth.coupang_result import (
@@ -30,11 +30,15 @@ from rocketgrowth.coupang_result import (
 )
 from rocketgrowth.db import get_session
 from rocketgrowth.models import (
-    CoupangProduct, CoupangResultLog, InboundPlan, InboundPlanItem, PlanFile, WmsProduct,
+    CoupangProduct, CoupangResultLog, InboundPlan, InboundPlanItem,
+    InboundPlanPalletEntry, PlanFile, WmsProduct,
 )
 from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
 from rocketgrowth.pallet_assign import (
     PalletAssignment, PalletEntry, PalletItem as PA_PalletItem, assign_pallets as pa_assign_pallets,
+)
+from rocketgrowth.pallet_storage import (
+    load_pallet_assignment, save_pallet_assignment,
 )
 from rocketgrowth.secondary_export import SecondaryItem
 from rocketgrowth.verification import (
@@ -414,40 +418,9 @@ def render(brand: str):
             manufacture_date=mfg, shelf_life_days=int(shl) if shl else None,
         ))
 
-    # PalletAssignment — 저장된 pallet_no 가 있으면 그대로, 없으면 재할당
-    has_pallet_no = any(it.pallet_no for it in items)
-    if has_pallet_no:
-        pallet_map: dict[int, list[PalletEntry]] = {}
-        for it in items:
-            pn = it.pallet_no or 1
-            boxes_it = (it.inbound_qty_final or 0) // max(it.box_qty or 1, 1)
-            if boxes_it <= 0:
-                continue
-            pallet_map.setdefault(pn, []).append(
-                PalletEntry(key=it.coupang_option_id, name=it.product_name or "", boxes=boxes_it)
-            )
-        # pallet_count: plan.total_pallets 우선 (저장 시 정확한 값) — 없으면 max(pallet_no)
-        # len(pallet_map) 은 distinct pallet_no 의 갯수라 비어있는 팔레트가 있을 시 부정확
-        _pallet_count = (
-            int(plan.total_pallets) if plan.total_pallets
-            else (max(pallet_map.keys()) if pallet_map else 0)
-        )
-        pa = PalletAssignment(
-            pallets=[pallet_map[k] for k in sorted(pallet_map.keys())],
-            total_boxes=sum(e.boxes for p in pallet_map.values() for e in p),
-            pallet_count=_pallet_count,
-        )
-    else:
-        pa_items = [
-            PA_PalletItem(
-                key=it.coupang_option_id,
-                name=it.product_name or "",
-                boxes=(it.inbound_qty_final or 0) // max(it.box_qty or 1, 1),
-            )
-            for it in items
-            if (it.inbound_qty_final or 0) // max(it.box_qty or 1, 1) > 0
-        ]
-        pa = pa_assign_pallets(pa_items, pallet_size=cfg.pallet_size_boxes)
+    # PalletAssignment — pallet_entry → pallet_no(legacy) → 재할당 우선순위
+    with get_session() as _sload:
+        pa = load_pallet_assignment(_sload, plan, items, cfg.pallet_size_boxes)
 
     # ─── ③ 쿠팡 결과물 PDF 업로드 + 검수 ──────────────────
     st.subheader("② 쿠팡 입고생성 결과물 검수")
@@ -1056,6 +1029,14 @@ def render(brand: str):
                             items_by_opt = {it.coupang_option_id: it for it in s4.execute(
                                 select(InboundPlanItem).where(InboundPlanItem.plan_id == plan.id)
                             ).scalars().all()}
+                            # 팔레트 적재 정보를 inbound_plan_pallet_entry 에 단일 진실 출처로 저장.
+                            save_pallet_assignment(
+                                s4, plan.id, pa,
+                                box_qty_by_opt={
+                                    opt: int(dbi.box_qty or 1)
+                                    for opt, dbi in items_by_opt.items()
+                                },
+                            )
                             for pi, pal in enumerate(pa.pallets, start=1):
                                 for en in pal:
                                     dbi = items_by_opt.get(en.key)
@@ -1073,6 +1054,8 @@ def render(brand: str):
                                                 if (cm7 and cm7.coupang_barcode and cm7.coupang_barcode.startswith("S0"))
                                                 else "88코드"
                                             )
+                                            # pallet_no 는 deprecated 호환용 (분할 SKU 는 마지막 값으로 덮어쓰임).
+                                            # 신규 코드는 InboundPlanPalletEntry 만 참조.
                                             dbi.pallet_no = pi
                                             dbi.barcode_attached = bc7
                                             dbi.barcode_type = bt7

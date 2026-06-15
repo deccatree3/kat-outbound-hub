@@ -25,6 +25,7 @@ from rocketgrowth.pallet_assign import (
     PalletAssignment, PalletEntry, PalletItem as PA_PalletItem,
     assign_pallets as pa_assign_pallets,
 )
+from rocketgrowth.pallet_storage import load_pallet_assignment
 from rocketgrowth.secondary_export import SecondaryItem
 
 from channels.rocketgrowth._helpers import (
@@ -207,43 +208,10 @@ def build_dispatch_data(brand: str, brand_company: str, plan: InboundPlan) -> Di
             manufacture_date=mfg, shelf_life_days=int(shl) if shl else None,
         ))
 
-    # PalletAssignment — 저장된 pallet_no 가 있으면 그대로, 없으면 재할당
-    has_pallet_no = any(it.pallet_no for it in items)
-    if has_pallet_no:
-        pallet_map: dict[int, list[PalletEntry]] = {}
-        for it in items:
-            pn = it.pallet_no or 1
-            _q = it.inbound_qty_final or 0
-            boxes_it = math.ceil(_q / max(it.box_qty or 1, 1)) if _q > 0 else 0
-            if boxes_it <= 0:
-                continue
-            pallet_map.setdefault(pn, []).append(
-                PalletEntry(key=it.coupang_option_id, name=it.product_name or "", boxes=boxes_it)
-            )
-        # pallet_count: plan.total_pallets 우선 (저장 시 정확한 값) — 없으면 max(pallet_no)
-        _pallet_count = (
-            int(plan.total_pallets) if plan.total_pallets
-            else (max(pallet_map.keys()) if pallet_map else 0)
-        )
-        pa = PalletAssignment(
-            pallets=[pallet_map[k] for k in sorted(pallet_map.keys())],
-            total_boxes=sum(e.boxes for p in pallet_map.values() for e in p),
-            pallet_count=_pallet_count,
-        )
-    else:
-        def _boxes_of(it):
-            _q = it.inbound_qty_final or 0
-            return math.ceil(_q / max(it.box_qty or 1, 1)) if _q > 0 else 0
-        pa_items = [
-            PA_PalletItem(
-                key=it.coupang_option_id,
-                name=it.product_name or "",
-                boxes=_boxes_of(it),
-            )
-            for it in items
-            if _boxes_of(it) > 0
-        ]
-        pa = pa_assign_pallets(pa_items, pallet_size=cfg.pallet_size_boxes)
+    # PalletAssignment — pallet_entry → pallet_no(legacy) → 재할당 우선순위.
+    # 분할 정보(같은 SKU 가 두 팔레트로) 는 pallet_entry 테이블에만 정확히 보존된다.
+    with get_session() as _sload:
+        pa = load_pallet_assignment(_sload, plan, items, cfg.pallet_size_boxes)
 
     fc = plan.fc_name or "동탄1"
     arr = plan.arrival_date or plan.plan_date or _date.today()
