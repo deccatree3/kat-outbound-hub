@@ -902,11 +902,11 @@ def render(brand: str):
             key=f"rg_{brand}_status_filter",
         )
 
-    # 입고권장 = 번들 단위 (단품은 unit_qty=1 이라 inbound_basic 와 동일)
-    allocated_df["inbound_basic_bundle"] = allocated_df.apply(
-        lambda r: int((r["inbound_basic"] or 0) // max(int(r["unit_qty"] or 1), 1)),
-        axis=1,
-    )
+    # 입고권장 — inbound_basic 그대로 표시 (= 쿠팡 옵션 SKU 단위 = 세트수).
+    # 과거 284a98d 에서 "inbound_basic 이 낱개" 라는 잘못된 가정으로 unit_qty 로
+    # 나누는 변환(inbound_basic_bundle)을 도입했으나, inbound_basic 은 처음부터
+    # 세트 단위라 변환은 정보 손실(floor)만 만들었음. DB/엔진 산식은 정상이었고
+    # 화면 표시만 1/unit_qty 로 작게 보이던 버그를 제거.
 
     # box인입 표시 컬럼 — 에이지샷 번들 (캐처스): 'FREE' / 일반: str(box_qty)
     # box입인 표시 — 마스터 box_qty 그대로 (탭 1 은 일반 규칙 통일).
@@ -934,7 +934,7 @@ def render(brand: str):
     display_cols = [
         "coupang_option_id", "urgency", "product_name",
         "coupang_avail", "sales_7d", "sales_30d", "velocity", "days_until_stockout",
-        "box_qty_display", "inbound_basic_bundle", "basic_boxes",
+        "box_qty_display", "inbound_basic", "basic_boxes",
         "pool_remaining_base", "pool_remaining_bundle",
         "inbound_final", "confirmed_boxes",
         "selected_batch_expiry", "selected_status",
@@ -1022,9 +1022,9 @@ def render(brand: str):
                 "box입인",
                 help="박스 1개당 들어가는 상품 수. 에이지샷 번들 (캐처스): 'FREE' (인박스/아웃박스 룰).",
             ),
-            "inbound_basic_bundle": st.column_config.NumberColumn(
+            "inbound_basic": st.column_config.NumberColumn(
                 "입고권장", format="%d",
-                help="엔진 기본 추천 — 단품은 단품 수량, 번들은 번들 수량 (낱개 환산 X). 팔레트 꽉 채움 적용 전.",
+                help="엔진 기본 추천 수량 (팔레트 꽉 채움 적용 전). 확정과 동일 단위.",
             ),
             "basic_boxes": st.column_config.NumberColumn(
                 "입고권장(box)", format="%d",
