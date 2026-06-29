@@ -594,11 +594,47 @@ def render(brand: str):
                         st.error("주소/우편번호/전화번호 모두 입력 필요")
             return  # FC 정보 입력 전엔 검수 진행 차단
 
+    # 택배: 부착문서/바코드 라벨/SKU 바코드 PDF 어디에도 도착예정일이 없음.
+    # 쿠팡 어드민 입고관리에서 본 입고예정일을 수동 입력 받는다.
+    if (plan.shipment_type or 'milkrun') == 'parcel':
+        # 휴리스틱: arrival_date 가 비었거나 plan_date 와 동일하면 fallback 값으로 간주(미입력).
+        _arr_unset = (plan.arrival_date is None) or (plan.arrival_date == plan.plan_date)
+        _arr_label = (
+            "⚠️ 입고예정일 수동 입력 필요 (쿠팡 어드민 확인)" if _arr_unset
+            else f"📅 입고예정일: {plan.arrival_date} (수정)"
+        )
+        with st.expander(_arr_label, expanded=_arr_unset):
+            st.caption(
+                "택배 쿠팡 PDF (부착문서·바코드라벨) 에는 입고예정일이 포함되어 있지 않습니다. "
+                "쿠팡 어드민 입고관리 화면에서 확인 후 직접 입력하세요."
+            )
+            with st.form(f"parcel_arr_form_{plan.id}"):
+                _arr_default = plan.arrival_date or plan.plan_date or _date.today()
+                _new_arr = st.date_input(
+                    "입고예정일", value=_arr_default, key=f"parcel_arr_input_{plan.id}",
+                )
+                if st.form_submit_button("💾 저장", type="primary"):
+                    try:
+                        with get_session() as _s_arr:
+                            _p_arr = _s_arr.get(InboundPlan, plan.id)
+                            _p_arr.arrival_date = _new_arr
+                            _s_arr.commit()
+                        plan.arrival_date = _new_arr  # 메모리 객체에도 반영
+                        # 다운스트림 변경감지 로직이 attachment 와 plan 을 비교하므로 동기화
+                        attachment.arrival_date = _new_arr
+                        st.success(f"입고예정일 {_new_arr} 저장 완료")
+                        st.rerun()
+                    except Exception as ex:
+                        st.error(f"저장 실패: {ex}")
+
     # 메타 입력 UI 가 제거됨 — 첨부문서 파싱 결과로 자동 보정
     if attachment.fc_name:
         meta['fc_name'] = attachment.fc_name
     if attachment.arrival_date:
         meta['arrival_date'] = attachment.arrival_date
+    elif (plan.shipment_type or 'milkrun') == 'parcel' and plan.arrival_date:
+        # 택배: 부착문서에서 도착예정일을 잡을 수 없으므로 수동 입력값(plan.arrival_date) 사용
+        meta['arrival_date'] = plan.arrival_date
     # milkrun_id 결정:
     #   택배: 부착문서 itr_id (요청ID, 예: 131139976)
     #   밀크런: 거래명세서 order_id (발주번호, 예: 128907348)
