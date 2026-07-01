@@ -33,12 +33,13 @@ def _tab_jp_outbound():
     탭 1 에서 수집하면 A. 시간차로 다시 들어오면 '기존 작업 이어서' 로 B 선택.
     """
     from channels.qoo10_japan.page import (
-        render_credentials_sidebar,
+        render_credentials_sidebar, render_kse_credentials_sidebar,
         _step2_outbound_generate, _step3_oms_upload_guide,
         _step4_collect_waybills, _step5_qsm_waybill_register,
         _step6_qsm_register_guide,
     )
     render_credentials_sidebar()
+    render_kse_credentials_sidebar()
 
     # 기존 작업 이어서 (DB 의 미완료 brief 선택)
     _render_resume_section()
