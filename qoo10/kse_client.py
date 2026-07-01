@@ -256,34 +256,76 @@ def get_credentials_status() -> Dict:
 # ========================================================================== #
 
 def _extract_jwt(resp: requests.Response) -> str:
-    """로그인 응답에서 JWT 추출. 헤더/바디 다양한 후보 시도."""
-    auth_hdr = resp.headers.get("Authorization") or resp.headers.get("authorization")
-    if auth_hdr:
-        tok = auth_hdr.split(" ", 1)[1] if " " in auth_hdr else auth_hdr
+    """로그인 응답에서 JWT 추출.
+    1) 응답 헤더의 다양한 후보 (Authorization / Access-Token / X-* 등)
+    2) Set-Cookie 안에 JWT 형태 (eyJ...) 값
+    3) 응답 body JSON (data.token / token / jwt 등 다양한 경로)
+    실패 시 응답 구조 요약을 에러에 포함.
+    """
+    header_candidates = [
+        "Authorization", "authorization",
+        "Access-Token", "access-token", "AccessToken",
+        "X-Access-Token", "x-access-token",
+        "X-Auth-Token", "x-auth-token",
+        "X-Authorization", "x-authorization",
+        "Token", "token",
+    ]
+    for h in header_candidates:
+        v = resp.headers.get(h)
+        if not v:
+            continue
+        tok = v.split(" ", 1)[1] if " " in v else v
         if tok.startswith("eyJ"):
             return tok
-    try:
-        j = resp.json()
-    except Exception as ex:
-        raise KseClientError(f"로그인 응답 JSON 파싱 실패: {ex}") from ex
-    for path in [
-        ("data", "token"), ("data", "accessToken"), ("data", "jwt"),
-        ("data", "authorization"), ("data", "Authorization"),
-        ("token",), ("accessToken",), ("jwt",), ("authorization",), ("Authorization",),
-    ]:
-        cur = j
-        ok = True
-        for k in path:
-            if isinstance(cur, dict) and k in cur:
-                cur = cur[k]
-            else:
-                ok = False
-                break
-        if ok and isinstance(cur, str) and cur.startswith("eyJ"):
-            return cur
+
+    # 2) Set-Cookie 검색
+    set_cookies_raw = resp.headers.get("Set-Cookie", "")
+    if set_cookies_raw:
+        for chunk in set_cookies_raw.split(","):
+            for part in chunk.split(";"):
+                kv = part.strip()
+                if "=" in kv:
+                    _, val = kv.split("=", 1)
+                    val = val.strip()
+                    if val.startswith("eyJ"):
+                        return val
+    # requests 는 이미 세션에 쿠키를 저장 — 세션의 cookiejar 에서도 조회
+    for cookie in resp.cookies:
+        if isinstance(cookie.value, str) and cookie.value.startswith("eyJ"):
+            return cookie.value
+
+    # 3) body JSON
+    body_text = resp.text or ""
+    if body_text.strip():
+        try:
+            j = resp.json()
+        except Exception:
+            j = None
+        if isinstance(j, dict):
+            for path in [
+                ("data", "token"), ("data", "accessToken"), ("data", "jwt"),
+                ("data", "authorization"), ("data", "Authorization"),
+                ("token",), ("accessToken",), ("jwt",), ("authorization",), ("Authorization",),
+            ]:
+                cur = j
+                ok = True
+                for k in path:
+                    if isinstance(cur, dict) and k in cur:
+                        cur = cur[k]
+                    else:
+                        ok = False
+                        break
+                if ok and isinstance(cur, str) and cur.startswith("eyJ"):
+                    return cur
+
+    # 실패 — 응답 구조 요약을 에러에 포함
+    hdr_keys = sorted(resp.headers.keys())
     raise KseClientError(
-        f"로그인 응답에 JWT 없음. code={j.get('code') if isinstance(j, dict) else '?'}, "
-        f"keys={list(j.keys()) if isinstance(j, dict) else type(j)}"
+        f"로그인 응답에 JWT 없음. "
+        f"status={resp.status_code}, "
+        f"header_keys={hdr_keys}, "
+        f"cookies={[c.name for c in resp.cookies]}, "
+        f"body_head={body_text[:200] or '(empty)'}"
     )
 
 
