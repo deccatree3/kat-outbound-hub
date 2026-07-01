@@ -193,6 +193,35 @@ def _collect_via_api(work_date=None, sequence=None):
             st.warning("📭 해당 기간에 신규주문이 없습니다.")
             return
         qsm_rows = [qapi.api_response_to_qsm_dict(o) for o in api_orders]
+
+        # 중복 감지 — 이전에 가져온 pending/완료 brief 안 주문번호와 대조
+        new_order_nos = {str(r.get('주문번호', '')).strip()
+                         for r in qsm_rows if r.get('주문번호')}
+        dup_orders = set()
+        try:
+            prev_briefs = qgen.list_pending_briefs(include_consumed=True, limit=100)
+            for pb in prev_briefs:
+                try:
+                    content, _ = qgen.load_pending_brief(pb['id'])
+                    for pr in qgen.parse_qsm_csv(content):
+                        on = str(pr.get('주문번호', '')).strip()
+                        if on and on in new_order_nos:
+                            dup_orders.add(on)
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        if dup_orders:
+            dup_sorted = sorted(dup_orders)
+            preview = ", ".join(dup_sorted[:20])
+            more = f" 외 {len(dup_sorted) - 20}건" if len(dup_sorted) > 20 else ""
+            st.warning(
+                f"⚠️ **중복 주문 감지**: 이번 {len(qsm_rows)}건 중 "
+                f"**{len(dup_orders)}건**이 이전 작업(pending 또는 완료)에 이미 포함되어 있습니다.\n\n"
+                f"주문번호: `{preview}`{more}\n\n"
+                "이대로 확정하면 같은 주문이 두 번 처리될 수 있으니 확인 후 진행하세요."
+            )
+
         # 일본 출고 탭에서 step2~ 사용할 detail/brief bytes
         detail_bytes = qapi.build_detail_csv_bytes(api_orders)
         brief_bytes = qapi.build_brief_csv_bytes(api_orders)
