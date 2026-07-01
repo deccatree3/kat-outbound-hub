@@ -332,17 +332,20 @@ def _extract_jwt(resp: requests.Response) -> str:
 
 
 def _login(session: requests.Session, auth: KseAuth) -> str:
-    # allow_redirects=False: 로그인 성공 후 서버가 http://jp.ksewms.com/ams/ 로
-    # 302 리다이렉트하는데 (UI 페이지), 이를 따라가면 port 80 접속 타임아웃 발생.
-    # JWT 는 302 응답 헤더/바디에 이미 있으므로 리다이렉트 무시.
+    # 브라우저 요청 흉내: Origin/Referer 없는 요청은 nginx 가 /ams/ 로 302 튕김.
     resp = session.post(
         LOGIN_URL,
         json={"urkey": auth.urkey, "password": auth.password},
-        headers={"Content-Type": "application/json", "Accept": "application/json"},
+        headers={
+            "Content-Type": "application/json",
+            "Accept": "application/json, text/plain, */*",
+            "Accept-Language": "ko-KR,ko;q=0.9,en;q=0.8",
+            "Origin": BASE_URL,
+            "Referer": f"{BASE_URL}/oms/login",
+        },
         timeout=DEFAULT_TIMEOUT,
         allow_redirects=False,
     )
-    # 200 정상 응답이거나 302 리다이렉트(로그인 성공 후 UI 이동) 둘 다 허용
     if resp.status_code >= 400:
         raise KseClientError(f"로그인 실패 status={resp.status_code} body={resp.text[:300]}")
     return _extract_jwt(resp)
