@@ -32,7 +32,7 @@ def _tab_jp_outbound():
 
     탭 1 에서 수집하면 A. 시간차로 다시 들어오면 '기존 작업 이어서' 로 B 선택.
     """
-    from channels.qoo10_japan.page import (
+    from channels.cachers_qoo10_jpn._stepper import (
         render_credentials_sidebar, render_kse_credentials_sidebar,
         _step2_outbound_generate, _step3_oms_upload_guide,
         _step4_collect_waybills, _step5_qsm_waybill_register,

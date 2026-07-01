@@ -94,12 +94,6 @@ else:
     elif selected == "cachers_qoo10_jpn":
         from channels.cachers_qoo10_jpn.page import render_page
         render_page()
-    elif selected == "cachers_qoo10":
-        from channels.cachers_qoo10.page import render_page
-        render_page()
-    elif selected == "qoo10_japan":
-        from channels.qoo10_japan.page import render_page
-        render_page()
     elif selected == "domestic":
         from channels.domestic.page import render_page
         render_page()
