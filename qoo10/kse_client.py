@@ -20,7 +20,9 @@
 """
 from __future__ import annotations
 
+import base64
 import datetime as _dt
+import json
 import logging
 import os
 import sys
@@ -354,12 +356,30 @@ def _login(session: requests.Session, auth: KseAuth) -> str:
     return _extract_jwt(resp)
 
 
-def _build_search_body(auth: KseAuth, start_dt: datetime, end_dt: datetime) -> dict:
+def _decode_jwt_payload(jwt: str) -> dict:
+    """JWT 의 payload 부분 (segment 1) 을 base64 decode → dict. 검증 없이 파싱만."""
+    try:
+        seg = jwt.split(".")[1]
+        # JWT base64url: padding 없음 → 4의 배수 맞추기
+        seg += "=" * (-len(seg) % 4)
+        return json.loads(base64.urlsafe_b64decode(seg))
+    except Exception:
+        return {}
+
+
+def _build_search_body(auth: KseAuth, start_dt: datetime, end_dt: datetime, jwt: str) -> dict:
+    """selectOrderHd body 구성. 브라우저 XHR 재현.
+
+    Note: 서버는 body 에 세션 관련 필드(sessionUserId, COMMON, USER_INFO, MAP, LIST)
+    가 함께 있어야 200 반환. USER_INFO 는 JWT payload 를 그대로 심으면 됨.
+    """
     def _fmt(dt: datetime) -> str:
         return dt.strftime("%Y%m%d%H%M%S")
 
     def _iso_utc(dt: datetime) -> str:
         return dt.astimezone(timezone.utc).strftime("%Y-%m-%dT%H:%M:%S.000Z")
+
+    user_info = _decode_jwt_payload(jwt)
 
     return {
         "PARAM": {
@@ -391,6 +411,33 @@ def _build_search_body(auth: KseAuth, start_dt: datetime, end_dt: datetime) -> d
                   "gtmapply_chk": "Y", "dbColoum": "IFSTATUS",
                   "required": False, "isChecked": True, "sctype": "COMBOBOX"},
         },
+        # 세션 필드 (axios interceptor 재현)
+        "sessionUserId": auth.urkey,
+        "sessionUserCtkey": auth.ctkey,
+        "lakey": "KOR",
+        "activeApp": "ICOM",
+        "ctkey": auth.ctkey,
+        "COMMON": {
+            "beanId": "orderController",
+            "usKey": "US00000220",
+            "LAKEY": "KOR",
+            "DEVICE": "PC",
+            "ACTIVE_APP": "ICOM",
+            "apKey": "ICOM",
+            "callMethod": "selectOrderHd",
+            "TIMEZONE": 9,
+            "eqtype": 10,
+            "serverIp": "/omsbackend",
+            "ctKey": auth.ctkey,
+            "urKey": auth.urkey,
+            "sessionUserId": "",
+            "OWKEY_AUTH": auth.urkey,
+            "CTKEY_AUTH": auth.ctkey,
+            "APKEY_AUTH": "ADMIN,ICOM",
+        },
+        "USER_INFO": user_info,
+        "MAP": {},
+        "LIST": {},
     }
 
 
@@ -452,7 +499,7 @@ def fetch_waybills(
         token = _login(sess, auth)
         LOG.info("KSE OMS 로그인 성공 (JWT %d chars)", len(token))
 
-        body = _build_search_body(auth, start_dt, end_dt)
+        body = _build_search_body(auth, start_dt, end_dt, token)
         resp = sess.post(
             SEARCH_URL,
             json=body,
