@@ -163,6 +163,24 @@ def _render_product_summary(jp_orders, kr_orders, unknown_orders, conflicts):
 def _collect_via_api(work_date=None, sequence=None):
     """QSM API → cu_qsm_rows + qoo10_detail/brief bytes (일본 출고 탭에서 재사용)."""
     import datetime as _dt
+
+    # 이전 rerun 에서 저장한 중복 감지 결과 표시 (rerun 으로 즉시 지워지지 않게)
+    _dw = st.session_state.get('cu_dup_warning')
+    if _dw:
+        _preview = ", ".join(_dw['dup_preview'])
+        _more = f" 외 {_dw['dup_total'] - len(_dw['dup_preview'])}건" \
+                if _dw['dup_total'] > len(_dw['dup_preview']) else ""
+        _brief_str = ", ".join([f"#{i}({n}건)" for i, n in _dw['matched_briefs']])
+        st.warning(
+            f"⚠️ **중복 주문 감지**: 이번 {_dw['total']}건 중 "
+            f"**{_dw['dup_total']}건**이 이전 발주계획에 이미 포함되어 있습니다.\n\n"
+            f"매칭된 발주계획: {_brief_str}\n\n"
+            f"중복된 주문/장바구니번호: `{_preview}`{_more}\n\n"
+            "이대로 확정하면 같은 주문이 두 번 처리될 수 있으니 확인 후 진행하세요."
+        )
+    elif st.session_state.get('cu_dup_checked') is not None:
+        st.caption(f"🔍 중복 감지: 이전 발주계획 {st.session_state['cu_dup_checked']}개 검사 → 중복 없음")
+
     api_status = qapi.get_credentials_status()
     if api_status.get('expires_at') and api_status.get('days_remaining') is not None:
         icon = {'green': '🟢', 'yellow': '🟡', 'red': '🔴', 'expired': '⚫'}.get(
@@ -220,20 +238,19 @@ def _collect_via_api(work_date=None, sequence=None):
                     pass
         except Exception:
             pass
+        # 감지 결과는 세션에 저장 — st.rerun() 이후에도 UI 로 표시 유지
         if dup_ords:
             dup_sorted = sorted(dup_ords)
-            preview = ", ".join(dup_sorted[:20])
-            more = f" 외 {len(dup_sorted) - 20}건" if len(dup_sorted) > 20 else ""
-            brief_str = ", ".join([f"#{i}({n}건)" for i, n in matched_briefs])
-            st.warning(
-                f"⚠️ **중복 주문 감지**: 이번 {len(qsm_rows)}건 중 "
-                f"**{len(dup_ords)}건**이 이전 발주계획에 이미 포함되어 있습니다.\n\n"
-                f"매칭된 발주계획: {brief_str}\n\n"
-                f"중복된 주문/장바구니번호: `{preview}`{more}\n\n"
-                "이대로 확정하면 같은 주문이 두 번 처리될 수 있으니 확인 후 진행하세요."
-            )
+            st.session_state['cu_dup_warning'] = {
+                'total': len(qsm_rows),
+                'dup_total': len(dup_ords),
+                'dup_preview': dup_sorted[:20],
+                'matched_briefs': matched_briefs,
+            }
+            st.session_state['cu_dup_checked'] = None
         else:
-            st.caption(f"🔍 중복 감지: 이전 발주계획 {checked_briefs}개 검사 → 중복 없음")
+            st.session_state['cu_dup_warning'] = None
+            st.session_state['cu_dup_checked'] = checked_briefs
 
         # 일본 출고 탭에서 step2~ 사용할 detail/brief bytes
         detail_bytes = qapi.build_detail_csv_bytes(api_orders)
