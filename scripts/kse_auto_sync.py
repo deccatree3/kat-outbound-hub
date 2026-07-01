@@ -121,21 +121,34 @@ def run() -> dict[str, Any]:
             order = str(r.get("주문번호", "") or "").strip()
             if not cart or not order:
                 continue
-            if cart not in kse_map:
-                # KSE 지연 — 발주계획엔 있지만 KSE 가 아직 송장 등록 안 함
-                result["kse_delayed"].append({
-                    "brief_id": pb["id"],
-                    "order_no": order,
-                    "pack_no": cart,
-                })
-                continue
-            waybill = kse_map[cart]
-            brief_total += 1
 
+            # QSM 현재 상태 사전 조회 — 매핑 유무 판단 이전에 실행
+            # (예전에 대시보드에서 수동 등록한 경우 KSE 매핑에 없어도 QSM 상 배송중일 수 있음)
             try:
                 cur_stat = _qsm_current_stat(sak, order)
             except Exception:
                 cur_stat = None
+
+            if cart not in kse_map:
+                # KSE 매핑 없음
+                if cur_stat == SHIPPED:
+                    # 이미 QSM 에 등록됨 (예전 수동 처리) → 완료로 간주
+                    brief_total += 1
+                    brief_skipped += 1
+                    result["already_shipped_skipped"] += 1
+                else:
+                    # 진짜 KSE 지연
+                    result["kse_delayed"].append({
+                        "brief_id": pb["id"],
+                        "order_no": order,
+                        "pack_no": cart,
+                    })
+                continue
+
+            # KSE 매핑 있음
+            waybill = kse_map[cart]
+            brief_total += 1
+
             if cur_stat == SHIPPED:
                 brief_skipped += 1
                 result["already_shipped_skipped"] += 1
