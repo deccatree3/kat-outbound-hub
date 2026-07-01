@@ -194,33 +194,46 @@ def _collect_via_api(work_date=None, sequence=None):
             return
         qsm_rows = [qapi.api_response_to_qsm_dict(o) for o in api_orders]
 
-        # 중복 감지 — 이전에 가져온 pending/완료 brief 안 주문번호와 대조
-        new_order_nos = {str(r.get('주문번호', '')).strip()
-                         for r in qsm_rows if r.get('주문번호')}
-        dup_orders = set()
+        # 중복 감지 — 이전에 저장된 (pending 또는 완료) brief 안 주문번호/장바구니번호와 대조.
+        # 배경: KSE OMS 에 송장 등록됐지만 운영자가 QSM 송장 등록을 깜빡한 경우,
+        # 그 주문건은 QSM 상 여전히 "신규주문" 상태 → 다음날 가져오기 시 중복 유입.
+        # 이 경우 이미 이전 발주계획(pending_brief) 에 그 주문번호가 저장되어 있으므로 감지 가능.
+        def _keys(row):
+            return (
+                str(row.get('주문번호', '') or '').strip(),
+                str(row.get('장바구니번호', '') or '').strip(),
+            )
+        new_ords = {k for r in qsm_rows for k in _keys(r) if k}
+        dup_ords, checked_briefs, matched_briefs = set(), 0, []
         try:
             prev_briefs = qgen.list_pending_briefs(include_consumed=True, limit=100)
             for pb in prev_briefs:
                 try:
                     content, _ = qgen.load_pending_brief(pb['id'])
-                    for pr in qgen.parse_qsm_csv(content):
-                        on = str(pr.get('주문번호', '')).strip()
-                        if on and on in new_order_nos:
-                            dup_orders.add(on)
+                    prev_keys = {k for r in qgen.parse_qsm_csv(content) for k in _keys(r) if k}
+                    inter = prev_keys & new_ords
+                    checked_briefs += 1
+                    if inter:
+                        dup_ords |= inter
+                        matched_briefs.append((pb['id'], len(inter)))
                 except Exception:
                     pass
         except Exception:
             pass
-        if dup_orders:
-            dup_sorted = sorted(dup_orders)
+        if dup_ords:
+            dup_sorted = sorted(dup_ords)
             preview = ", ".join(dup_sorted[:20])
             more = f" 외 {len(dup_sorted) - 20}건" if len(dup_sorted) > 20 else ""
+            brief_str = ", ".join([f"#{i}({n}건)" for i, n in matched_briefs])
             st.warning(
                 f"⚠️ **중복 주문 감지**: 이번 {len(qsm_rows)}건 중 "
-                f"**{len(dup_orders)}건**이 이전 작업(pending 또는 완료)에 이미 포함되어 있습니다.\n\n"
-                f"주문번호: `{preview}`{more}\n\n"
+                f"**{len(dup_ords)}건**이 이전 발주계획에 이미 포함되어 있습니다.\n\n"
+                f"매칭된 발주계획: {brief_str}\n\n"
+                f"중복된 주문/장바구니번호: `{preview}`{more}\n\n"
                 "이대로 확정하면 같은 주문이 두 번 처리될 수 있으니 확인 후 진행하세요."
             )
+        else:
+            st.caption(f"🔍 중복 감지: 이전 발주계획 {checked_briefs}개 검사 → 중복 없음")
 
         # 일본 출고 탭에서 step2~ 사용할 detail/brief bytes
         detail_bytes = qapi.build_detail_csv_bytes(api_orders)
