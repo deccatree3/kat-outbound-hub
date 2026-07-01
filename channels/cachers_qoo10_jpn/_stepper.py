@@ -546,12 +546,14 @@ def _step4_collect_waybills():
             except Exception as ex:
                 st.error(f"KSE 자동 수집 예외: {ex}")
         if auto_map:
-            with st.expander(f"미리보기 (최대 20건 / 총 {len(auto_map)}건)", expanded=False):
-                _preview = list(auto_map.items())[:20]
-                st.dataframe(
-                    pd.DataFrame(_preview, columns=["주문번호(externorderkey)", "송장번호(waybillno)"]),
-                    width="stretch", hide_index=True,
-                )
+            st.markdown(f"**📋 수집 결과 — 총 {len(auto_map)}건**")
+            st.dataframe(
+                pd.DataFrame(
+                    list(auto_map.items()),
+                    columns=["장바구니번호(externorderkey)", "송장번호(waybillno)"],
+                ),
+                width="stretch", hide_index=True,
+            )
 
     oms_file = st.file_uploader(
         "KSE OMS 주문(출고&입고) 내역.xlsx 업로드 (수동)",
