@@ -323,9 +323,11 @@ def _extract_jwt(resp: requests.Response) -> str:
     raise KseClientError(
         f"로그인 응답에 JWT 없음. "
         f"status={resp.status_code}, "
+        f"location={resp.headers.get('Location')}, "
+        f"content_type={resp.headers.get('Content-Type')}, "
         f"header_keys={hdr_keys}, "
         f"cookies={[c.name for c in resp.cookies]}, "
-        f"body_head={body_text[:200] or '(empty)'}"
+        f"body_head={body_text[:300] or '(empty)'}"
     )
 
 
