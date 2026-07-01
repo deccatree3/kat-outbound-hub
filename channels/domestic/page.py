@@ -357,7 +357,11 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     )
 
     try:
-        xlsx_bytes, info = build_bundle_xlsx(eza_bytes_list, work_date, int(sequence))
+        from channels.domestic.nenu_daone_exclude import excluded_barcodes as _nenu_excl_bcs
+        xlsx_bytes, info = build_bundle_xlsx(
+            eza_bytes_list, work_date, int(sequence),
+            exclude_barcodes=_nenu_excl_bcs(),
+        )
     except Exception as ex:
         st.error(f"번들작업파일 생성 실패: {ex}")
         return
@@ -435,15 +439,9 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     out_name = f"일반주문 번들작업건_{work_date.strftime('%y%m%d')}_{int(sequence)}차.xlsx"
     if _no_bundle:
         st.caption("ℹ️ 네뉴 번들작업 없음 (세트 입고수량 0) — 다운로드 비활성.")
-    st.download_button(
-        f"📥 {out_name}",
-        data=xlsx_bytes,
-        file_name=out_name,
-        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        type="primary", width="stretch",
-        disabled=_no_bundle,
-        key=f"nenu_bundle_download_{work_date}_{sequence}",
-    )
+    # 다운로드 버튼은 _section_nenu_daone 에서 발주서와 좌우 배치.
+    # 여기서는 (bytes, filename, disabled) 를 세션에 남겨 다음 섹션에서 사용.
+    st.session_state['_nenu_bundle_xlsx'] = (xlsx_bytes, out_name, _no_bundle)
 
 
 def _section_nenu_daone(eza_rows, work_date, sequence, source_filename, session_info):
@@ -534,12 +532,49 @@ def _section_nenu_daone(eza_rows, work_date, sequence, source_filename, session_
 
     daone_rows = transform_to_daone(taeyoung_rows)
     st.markdown("---")
-    st.markdown("#### 📥 네뉴 발주서 (다원 양식)")
-    _render_daone_download(
-        daone_rows, work_date, sequence, source_filename, session_info,
+    st.markdown("#### 📥 네뉴 발주서 (태영에 전달)")
+    unique_orders, total_qty = _render_metrics_and_preview(daone_rows)
+    try:
+        po_bytes = build_daone_xlsx(daone_rows)
+    except Exception as ex:
+        st.error(f"다원 xlsx 생성 실패: {ex}")
+        return
+    yymmdd = work_date.strftime('%y%m%d')
+    po_name = f"{yymmdd}_{int(sequence)}차발주서_네뉴(주문건수 {unique_orders}, 주문수량 {total_qty}).xlsx"
+
+    # 발주서(좌) + 일반주문 번들작업건(우) 좌우 배치
+    bundle_data = st.session_state.get('_nenu_bundle_xlsx')
+    c_po, c_bd = st.columns(2)
+    with c_po:
+        st.download_button(
+            f"📥 {po_name}",
+            data=po_bytes,
+            file_name=po_name,
+            mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+            type="primary", width="stretch",
+            key='domestic_nenu_po_download',
+        )
+    with c_bd:
+        if bundle_data:
+            b_bytes, b_name, b_disabled = bundle_data
+            st.download_button(
+                f"📥 {b_name}",
+                data=b_bytes,
+                file_name=b_name,
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                type="primary", width="stretch",
+                disabled=b_disabled,
+                key='domestic_nenu_bundle_download',
+            )
+        else:
+            st.caption("(번들작업건 없음)")
+
+    # 통합 발주서에 저장 — 아래 전체 너비
+    render_save_button(
+        CHANNEL_KEY, session_info, daone_rows, source_filename,
         key_prefix='domestic_nenu',
-        file_suffix='_네뉴',
     )
+    st.caption("📤 다원 WMS에 수기 업로드 (단독) 또는 통합 발주서에 저장.")
 
 
 def _section_3pl(eza_rows, work_date, sequence):

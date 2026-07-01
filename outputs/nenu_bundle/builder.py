@@ -118,7 +118,8 @@ def load_master_parent_names() -> list:
     return sorted(names)
 
 
-def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Dict[str, int], Dict[str, str]]:
+def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',),
+                          exclude_barcodes=None) -> tuple[Dict[str, int], Dict[str, str]]:
     """이지어드민 확장주문검색.xls bytes → ({바코드: 상품수량 합계}, {바코드: 상품명}).
 
     필터 (모두 적용):
@@ -128,6 +129,7 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Di
         '선물세트'가 들어가도 네뉴 번들이 아닌 건
       - 상품명이 GIFT_EXCLUDE_NAMES(정확 일치, 공백정규화) 에 들면 제외 —
         지함/쇼핑백 등 포장재성 선물세트
+      - 바코드 ∈ exclude_barcodes 제외 (임시-다원출고 등 별도 채널로 나가는 상품)
     """
     wb = xlrd.open_workbook(file_contents=data)
     ws = wb.sheet_by_index(0)
@@ -145,6 +147,7 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Di
         raise RuntimeError(f"이지어드민 헤더에서 '상품명' 컬럼을 찾지 못했습니다 ({e})")
     grp_idx = headers.index('판매처그룹') if '판매처그룹' in headers else None
     excluded = set(exclude_groups or ())
+    excluded_bcs = set(str(b).strip() for b in (exclude_barcodes or ()) if b)
 
     totals: Dict[str, int] = {}
     names: Dict[str, str] = {}
@@ -161,6 +164,8 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Di
         if _norm_name(name) in _GIFT_EXCLUDE_NAMES_NORM:
             continue
         bar = _normalize_barcode(ws.cell_value(r, bar_idx))
+        if bar in excluded_bcs:
+            continue
         qty_raw = ws.cell_value(r, qty_idx)
         try:
             qty = int(float(qty_raw)) if qty_raw not in (None, '') else 0
@@ -174,9 +179,11 @@ def parse_eza_for_bundle(data: bytes, exclude_groups=('캐처스',)) -> tuple[Di
 
 def build_bundle_xlsx(eza_bytes,
                       work_date: datetime.date,
-                      sequence: int) -> tuple[bytes, Dict]:
+                      sequence: int,
+                      exclude_barcodes=None) -> tuple[bytes, Dict]:
     """마스터 양식에 EZA 합계 채워서 일반주문 번들작업건.xlsx bytes 반환.
     eza_bytes: bytes 또는 List[bytes] (여러 파일 합산).
+    exclude_barcodes: 이 바코드들은 EZA 파싱 단계에서 제외.
     """
     if not os.path.exists(TEMPLATE_PATH):
         raise RuntimeError(f"마스터 템플릿이 없습니다: {TEMPLATE_PATH}")
@@ -185,7 +192,7 @@ def build_bundle_xlsx(eza_bytes,
     eza_names: Dict[str, str] = {}
     sources = eza_bytes if isinstance(eza_bytes, (list, tuple)) else [eza_bytes]
     for b in sources:
-        t, n = parse_eza_for_bundle(b)
+        t, n = parse_eza_for_bundle(b, exclude_barcodes=exclude_barcodes)
         for bar, qty in t.items():
             eza_totals[bar] = eza_totals.get(bar, 0) + qty
         for bar, nm in n.items():
