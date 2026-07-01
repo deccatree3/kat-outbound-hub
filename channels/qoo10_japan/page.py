@@ -18,6 +18,7 @@ from db import pg
 from utils.timezone import kst_today
 from qoo10 import api_client as qapi
 from qoo10 import generator as qgen
+from qoo10 import kse_client as ksec
 
 
 def render_credentials_sidebar():
@@ -98,6 +99,63 @@ def render_credentials_sidebar():
                         st.success(f"✅ 인증 성공 (SAK len={len(sak)})")
                     except Exception as ex:
                         st.error(f"❌ {ex}")
+
+
+def render_kse_credentials_sidebar():
+    """KSE JP OMS 자격증명 사이드바 expander (QSM 과 동일 패턴)."""
+    with st.sidebar.expander("🔐 KSE OMS 자격증명", expanded=False):
+        status = ksec.get_credentials_status()
+        if status['configured']:
+            _urk = status.get('urkey') or ''
+            st.success(f"✅ 자격증명 등록됨 (계정: `{_urk}`, source: {status.get('source')})")
+            if status.get('updated_at'):
+                st.caption(f"마지막 갱신: `{status['updated_at']}`")
+        else:
+            st.warning("⚠️ 자격증명 미등록 — KSE OMS 자동 수집을 사용하려면 아래 저장")
+
+        st.caption("입력란을 비워두면 기존 값이 유지됩니다 (부분 갱신 가능)")
+
+        urkey_in = st.text_input(
+            "계정 (urkey)", placeholder="katchers",
+            key="kse_sb_urkey",
+        )
+        pw_in = st.text_input(
+            "비밀번호", type="password", key="kse_sb_password",
+        )
+        with st.expander("고급 (화주코드/물류그룹)", expanded=False):
+            ctkey_in = st.text_input(
+                "ctkey (화주코드, 기본 KE00003)", placeholder="KE00003",
+                key="kse_sb_ctkey",
+            )
+            loggrpcd_in = st.text_input(
+                "loggrpcd (물류그룹, 기본 1)", placeholder="1",
+                key="kse_sb_loggrpcd",
+            )
+
+        b1, b2 = st.columns(2)
+        with b1:
+            if st.button("💾 저장", key="kse_sb_save", width="stretch", type="primary"):
+                ok = ksec.save_credentials_to_db(
+                    urkey=urkey_in.strip() or None,
+                    password=pw_in.strip() or None,
+                    ctkey=ctkey_in.strip() or None,
+                    loggrpcd=loggrpcd_in.strip() or None,
+                )
+                if ok:
+                    st.success("저장 완료")
+                    st.rerun()
+                else:
+                    st.error("저장 실패 (DB 연결 확인)")
+        with b2:
+            if st.button("🧪 연결 테스트", key="kse_sb_test", width="stretch",
+                         help="저장된 자격증명으로 로그인 시도"):
+                # 입력란 값이 있으면 세션에 저장하지 않고 직접 시도할 수 있으나,
+                # KSE 는 여러 필드 조합이 있어 저장 후 테스트가 안전. 우선 저장된 값 기준 로그인.
+                result = ksec.test_login()
+                if result['ok']:
+                    st.success(f"✅ {result['message']} (JWT {result['jwt_len']} chars)")
+                else:
+                    st.error(f"❌ {result['message']}")
 
 
 def _render_stepper(active: int):
@@ -494,7 +552,7 @@ def _step2_outbound_generate():
                         qgen.mark_brief_consumed(bid_close)
                     for k in ('qoo10_detail_bytes', 'qoo10_detail_name',
                               'qoo10_brief_bytes', 'qoo10_brief_name',
-                              'qoo10_brief_id', 'oms_bytes', 'oms_name'):
+                              'qoo10_brief_id', 'oms_bytes', 'oms_name', 'oms_waybill_map'):
                         st.session_state.pop(k, None)
                     st.session_state['qoo10_step'] = 1
                     st.success("작업 종료 처리됨")
@@ -607,27 +665,80 @@ def _step4_collect_waybills():
     else:
         st.error("⚠️ 미완료 작업이 없습니다. ① 단계에서 먼저 작업을 시작하세요.")
 
+    # ── 자동 수집 (KSE OMS API 직결) ──────────────────────────
+    auto_map = st.session_state.get('oms_waybill_map')
+    auto_label = (
+        f"🤖 KSE에서 자동 수집 ({len(auto_map)}건 매핑됨) — 재수집" if auto_map
+        else "🤖 KSE에서 자동 수집 (수동 xlsx 업로드 대체)"
+    )
+    with st.expander(auto_label, expanded=not (auto_map or st.session_state.get('oms_bytes'))):
+        st.caption(
+            "KSE OMS 에 API 로 로그인해 주문(출고&입고) 데이터에서 송장번호를 직접 수집합니다. "
+            "자격증명은 `.streamlit/secrets.toml` 의 `[kse_jp]` 섹션 (urkey, password) 을 사용."
+        )
+        _today = kst_today()
+        col_a, col_b, col_c = st.columns([1, 1, 1])
+        with col_a:
+            auto_start = st.date_input(
+                "출고예정일 시작", value=_today - datetime.timedelta(days=1),
+                key="kse_auto_start",
+            )
+        with col_b:
+            auto_end = st.date_input(
+                "출고예정일 종료", value=_today + datetime.timedelta(days=1),
+                key="kse_auto_end",
+            )
+        with col_c:
+            st.write("")
+            st.write("")
+            run_auto = st.button("자동 수집 실행", type="primary", key="kse_auto_run")
+        if run_auto:
+            try:
+                with st.spinner("KSE OMS 로그인 · 조회 중..."):
+                    mapping = ksec.fetch_waybills(auto_start, auto_end)
+                if not mapping:
+                    st.warning(f"매핑 결과 0건. 조건을 확인하세요 ({auto_start} ~ {auto_end}).")
+                else:
+                    st.session_state['oms_waybill_map'] = mapping
+                    st.session_state.pop('oms_bytes', None)
+                    st.session_state.pop('oms_name', None)
+                    st.success(f"✅ 자동 수집 완료 — {len(mapping)}건 송장 매핑")
+                    st.rerun()
+            except ksec.KseClientError as ex:
+                st.error(f"KSE 자동 수집 실패: {ex}")
+            except Exception as ex:
+                st.error(f"KSE 자동 수집 예외: {ex}")
+        if auto_map:
+            with st.expander(f"미리보기 (최대 20건 / 총 {len(auto_map)}건)", expanded=False):
+                _preview = list(auto_map.items())[:20]
+                st.dataframe(
+                    pd.DataFrame(_preview, columns=["주문번호(externorderkey)", "송장번호(waybillno)"]),
+                    width="stretch", hide_index=True,
+                )
+
     oms_file = st.file_uploader(
-        "KSE OMS 주문(출고&입고) 내역.xlsx 업로드",
+        "KSE OMS 주문(출고&입고) 내역.xlsx 업로드 (수동)",
         type=['xlsx'], key="oms_waybill_xlsx",
-        help="KSE OMS에서 내려받은 주문 번호 ↔ 운송장 번호 자료 (취소건 자동 제외)",
+        help="KSE OMS에서 내려받은 주문 번호 ↔ 운송장 번호 자료 (취소건 자동 제외). 자동 수집이 실패했을 때만 사용.",
     )
     if oms_file is not None:
         st.session_state['oms_bytes'] = oms_file.getvalue()
         st.session_state['oms_name'] = oms_file.name
+        st.session_state.pop('oms_waybill_map', None)
 
     st.markdown(
         "<div style='font-size:0.75em'>\n\n"
         "| 구분 | 취합 경로 | 취합 |\n"
         "|------|----------|:----:|\n"
         f"| KSE OMS 주문(출고&입고) 내역 | KSE JP OMS > OMS > 주문관리 > 주문(출고&입고) - B2C > 엑셀다운 | "
-        f"{'✅' if st.session_state.get('oms_bytes') else ''} |\n\n"
+        f"{'✅' if (st.session_state.get('oms_bytes') or st.session_state.get('oms_waybill_map')) else ''} |\n\n"
         "</div>",
         unsafe_allow_html=True,
     )
 
-    if st.session_state.get('oms_bytes') and st.session_state.get('qoo10_brief_bytes'):
-        st.success("✅ 일본 KSE OMS 파일 업로드 완료. 아래로 진행하세요.")
+    if (st.session_state.get('oms_bytes') or st.session_state.get('oms_waybill_map')) \
+            and st.session_state.get('qoo10_brief_bytes'):
+        st.success("✅ 일본 KSE OMS 송장 데이터 준비 완료. 아래로 진행하세요.")
 
 
 def _step5_qsm_waybill_register():
@@ -638,6 +749,7 @@ def _step5_qsm_waybill_register():
     brief_name_t2 = st.session_state.get('qoo10_brief_name')
     brief_id_t2 = st.session_state.get('qoo10_brief_id')
     oms_bytes_t4 = st.session_state.get('oms_bytes')
+    oms_waybill_map = st.session_state.get('oms_waybill_map')
 
     if not brief_bytes_t2:
         st.error("⚠️ ④ 단계에서 작업 내역을 먼저 선택하세요.")
@@ -645,8 +757,8 @@ def _step5_qsm_waybill_register():
             st.session_state['qoo10_step'] = 4
             st.rerun()
         return
-    if not oms_bytes_t4:
-        st.error("⚠️ ④ 단계에서 KSE OMS 주문(출고&입고) 내역 파일을 먼저 업로드하세요.")
+    if not oms_bytes_t4 and not oms_waybill_map:
+        st.error("⚠️ ④ 단계에서 KSE OMS 자동 수집 또는 xlsx 업로드를 먼저 수행하세요.")
         if st.button("← ④ 단계로 이동"):
             st.session_state['qoo10_step'] = 4
             st.rerun()
@@ -656,7 +768,10 @@ def _step5_qsm_waybill_register():
         brief_rows = qgen.parse_qsm_csv(brief_bytes_t2)
         cart_nos = [r.get('장바구니번호', '') for r in brief_rows]
 
-        oms_map = qgen.parse_kse_oms_waybill(oms_bytes_t4)
+        if oms_waybill_map:
+            oms_map = oms_waybill_map
+        else:
+            oms_map = qgen.parse_kse_oms_waybill(oms_bytes_t4)
         waybill_map = {c: oms_map[c] for c in cart_nos if c in oms_map}
 
         unhandled = len(cart_nos) - len(waybill_map)
@@ -786,7 +901,7 @@ def _step5_qsm_waybill_register():
                             for k in ('qoo10_detail_bytes', 'qoo10_detail_name',
                                       'qoo10_brief_bytes', 'qoo10_brief_name',
                                       'qoo10_brief_id', 'oms_bytes', 'oms_name',
-                                      'qoo10_api_orders'):
+                                      'oms_waybill_map', 'qoo10_api_orders'):
                                 st.session_state.pop(k, None)
                             st.session_state['qoo10_step'] = 1
                             st.rerun()
@@ -828,7 +943,7 @@ def _step6_qsm_register_guide():
                 qgen.mark_brief_consumed(brief_id_t6)
             for k in ('qoo10_detail_bytes', 'qoo10_detail_name',
                       'qoo10_brief_bytes', 'qoo10_brief_name',
-                      'qoo10_brief_id', 'oms_bytes', 'oms_name'):
+                      'qoo10_brief_id', 'oms_bytes', 'oms_name', 'oms_waybill_map'):
                 st.session_state.pop(k, None)
             st.session_state['qoo10_step'] = 1
             st.success("작업 완료처리됨")
@@ -921,6 +1036,7 @@ def render_page():
     상품 매핑 관리는 어드민 → 🔧 상품 매핑 페이지로 이전.
     """
     render_credentials_sidebar()
+    render_kse_credentials_sidebar()
 
     tab_main, tab_history = st.tabs([
         "📤 출고요청", "📚 출고 이력",
