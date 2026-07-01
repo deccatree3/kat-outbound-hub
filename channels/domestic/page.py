@@ -130,8 +130,14 @@ def _classify_domestic_xls(data: bytes, name: str) -> str:
     return 'unknown'
 
 
-def _render_daone_download(daone_rows, work_date, sequence, source_filename, session_info):
-    """다원 발주서 미리보기 + 다운로드 + 저장 (홀딩 제외 후 행 기준)."""
+def _render_daone_download(daone_rows, work_date, sequence, source_filename, session_info,
+                           key_prefix: str = 'domestic',
+                           file_suffix: str = ''):
+    """다원 발주서 미리보기 + 다운로드 + 저장 (홀딩 제외 후 행 기준).
+
+    key_prefix: 캐처스/네뉴 등 다중 호출 시 Streamlit 위젯 key 충돌 방지.
+    file_suffix: 파일명에 붙일 접미사 (예: '_네뉴'). 빈값이면 붙지 않음.
+    """
     if not daone_rows:
         st.info("📭 전 주문이 홀딩되어 이번 차수 다원 발주서가 비었습니다.")
         return
@@ -142,7 +148,8 @@ def _render_daone_download(daone_rows, work_date, sequence, source_filename, ses
         st.error(f"다원 xlsx 생성 실패: {ex}")
         return
     yymmdd = work_date.strftime('%y%m%d')
-    out_name = f"{yymmdd}_{int(sequence)}차발주서(주문건수 {unique_orders}, 주문수량 {total_qty}).xlsx"
+    out_name = (f"{yymmdd}_{int(sequence)}차발주서{file_suffix}"
+                f"(주문건수 {unique_orders}, 주문수량 {total_qty}).xlsx")
     c_dl, c_save = st.columns([2, 1])
     with c_dl:
         st.download_button(
@@ -151,17 +158,17 @@ def _render_daone_download(daone_rows, work_date, sequence, source_filename, ses
             file_name=out_name,
             mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
             type="primary", width="stretch",
-            key="daone_download",
+            key=f"{key_prefix}_download",
         )
     with c_save:
         render_save_button(CHANNEL_KEY, session_info, daone_rows,
-                           source_filename, key_prefix='domestic')
+                           source_filename, key_prefix=key_prefix)
     st.caption("📤 다원 WMS에 수기 업로드 (단독) 또는 통합 발주서에 저장.")
 
 
 def _section_daone(eza_rows, work_date, sequence, source_filename, session_info,
                    stock_file=None):
-    st.markdown("### 📋 [캐처스]다원 출고요청")
+    st.markdown("### 📋 [캐처스] 출고요청")
     st.caption(
         f"판매처그룹='캐처스' 행만 변환. 공급처='{_3PL_SUPPLIER}' 행은 추가 제외 "
         "(별도 [캐처스]3PL-자연앤미 섹션에서 처리). "
@@ -342,7 +349,7 @@ def _derive_bundle_set_meta(name: str) -> tuple[int, str]:
 
 
 def _section_bundle(eza_bytes_list, work_date, sequence):
-    st.markdown("### 📦 [네뉴]번들작업요청")
+    st.markdown("### 📦 [네뉴] 출고요청")
     st.caption(
         "이지어드민에서 판매처그룹='캐처스' 행 + 상품명에 **'선물세트'** 미포함 행은 자동 제외. "
         "(단 '스키니퓨리티' 포함 + 사전 지정한 포장재성 선물세트(지함/쇼핑백)는 네뉴 번들이 아니라 제외.) "
@@ -436,6 +443,102 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
         type="primary", width="stretch",
         disabled=_no_bundle,
         key=f"nenu_bundle_download_{work_date}_{sequence}",
+    )
+
+
+def _section_nenu_daone(eza_rows, work_date, sequence, source_filename, session_info):
+    """네뉴 출고요청 발주서 (다원 양식) + 통계.
+
+    - 판매처그룹 ≠ 캐처스 (네뉴 대상)
+    - 임시-다원출고 목록 바코드가 포함된 주문번호 → 그 주문 전체 제외 (다원 출고 처리)
+    - 나머지 (태영 출고) 를 다원 양식 발주서로 다운로드
+    - 통계: 총 주문수 / 태영 출고 주문수 / 다원 출고 주문수
+    - 다원 출고 대상 상품 (바코드, 상품명, 총 수량) 상세 표
+    """
+    from channels.domestic.nenu_daone_exclude import (
+        excluded_barcodes, excluded_names_by_barcode,
+    )
+    from collections import defaultdict
+
+    nenu_rows = [
+        r for r in eza_rows
+        if str(r.get('판매처그룹', '')).strip() != '캐처스'
+    ]
+    if not nenu_rows:
+        return
+
+    def _order_key(r):
+        return str(r.get('주문번호') or r.get('고객주문번호') or '').strip()
+
+    def _qty(r):
+        v = r.get('상품수량') or r.get('주문수량') or 0
+        try:
+            return int(float(v))
+        except (ValueError, TypeError):
+            return 0
+
+    excl_bc = excluded_barcodes()
+    excl_names = excluded_names_by_barcode()
+
+    order_map: dict[str, list] = defaultdict(list)
+    for r in nenu_rows:
+        k = _order_key(r)
+        if k:
+            order_map[k].append(r)
+
+    daone_orders: set[str] = set()
+    for on, items in order_map.items():
+        for r in items:
+            if str(r.get('바코드') or '').strip() in excl_bc:
+                daone_orders.add(on)
+                break
+
+    daone_order_items = defaultdict(list)
+    for on in daone_orders:
+        for r in order_map[on]:
+            bc = str(r.get('바코드') or '').strip()
+            if bc in excl_bc:
+                daone_order_items[on].append(
+                    (bc, str(r.get('상품명') or excl_names.get(bc, '')), _qty(r))
+                )
+
+    total_orders = len(order_map)
+    daone_orders_count = len(daone_orders)
+    taeyoung_orders_count = total_orders - daone_orders_count
+
+    st.markdown("---")
+    st.markdown("#### 📊 주문 통계")
+    c1, c2, c3 = st.columns(3)
+    c1.metric("총 주문수", total_orders)
+    c2.metric("태영 출고 주문수", taeyoung_orders_count)
+    c3.metric("다원 출고 주문수", daone_orders_count)
+
+    if daone_orders_count > 0:
+        qty_agg: dict[str, int] = defaultdict(int)
+        name_map: dict[str, str] = {}
+        for on, items in daone_order_items.items():
+            for bc, nm, q in items:
+                qty_agg[bc] += q
+                name_map[bc] = nm
+        detail_df = pd.DataFrame(
+            [{"바코드": bc, "상품명": name_map[bc], "총 수량": q}
+             for bc, q in qty_agg.items()]
+        ).sort_values("총 수량", ascending=False)
+        st.markdown("##### 🗂 임시-다원출고 대상 상품 (발주서 제외됨)")
+        st.dataframe(detail_df, hide_index=True, width="stretch")
+
+    taeyoung_rows = [r for r in nenu_rows if _order_key(r) not in daone_orders]
+    if not taeyoung_rows:
+        st.info("📭 태영 출고 대상 주문 없음 — 발주서 생성 스킵.")
+        return
+
+    daone_rows = transform_to_daone(taeyoung_rows)
+    st.markdown("---")
+    st.markdown("#### 📥 네뉴 발주서 (다원 양식)")
+    _render_daone_download(
+        daone_rows, work_date, sequence, source_filename, session_info,
+        key_prefix='domestic_nenu',
+        file_suffix='_네뉴',
     )
 
 
@@ -553,6 +656,7 @@ def _tab_create_order():
                    stock_file=stock_file)
     st.markdown("---")
     _section_bundle([f.getvalue() for f in uploaded_files], work_date, int(sequence))
+    _section_nenu_daone(eza_rows, work_date, int(sequence), source_filename, session_info)
     st.markdown("---")
     _section_3pl(eza_rows, work_date, int(sequence))
 
