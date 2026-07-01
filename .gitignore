@@ -34,3 +34,9 @@ Thumbs.db
 
 # Claude Code local settings
 .claude/
+
+# Conjo (세션 컨텍스트 보존용) — 외부 공유 금지
+chat_log/
+CONTEXT.md
+HANDOFF.md
+NEXT_SESSION.md
