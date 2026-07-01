@@ -160,11 +160,8 @@ def _render_product_summary(jp_orders, kr_orders, unknown_orders, conflicts):
 
 
 
-def _collect_via_api(work_date=None, sequence=None):
-    """QSM API → cu_qsm_rows + qoo10_detail/brief bytes (일본 출고 탭에서 재사용)."""
-    import datetime as _dt
-
-    # 이전 rerun 에서 저장한 중복 감지 결과 표시 (rerun 으로 즉시 지워지지 않게)
+def _render_dup_warning():
+    """세션에 저장된 중복 감지 결과를 표시. render() 시작부에서 호출."""
     _dw = st.session_state.get('cu_dup_warning')
     if _dw:
         _preview = ", ".join(_dw['dup_preview'])
@@ -181,6 +178,10 @@ def _collect_via_api(work_date=None, sequence=None):
     elif st.session_state.get('cu_dup_checked') is not None:
         st.caption(f"🔍 중복 감지: 이전 발주계획 {st.session_state['cu_dup_checked']}개 검사 → 중복 없음")
 
+
+def _collect_via_api(work_date=None, sequence=None):
+    """QSM API → cu_qsm_rows + qoo10_detail/brief bytes (일본 출고 탭에서 재사용)."""
+    import datetime as _dt
     api_status = qapi.get_credentials_status()
     if api_status.get('expires_at') and api_status.get('days_remaining') is not None:
         icon = {'green': '🟢', 'yellow': '🟡', 'red': '🔴', 'expired': '⚫'}.get(
@@ -343,6 +344,9 @@ def _clear_collected_state():
 
 def render():
     st.markdown("자동 또는 수동 방법으로 QSM의 신규주문을 수집해주세요.")
+
+    # 중복 감지 결과 (rerun 이후에도 유지)
+    _render_dup_warning()
 
     api_available = qapi.has_credentials()
     qsm_rows = st.session_state.get('cu_qsm_rows', [])
