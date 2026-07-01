@@ -338,7 +338,8 @@ def _clear_collected_state():
               'qoo10_detail_bytes', 'qoo10_detail_name',
               'qoo10_brief_bytes', 'qoo10_brief_name', 'qoo10_brief_id',
               'qoo10_brief_work_date', 'qoo10_brief_sequence',
-              'qoo10_tab1_confirmed'):
+              'qoo10_tab1_confirmed',
+              'cu_dup_warning', 'cu_dup_checked'):
         st.session_state.pop(k, None)
 
 
@@ -414,8 +415,15 @@ def render():
     st.markdown("---")
     tab1_confirmed = st.session_state.get('qoo10_tab1_confirmed')
     confirmed_bid = st.session_state.get('qoo10_brief_id') if tab1_confirmed else None
+    dup_block = st.session_state.get('cu_dup_warning')  # 있으면 확정 차단
     if confirmed_bid:
         st.success(f"📋 주문수집 확정됨 — brief #{confirmed_bid} (탭 2 일본 출고 발주계획 드롭다운에 노출).")
+    elif dup_block:
+        st.button(
+            f"🚫 주문수집 확정 불가 — 중복 {dup_block['dup_total']}건 감지 (재수집 필요)",
+            disabled=True, width="stretch", key="cu_confirm_disabled",
+            help="중복 주문이 감지된 상태에서는 확정할 수 없습니다. 아래 '수집 초기화' 후 이전 발주계획을 정리 하거나, 원인 확인 후 진행하세요.",
+        )
     else:
         if st.button(
             "📋 주문수집 확정", type="primary", width="stretch", key="cu_confirm_collect",
