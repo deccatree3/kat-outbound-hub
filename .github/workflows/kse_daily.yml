@@ -1,0 +1,47 @@
+name: KSE → QSM 자동 송장 등록
+
+# KST 13/15/17/19/21시 = UTC 04/06/08/10/12시
+# GH Actions cron 은 정각 정확도 아님 (수 분 지연 가능)
+on:
+  schedule:
+    - cron: '0 4,6,8,10,12 * * *'
+  workflow_dispatch: {}  # 수동 실행 옵션 (Actions 탭에서 Run workflow)
+
+concurrency:
+  group: kse-daily
+  cancel-in-progress: false  # 이전 실행 마무리 대기 (재고 데이터 무결성)
+
+jobs:
+  sync:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install runtime deps only (skip streamlit UI 종속성)
+        run: |
+          python -m pip install --upgrade pip
+          pip install \
+            requests>=2.31 \
+            'psycopg[binary]>=3.1' \
+            openpyxl>=3.1 \
+            pandas>=2.0 \
+            xlsxwriter>=3.1 \
+            xlrd>=2.0
+
+      - name: Run KSE → QSM sync
+        env:
+          DATABASE_URL:       ${{ secrets.DATABASE_URL }}
+          KSE_URKEY:          ${{ secrets.KSE_URKEY }}
+          KSE_PASSWORD:       ${{ secrets.KSE_PASSWORD }}
+          QOO10_API_KEY:      ${{ secrets.QOO10_API_KEY }}
+          QOO10_USER_ID:      ${{ secrets.QOO10_USER_ID }}
+          QOO10_PASSWORD:     ${{ secrets.QOO10_PASSWORD }}
+          SLACK_WEBHOOK_URL:  ${{ secrets.SLACK_WEBHOOK_URL }}
+        run: python scripts/kse_auto_sync.py
