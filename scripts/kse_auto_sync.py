@@ -74,6 +74,8 @@ def run() -> dict[str, Any]:
         "brief_marks": [],
         "errors": [],
         "top_error": None,
+        # KSE 지연 감지 — pending brief 에 있는데 KSE 매핑에 없는 (orderNo, packNo)
+        "kse_delayed": [],
     }
 
     try:
@@ -117,7 +119,15 @@ def run() -> dict[str, Any]:
         for r in rows:
             cart = str(r.get("장바구니번호", "") or "").strip()
             order = str(r.get("주문번호", "") or "").strip()
-            if not cart or not order or cart not in kse_map:
+            if not cart or not order:
+                continue
+            if cart not in kse_map:
+                # KSE 지연 — 발주계획엔 있지만 KSE 가 아직 송장 등록 안 함
+                result["kse_delayed"].append({
+                    "brief_id": pb["id"],
+                    "order_no": order,
+                    "pack_no": cart,
+                })
                 continue
             waybill = kse_map[cart]
             brief_total += 1
@@ -166,38 +176,74 @@ def run() -> dict[str, Any]:
 
 
 def _notify_slack(webhook: str, result: dict[str, Any]) -> None:
-    """알림 조건: 새 등록 or 실패 or top_error 있을 때만. 아니면 조용."""
-    has_change = (result["registered"] > 0 or result["failed"] > 0 or result.get("top_error"))
+    """알림 조건: 새 등록 or 실패 or top_error or KSE 지연 있을 때. 그 외 조용."""
+    has_change = (
+        result["registered"] > 0
+        or result["failed"] > 0
+        or result.get("top_error")
+        or len(result.get("kse_delayed", [])) > 0
+    )
     if not has_change:
         return
 
+    attachments = []
+
+    # 1) 치명적 실패
     if result.get("top_error"):
-        color = "danger"
-        title = "🚨 KSE→QSM 자동 송장 등록 — 치명적 실패"
-        body = f"*원인*: {result['top_error']}"
+        attachments.append({
+            "color": "danger",
+            "title": "🚨 KSE→QSM 자동 송장 등록 — 치명적 실패",
+            "text": f"*원인*: {result['top_error']}",
+            "footer": "kat-outbound-hub",
+        })
+    # 2) 부분 실패
     elif result["failed"] > 0:
-        color = "warning"
-        title = f"⚠️ KSE→QSM 자동 송장 등록 — 부분 실패 ({result['registered']} 성공 / {result['failed']} 실패)"
         errs = "\n".join(
             f"• brief#{e.get('brief_id')} orderNo={e.get('order_no')}: "
             f"{e.get('msg') or e.get('detail') or e.get('code')}"
             for e in result["errors"][:10]
         )
-        body = f"*실행 시각*: {result.get('started_at')}\n*실패 상세*:\n{errs}"
-    else:
-        color = "good"
-        title = f"✅ KSE→QSM 자동 송장 등록 — {result['registered']}건 등록"
-        body = (f"*실행 시각*: {result.get('started_at')}\n"
-                f"KSE 매핑: {result['kse_map_size']}건 · brief {result['briefs_scanned']}개 스캔 · "
-                f"중복 skip {result['already_shipped_skipped']}건 · "
-                f"consumed 마크 {len(result['brief_marks'])}개")
+        attachments.append({
+            "color": "warning",
+            "title": f"⚠️ 등록 실패 ({result['registered']} 성공 / {result['failed']} 실패)",
+            "text": f"*실행 시각*: {result.get('started_at')}\n*실패 상세*:\n{errs}",
+            "footer": "kat-outbound-hub",
+        })
+    # 3) 순수 성공 (실패 없음 + 새 등록 있음)
+    elif result["registered"] > 0:
+        attachments.append({
+            "color": "good",
+            "title": f"✅ {result['registered']}건 등록 완료",
+            "text": (f"*실행 시각*: {result.get('started_at')}\n"
+                     f"KSE 매핑: {result['kse_map_size']}건 · "
+                     f"brief {result['briefs_scanned']}개 스캔 · "
+                     f"중복 skip {result['already_shipped_skipped']}건 · "
+                     f"consumed {len(result['brief_marks'])}개"),
+            "footer": "kat-outbound-hub",
+        })
 
-    payload = {
-        "attachments": [{
-            "color": color, "title": title, "text": body,
-            "footer": "kat-outbound-hub · scripts/kse_auto_sync.py",
-        }]
-    }
+    # 4) KSE 지연 (별도 attachment — 등록 성공/실패와 무관하게 함께 알림)
+    delayed = result.get("kse_delayed", [])
+    if delayed:
+        uniq = {(d["brief_id"], d["order_no"], d["pack_no"]) for d in delayed}
+        preview = "\n".join(
+            f"• 발주계획 #{bid} · orderNo={o} · packNo={p}"
+            for bid, o, p in list(uniq)[:10]
+        )
+        more = f"\n... 외 {len(uniq) - 10}건" if len(uniq) > 10 else ""
+        attachments.append({
+            "color": "warning",
+            "title": f"⏳ KSE 송장 등록 지연 감지 ({len(uniq)}건)",
+            "text": (f"*실행 시각*: {result.get('started_at')}\n"
+                     f"발주계획엔 있으나 KSE 가 아직 송장 등록 안 한 주문:\n"
+                     f"{preview}{more}\n"
+                     f"→ KSE 담당자 확인 필요"),
+            "footer": "kat-outbound-hub",
+        })
+
+    if not attachments:
+        return
+    payload = {"attachments": attachments}
     try:
         import requests
         requests.post(webhook, json=payload, timeout=10)
