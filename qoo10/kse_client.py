@@ -33,7 +33,11 @@ import requests
 LOG = logging.getLogger(__name__)
 
 BASE_URL = "https://jp.ksewms.com"
-LOGIN_URL = f"{BASE_URL}/backed/system/login"
+# 실제 브라우저 XHR 캡처 (2026-07-01):
+# - login  : POST /amsbackend/backed/system/login   body {user_id, password, code}
+# - search : POST /omsbackend/orderController/selectOrderHd   header Authorization: <JWT>
+# - JWT    : 응답 data.token (796 chars, exp 24h)
+LOGIN_URL = f"{BASE_URL}/amsbackend/backed/system/login"
 SEARCH_URL = f"{BASE_URL}/omsbackend/orderController/selectOrderHd"
 
 DEFAULT_TIMEOUT = 30.0
@@ -332,10 +336,10 @@ def _extract_jwt(resp: requests.Response) -> str:
 
 
 def _login(session: requests.Session, auth: KseAuth) -> str:
-    # 브라우저 요청 흉내: Origin/Referer 없는 요청은 nginx 가 /ams/ 로 302 튕김.
+    # 브라우저 XHR 캡처 재현: body 필드는 user_id/password/code (captcha 없으면 code="").
     resp = session.post(
         LOGIN_URL,
-        json={"urkey": auth.urkey, "password": auth.password},
+        json={"user_id": auth.urkey, "password": auth.password, "code": ""},
         headers={
             "Content-Type": "application/json",
             "Accept": "application/json, text/plain, */*",
@@ -344,7 +348,6 @@ def _login(session: requests.Session, auth: KseAuth) -> str:
             "Referer": f"{BASE_URL}/oms/login",
         },
         timeout=DEFAULT_TIMEOUT,
-        allow_redirects=False,
     )
     if resp.status_code >= 400:
         raise KseClientError(f"로그인 실패 status={resp.status_code} body={resp.text[:300]}")
