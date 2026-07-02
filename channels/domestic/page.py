@@ -357,11 +357,7 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
     )
 
     try:
-        from channels.domestic.nenu_daone_exclude import excluded_barcodes as _nenu_excl_bcs
-        xlsx_bytes, info = build_bundle_xlsx(
-            eza_bytes_list, work_date, int(sequence),
-            exclude_barcodes=_nenu_excl_bcs(),
-        )
+        xlsx_bytes, info = build_bundle_xlsx(eza_bytes_list, work_date, int(sequence))
     except Exception as ex:
         st.error(f"번들작업파일 생성 실패: {ex}")
         return
@@ -445,19 +441,11 @@ def _section_bundle(eza_bytes_list, work_date, sequence):
 
 
 def _section_nenu_daone(eza_rows, work_date, sequence, source_filename, session_info):
-    """네뉴 출고요청 발주서 (다원 양식) + 통계.
+    """네뉴 출고요청 발주서 (다원 양식).
 
-    - 판매처그룹 ≠ 캐처스 (네뉴 대상)
-    - 임시-다원출고 목록 바코드가 포함된 주문번호 → 그 주문 전체 제외 (다원 출고 처리)
-    - 나머지 (태영 출고) 를 다원 양식 발주서로 다운로드
-    - 통계: 총 주문수 / 태영 출고 주문수 / 다원 출고 주문수
-    - 다원 출고 대상 상품 (바코드, 상품명, 총 수량) 상세 표
+    - 판매처그룹 ≠ 캐처스 (네뉴 대상 전체)
+    - 발주서 + 번들작업건 좌우 배치 + 통합 저장 하단
     """
-    from channels.domestic.nenu_daone_exclude import (
-        excluded_barcodes, excluded_names_by_barcode,
-    )
-    from collections import defaultdict
-
     nenu_rows = [
         r for r in eza_rows
         if str(r.get('판매처그룹', '')).strip() != '캐처스'
@@ -465,72 +453,7 @@ def _section_nenu_daone(eza_rows, work_date, sequence, source_filename, session_
     if not nenu_rows:
         return
 
-    def _order_key(r):
-        return str(r.get('주문번호') or r.get('고객주문번호') or '').strip()
-
-    def _qty(r):
-        v = r.get('상품수량') or r.get('주문수량') or 0
-        try:
-            return int(float(v))
-        except (ValueError, TypeError):
-            return 0
-
-    excl_bc = excluded_barcodes()
-    excl_names = excluded_names_by_barcode()
-
-    order_map: dict[str, list] = defaultdict(list)
-    for r in nenu_rows:
-        k = _order_key(r)
-        if k:
-            order_map[k].append(r)
-
-    daone_orders: set[str] = set()
-    for on, items in order_map.items():
-        for r in items:
-            if str(r.get('바코드') or '').strip() in excl_bc:
-                daone_orders.add(on)
-                break
-
-    daone_order_items = defaultdict(list)
-    for on in daone_orders:
-        for r in order_map[on]:
-            bc = str(r.get('바코드') or '').strip()
-            if bc in excl_bc:
-                daone_order_items[on].append(
-                    (bc, str(r.get('상품명') or excl_names.get(bc, '')), _qty(r))
-                )
-
-    total_orders = len(order_map)
-    daone_orders_count = len(daone_orders)
-    taeyoung_orders_count = total_orders - daone_orders_count
-
-    st.markdown("---")
-    st.markdown("#### 📊 주문 통계")
-    c1, c2, c3 = st.columns(3)
-    c1.metric("총 주문수", total_orders)
-    c2.metric("태영 출고 주문수", taeyoung_orders_count)
-    c3.metric("다원 출고 주문수", daone_orders_count)
-
-    if daone_orders_count > 0:
-        qty_agg: dict[str, int] = defaultdict(int)
-        name_map: dict[str, str] = {}
-        for on, items in daone_order_items.items():
-            for bc, nm, q in items:
-                qty_agg[bc] += q
-                name_map[bc] = nm
-        detail_df = pd.DataFrame(
-            [{"바코드": bc, "상품명": name_map[bc], "총 수량": q}
-             for bc, q in qty_agg.items()]
-        ).sort_values("총 수량", ascending=False)
-        st.markdown("##### 🗂 임시-다원출고 대상 상품 (발주서 제외됨)")
-        st.dataframe(detail_df, hide_index=True, width="stretch")
-
-    taeyoung_rows = [r for r in nenu_rows if _order_key(r) not in daone_orders]
-    if not taeyoung_rows:
-        st.info("📭 태영 출고 대상 주문 없음 — 발주서 생성 스킵.")
-        return
-
-    daone_rows = transform_to_daone(taeyoung_rows)
+    daone_rows = transform_to_daone(nenu_rows)
     st.markdown("---")
     st.markdown("#### 📥 네뉴 발주서 (태영에 전달)")
     unique_orders, total_qty = _render_metrics_and_preview(daone_rows)
