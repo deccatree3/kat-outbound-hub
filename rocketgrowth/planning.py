@@ -118,10 +118,6 @@ def compute_plan(inp: PlanInput, params: PlanParams | None = None) -> PlanOutput
     box_qty = int(inp.box_qty) if inp.box_qty and inp.box_qty > 0 else 1
     if raw_need > 0:
         boxes = math.ceil(raw_need / box_qty)
-    elif velocity <= 0 and current_total == 0:
-        # 신규 출시/무판매 SKU + 쿠팡 재고 0 → 최소 1박스 시드 추천.
-        # 사용자가 확정 단계에서 조정. velocity 가 있는데 raw_need<=0 인 케이스(과잉)는 제외.
-        boxes = 1
     else:
         boxes = 0
     inbound_qty = boxes * box_qty
@@ -137,8 +133,7 @@ def compute_plan(inp: PlanInput, params: PlanParams | None = None) -> PlanOutput
 
     # Urgency 등급 결정
     if velocity <= 0:
-        # 재고 0 + 무판매 = 입고 필요 (긴급). 재고 있는 무판매 = 그대로 ⏸.
-        urgency = URGENCY_CRITICAL if current_total == 0 else URGENCY_NO_VELOCITY
+        urgency = URGENCY_NO_VELOCITY
     elif days_until_stockout is not None and days_until_stockout < L:
         urgency = URGENCY_CRITICAL
     elif days_until_stockout is not None and days_until_stockout < L + T:
