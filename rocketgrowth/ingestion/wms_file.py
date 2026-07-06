@@ -1,27 +1,15 @@
-"""물류창고(WMS) 재고현황 파일(Document_*.xls) 파서.
+"""물류창고(WMS) 재고현황 파일 파서. 2 포맷 자동 감지 지원.
 
-파일 구조 (실측):
-- 시트: 첫 시트
-- 1행: 헤더
-- 2행~: 데이터. 한 바코드가 여러 LOC/LOT 단위로 분할되어 여러 행에 존재.
-        같은 바코드라도 로트(=생산 배치)가 다르면 유통일이 다를 수 있다.
+지원 포맷:
+1) **다원 WMS (Document_*.xls)** — 레거시. 헤더에 `품목코드`, `가능수량` 존재.
+2) **태영종합물류 (현재고_*.xls)** — 신규(2026-07). 헤더에 `상품코드`, `가용재고` 존재.
 
-컬럼 매핑 (0-indexed):
-  0  품목코드 (WMS 바코드)
-  1  품목명
-  2  품목손상플래그
-  3  LOC그룹            (메인보관/출고대기/피킹존 등)
-  4  OWNERLOCGROUP
-  5  LOC
-  6  재고수량 (total)
-  7  할당수량 (alloc)
- 11  가능수량 (available)
- 12  유통기간          (보통 비어있음)
- 14  속성4(제조일)      (보통 비어있음, 파일 변형)
- 17  속성5(유통일)      (Excel serial date, 배치별 유통기한)
+동일 바코드의 여러 행은 LOC/LOT 단위 분할. 유통일이 다르면 **독립 배치**로 취급.
 
-동일 바코드의 여러 행은 LOC/LOT 단위 분할이며, 유통일이 다른 경우
-각각이 **독립된 배치(batch)** 로 취급되어야 한다 (출고 시 혼적 금지).
+태영 신규 포맷 특이사항:
+- 로트번호 비어있는 행 = "부족재고 요약행" (현재고=-부족재고). **무시**.
+- RELEASEAREA 필터 개념 없음 — `가용재고` 컬럼에 이미 반영됨 (WMS 계산치).
+- 소비기한 = 'YYYYMMDD' 문자열 (엑셀 serial 아님).
 """
 from __future__ import annotations
 
@@ -73,11 +61,18 @@ def _excel_serial_to_date(v: Any, book_datemode: int) -> date | None:
     return None
 
 
-_DATE_IN_NAME = re.compile(r"Document_(\d{4})-(\d{2})-(\d{2})")
+_DATE_IN_NAME_LEGACY = re.compile(r"Document_(\d{4})-(\d{2})-(\d{2})")
+_DATE_IN_NAME_NEW = re.compile(r"(\d{4})(\d{2})(\d{2})_\d+")
 
 
 def _infer_snapshot_date(filename: str) -> date:
-    m = _DATE_IN_NAME.search(filename)
+    m = _DATE_IN_NAME_LEGACY.search(filename)
+    if m:
+        try:
+            return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
+        except ValueError:
+            pass
+    m = _DATE_IN_NAME_NEW.search(filename)
     if m:
         try:
             return date(int(m.group(1)), int(m.group(2)), int(m.group(3)))
@@ -86,7 +81,22 @@ def _infer_snapshot_date(filename: str) -> date:
     return date.today()
 
 
-_HEADER_ALIASES = {
+def _yyyymmdd_to_date(v: Any) -> date | None:
+    """'YYYYMMDD' 문자열 → date. 태영 신규 포맷 소비기한/제조일자용."""
+    if v is None or v == "" or v == "-":
+        return None
+    s = str(v).strip()
+    if not s or s == "0":
+        return None
+    for fmt in ("%Y%m%d", "%Y-%m-%d", "%Y/%m/%d", "%Y.%m.%d"):
+        try:
+            return datetime.strptime(s, fmt).date()
+        except ValueError:
+            continue
+    return None
+
+
+_HEADER_ALIASES_LEGACY = {
     "barcode": ["품목코드"],
     "product_name": ["품목명"],
     "loc_group": ["LOC그룹"],
@@ -97,27 +107,51 @@ _HEADER_ALIASES = {
     "expiry": ["속성5(유통일)", "속성5", "유통일"],
 }
 
+_HEADER_ALIASES_NEW = {
+    "barcode": ["상품코드"],
+    "product_name": ["상품명"],
+    "warehouse_zone": ["창고존"],
+    "loc": ["로케이션 코드"],
+    "lot_no": ["로트번호"],
+    "manufacture_date": ["제조일자"],
+    "expiry": ["소비기한"],
+    "total_qty": ["현재고"],
+    "wip_qty": ["작업중재고"],
+    "reserved_qty": ["출고예정지정재고"],
+    "available_qty": ["가용재고"],
+    "shortage_qty": ["부족재고"],
+    "owner": ["화주"],
+}
 
-def _resolve_headers(header_row: list) -> dict[str, int]:
-    """헤더 row 를 읽어서 필드 → 컬럼 인덱스 매핑 반환 (매핑 실패 시 폴백용 기본값 사용)."""
+
+def _resolve_headers(header_row: list, aliases: dict) -> dict[str, int]:
+    """헤더 row 를 읽어서 필드 → 컬럼 인덱스 매핑 반환."""
     lookup: dict[str, int] = {}
     for idx, cell in enumerate(header_row):
         name = str(cell).strip() if cell is not None else ""
         if not name:
             continue
-        for field, aliases in _HEADER_ALIASES.items():
-            if name in aliases and field not in lookup:
+        for field, alias_list in aliases.items():
+            if name in alias_list and field not in lookup:
                 lookup[field] = idx
     return lookup
 
 
+def _detect_format(header_row: list) -> str:
+    """헤더 시그니처로 포맷 판별. 'legacy'(다원) / 'new'(태영) / 'unknown'."""
+    names = {str(c).strip() for c in header_row if c is not None}
+    if "상품코드" in names and "가용재고" in names:
+        return "new"
+    if "품목코드" in names and "가능수량" in names:
+        return "legacy"
+    return "unknown"
+
+
 def parse_wms_inventory_file(path: str | Path) -> WmsSnapshot:
-    """WMS Document_*.xls 를 파싱하여 WmsSnapshot 반환.
+    """WMS 재고현황 xls 파싱 → WmsSnapshot. 다원/태영 포맷 자동 감지.
 
-    각 raw row = 1 LOC/LOT. expiry_short 에 해당 배치의 유통일(속성5)을 넣는다.
-    expiry_long 은 사용하지 않는다(배치 구분은 expiry_short 기준).
-
-    컬럼 인덱스는 헤더명으로 동적 매핑한다 (업체·쿼리별 컬럼 순서 차이 대응).
+    각 raw row = 1 LOC/LOT. expiry_short 에 배치 유통일을 넣는다.
+    태영 신규 포맷은 로트번호 빈 행(부족재고 요약행)은 제외한다.
     """
     path = Path(path)
     wb = xlrd.open_workbook(str(path))
@@ -125,7 +159,24 @@ def parse_wms_inventory_file(path: str | Path) -> WmsSnapshot:
     datemode = wb.datemode
 
     header = ws.row_values(0) if ws.nrows > 0 else []
-    cols = _resolve_headers(header)
+    fmt = _detect_format(header)
+
+    if fmt == "new":
+        rows = _parse_new_format(ws, header)
+    else:
+        # legacy 또는 unknown — 기존 파서로 폴백
+        rows = _parse_legacy_format(ws, header, datemode)
+
+    return WmsSnapshot(
+        snapshot_date=_infer_snapshot_date(path.name),
+        source_file=path.name,
+        rows=rows,
+    )
+
+
+def _parse_legacy_format(ws, header: list, datemode: int) -> list[WmsInventoryRow]:
+    """다원 WMS Document_*.xls 파서 (기존 로직 유지)."""
+    cols = _resolve_headers(header, _HEADER_ALIASES_LEGACY)
 
     def _get(row: list, field: str, fallback_idx: int):
         idx = cols.get(field, fallback_idx)
@@ -138,7 +189,7 @@ def parse_wms_inventory_file(path: str | Path) -> WmsSnapshot:
         if not barcode:
             continue
 
-        row = WmsInventoryRow(
+        rows.append(WmsInventoryRow(
             barcode=barcode,
             product_name=_to_str_opt(_get(r, "product_name", 1)),
             loc_group=_to_str_opt(_get(r, "loc_group", 3)),
@@ -147,16 +198,57 @@ def parse_wms_inventory_file(path: str | Path) -> WmsSnapshot:
             alloc_qty=_to_int(_get(r, "alloc_qty", 7)),
             available_qty=_to_int(_get(r, "available_qty", 11)),
             expiry_short=_excel_serial_to_date(_get(r, "expiry", 17), datemode),
-            expiry_long=None,  # 단일 배치 유통일만 사용
+            expiry_long=None,
             raw={str(j): (str(v) if v not in (None, "") else None) for j, v in enumerate(r)},
-        )
-        rows.append(row)
+        ))
+    return rows
 
-    return WmsSnapshot(
-        snapshot_date=_infer_snapshot_date(path.name),
-        source_file=path.name,
-        rows=rows,
-    )
+
+def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
+    """태영 신규 포맷 파서.
+
+    규칙:
+    - 로트번호 비어있는 행 = 부족재고 요약행 → 스킵
+    - available_qty = `가용재고` (RELEASEAREA 필터 별도 불필요)
+    - alloc_qty = 작업중재고 + 출고예정지정재고 (물리적으로 배정된 재고 합)
+    - expiry_short = `소비기한` (YYYYMMDD 문자열)
+    - loc_group = `창고존`
+    """
+    cols = _resolve_headers(header, _HEADER_ALIASES_NEW)
+
+    def _get(row: list, field: str):
+        idx = cols.get(field)
+        return row[idx] if idx is not None and 0 <= idx < len(row) else None
+
+    rows: list[WmsInventoryRow] = []
+    for i in range(1, ws.nrows):
+        r = ws.row_values(i)
+        barcode = _to_str_opt(_get(r, "barcode"))
+        if not barcode:
+            continue
+
+        lot_no = _to_str_opt(_get(r, "lot_no"))
+        if not lot_no:
+            # 로트번호 빈 행 = 부족재고 요약행 (현재고 = -부족재고). 재고로 취급하지 않음.
+            continue
+
+        wip = _to_int(_get(r, "wip_qty")) or 0
+        reserved = _to_int(_get(r, "reserved_qty")) or 0
+
+        rows.append(WmsInventoryRow(
+            barcode=barcode,
+            product_name=_to_str_opt(_get(r, "product_name")),
+            loc_group=_to_str_opt(_get(r, "warehouse_zone")),
+            loc=_to_str_opt(_get(r, "loc")),
+            total_qty=_to_int(_get(r, "total_qty")),
+            alloc_qty=wip + reserved,
+            available_qty=_to_int(_get(r, "available_qty")),
+            expiry_short=_yyyymmdd_to_date(_get(r, "expiry"))
+                        or _yyyymmdd_to_date(_get(r, "manufacture_date")),
+            expiry_long=None,
+            raw={str(j): (str(v) if v not in (None, "") else None) for j, v in enumerate(r)},
+        ))
+    return rows
 
 
 #: LOC 이 이 값인 행은 가능재고에서 제외 (이미 출고 대기/피킹 완료 상태)

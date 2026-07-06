@@ -100,14 +100,20 @@ def _parse_cachers_stock(data: bytes, name: str) -> dict:
 
 
 # 헤더 컬럼 시그니처로 .xls 종류 판별 (둘 다 .xls 라 확장자로 구분 불가)
-_STOCK_HEADER_HINTS = {'품목코드', '가능수량', '재고수량', 'LOC그룹', '품목손상플래그'}
+# 다원(레거시) + 태영종합물류(신규) 양쪽 지원.
+_STOCK_HEADER_HINTS = {
+    # 다원 레거시
+    '품목코드', '가능수량', '재고수량', 'LOC그룹', '품목손상플래그',
+    # 태영 신규
+    '상품코드', '가용재고', '현재고', '창고존', '로트번호',
+}
 _EZA_HEADER_HINTS = {'판매처그룹', '상품메모', '출하의뢰번호', '수취인명', '상품수량'}
 
 
 def _classify_domestic_xls(data: bytes, name: str) -> str:
     """업로드 .xls 를 'stock'(캐처스 WMS 재고현황) / 'eza'(확장주문검색) / 'unknown' 분류.
 
-    1순위: 헤더 행 컬럼명 시그니처. 2순위(헤더 모호 시): 파일명 'Document_' 접두.
+    1순위: 헤더 행 컬럼명 시그니처. 2순위(헤더 모호 시): 파일명 접두어(Document_/현재고_).
     """
     import xlrd  # noqa: WPS433
     headers: set[str] = set()
@@ -125,7 +131,7 @@ def _classify_domestic_xls(data: bytes, name: str) -> str:
         return 'stock'
     if eza_hit:
         return 'eza'
-    if name.startswith('Document_'):
+    if name.startswith('Document_') or name.startswith('현재고_'):
         return 'stock'
     return 'unknown'
 
@@ -551,13 +557,13 @@ def _tab_create_order():
     )
 
     uploaded = st.file_uploader(
-        "확장주문검색(.xls, 여러 개) + 캐처스 WMS 재고현황 Document_*.xls 한 번에",
+        "확장주문검색(.xls, 여러 개) + 캐처스 WMS 재고현황(.xls) 한 번에",
         type=['xls'],
         accept_multiple_files=True,
         key="domestic_eza",
-        help="이지어드민 확장주문검색 + (선택) EZA WMS 재고현황을 함께 끌어다 놓으면 "
-             "헤더로 자동 구분. 재고현황: 품목코드=캐처스 품목코드, RELEASEAREA LOC "
-             "제외 후 가능수량 합산.",
+        help="이지어드민 확장주문검색 + (선택) WMS 재고현황을 함께 끌어다 놓으면 "
+             "헤더로 자동 구분. 재고현황: 다원 Document_*.xls / 태영 현재고_*.xls 모두 지원. "
+             "태영 포맷은 로트번호 빈 요약행 제외 후 '가용재고' 컬럼 합산.",
     )
 
     if not uploaded:
