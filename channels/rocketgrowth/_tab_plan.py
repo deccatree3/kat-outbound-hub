@@ -63,8 +63,8 @@ class _DBFile:
 
 _UPLOAD_GUIDE_ROWS = [
     ("WMS 재고 파일", FILE_TYPE_WMS,
-     "다원WMS > 재고관리 > 창고별로케이션별재고(OWNER) > [품목-정상,불량-로케이션-로트] 탭 > 검색 > 우클릭, Export(Excel)",
-     "Document_YYYY-MM-DD.xls"),
+     "태영WMS > 재고현황 다운로드 (또는 다원WMS: 재고관리 > 창고별로케이션별재고(OWNER) > 우클릭 Export)",
+     "현재고_YYYYMMDD_hhmmss.xls (태영) / Document_YYYY-MM-DD.xls (다원)"),
     ("쿠팡 재고 파일", FILE_TYPE_COUPANG,
      "쿠팡Wing > 로켓그로스 > 재고현황 > 엑셀 다운로드",
      "inventory_health_sku_info_YYYYMMDDhhmmss.xlsx"),

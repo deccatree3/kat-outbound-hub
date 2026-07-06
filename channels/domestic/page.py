@@ -86,7 +86,7 @@ def _load_box_qty_by_code(purchase_list) -> dict:
 
 
 def _parse_cachers_stock(data: bytes, name: str) -> dict:
-    """캐처스 재고 Document_*.xls bytes → 품목코드별 집계 (RELEASEAREA 제외 포함)."""
+    """캐처스 재고 xls bytes → 바코드별 집계. 다원(Document_*)/태영(현재고_*) 자동 감지."""
     tmp = Path(f"./_tmp_cachers_stock_{name}")
     tmp.write_bytes(data)
     try:

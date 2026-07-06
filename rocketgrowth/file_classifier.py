@@ -2,7 +2,7 @@
 
 파일 타입 판별 (파일명 기반):
   - inventory_health_sku_info_* → 'coupang_inventory'
-  - Document_* → 'wms_inventory'
+  - Document_* (다원) / 현재고_* (태영) → 'wms_inventory'
   - generated_excel* / A<업체코드>_<YYYYMMDD>* → 'coupang_template'
   - 쿠팡 재고이동건_* / *재고이동* → 'movement'
 
@@ -81,7 +81,10 @@ def classify_file_type(filename: str) -> str:
     name = filename.lower()
     if "inventory_health" in name or "sku_info" in name:
         return FILE_TYPE_COUPANG
+    # WMS 재고: 다원 Document_* / 태영 현재고_*
     if name.startswith("document") or "document_" in name:
+        return FILE_TYPE_WMS
+    if filename.startswith("현재고") or "현재고_" in filename:
         return FILE_TYPE_WMS
     if "generated_excel" in name:
         return FILE_TYPE_TEMPLATE
@@ -134,14 +137,29 @@ def identify_company_from_coupang_file(file_bytes: bytes) -> str | None:
 
 
 def identify_company_from_wms_file(file_bytes: bytes) -> str | None:
-    """WMS Document 파일에서 바코드 추출 → DB에서 업체명 조회. 샘플 50행."""
+    """WMS 재고 파일에서 바코드 추출 → DB에서 업체명 조회. 샘플 50행.
+
+    다원 Document_*.xls: col 0 = 품목코드(바코드)
+    태영 현재고_*.xls: col 3 = 상품코드(바코드)
+    → 헤더에서 컬럼 위치를 자동 감지.
+    """
+    _BC_HEADER_NAMES = {"품목코드", "상품코드"}
     try:
         import xlrd
         wb = xlrd.open_workbook(file_contents=file_bytes)
         ws = wb.sheet_by_index(0)
+        if ws.nrows == 0:
+            return None
+        # 헤더에서 바코드 컬럼 위치 찾기 (없으면 col 0)
+        bc_col = 0
+        header = [str(ws.cell_value(0, c)).strip() for c in range(ws.ncols)]
+        for c, name in enumerate(header):
+            if name in _BC_HEADER_NAMES:
+                bc_col = c
+                break
         barcodes = []
         for r in range(1, min(51, ws.nrows)):
-            val = ws.row_values(r)[0] if ws.ncols > 0 else None
+            val = ws.row_values(r)[bc_col] if ws.ncols > bc_col else None
             if val:
                 barcodes.append(str(val).strip())
         if not barcodes:
@@ -152,9 +170,15 @@ def identify_company_from_wms_file(file_bytes: bytes) -> str | None:
         try:
             wb = openpyxl.load_workbook(BytesIO(file_bytes), read_only=True, data_only=True)
             ws = wb.active
+            bc_col = 1  # openpyxl은 1-based
+            for c in range(1, ws.max_column + 1):
+                name = str(ws.cell(row=1, column=c).value or "").strip()
+                if name in _BC_HEADER_NAMES:
+                    bc_col = c
+                    break
             barcodes = []
             for r in range(2, min(52, ws.max_row + 1)):
-                val = ws.cell(row=r, column=1).value
+                val = ws.cell(row=r, column=bc_col).value
                 if val:
                     barcodes.append(str(val).strip())
             wb.close()
