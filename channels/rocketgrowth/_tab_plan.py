@@ -25,7 +25,9 @@ from rocketgrowth.export import (
     extract_template_option_ids, fill_coupang_template,
 )
 from rocketgrowth.ingestion.coupang_file import parse_coupang_inventory_file
-from rocketgrowth.ingestion.wms_file import aggregate_wms_by_barcode, parse_wms_inventory_file
+from rocketgrowth.ingestion.wms_file import (
+    aggregate_wms_by_barcode, find_missing_expiry_products, parse_wms_inventory_file,
+)
 from rocketgrowth.models import CoupangProduct, InboundPlan, InboundPlanItem, PlanFile, WmsProduct
 from rocketgrowth.planning import PlanInput, PlanParams, compute_plan, urgency_badge
 from rocketgrowth.pallet import PalletItem, optimize_to_pallet
@@ -492,6 +494,30 @@ def render(brand: str):
         f"WMS {len(wms_snap.rows)} 행, "
         f"WMS 바코드 합산 {len(wms_agg)} 종"
     )
+
+    # ─── 3b. 소비기한 누락 얼럿 ────────────────────────────────
+    # WMS 파일의 '소비기한' 이 비어 있으면 그 재고는 소비기한을 알 수 없다.
+    # 과거엔 '제조일자' 값으로 대체했으나 의미가 달라 위험 → 대체 금지 + 얼럿.
+    _no_expiry = find_missing_expiry_products(wms_snap)
+    if _no_expiry:
+        _all_cnt = sum(1 for a in _no_expiry if a["all_missing"])
+        st.error(
+            f"⚠️ **소비기한 정보 없음 — {len(_no_expiry)}개 상품** "
+            f"(재고 전량 누락 {_all_cnt}개). WMS 재고파일의 `소비기한` 칸이 비어 있습니다.\n\n"
+            "소비기한을 임의로 만들어 쓰지 않습니다. 이 상품들을 발주에 넣으면 "
+            "쿠팡 양식의 소비기한/제조일자가 **추정값**으로 채워지니, "
+            "물류센터에 소비기한 값을 채워달라고 요청하세요."
+        )
+        with st.expander(f"소비기한 없는 상품 {len(_no_expiry)}건 보기", expanded=False):
+            st.dataframe(
+                pd.DataFrame([{
+                    "WMS바코드": a["barcode"],
+                    "상품명": a["product_name"],
+                    "누락로트": f"{a['missing_rows']}/{a['total_rows']}",
+                    "누락재고(가용)": a["missing_available"],
+                } for a in _no_expiry]),
+                width="stretch", hide_index=True,
+            )
 
     # 마스터 로드
     with get_session() as session:
@@ -1306,6 +1332,7 @@ def render(brand: str):
         save_df.loc[mask, "inbound_final"] = ni(erow["inbound_final"]) or 0
 
     export_items: list[ExportItem] = []
+    _expiry_unknown: list[dict] = []   # 실제 소비기한을 못 찾은 SKU (추정값 사용)
     for _, row in save_df.iterrows():
         qty = int(row["inbound_final"] or 0)
         if qty <= 0:
@@ -1316,7 +1343,15 @@ def render(brand: str):
         if wms_short:
             exp_d, man_d = dates_from_batch(wms_short, shelf)
         else:
+            # WMS 재고에서 소비기한을 못 찾음 → 추정값. 절대 조용히 넘기지 않는다.
             exp_d, man_d = default_expiry_dates(shelf)
+            _expiry_unknown.append({
+                "상품명": row.get("product_name"),
+                "WMS바코드": own_bc,
+                "입고수량": qty,
+                "소비기한(추정)": exp_d.isoformat() if exp_d else "(없음)",
+                "제조일자(추정)": man_d.isoformat() if man_d else "(없음)",
+            })
         export_items.append(ExportItem(
             coupang_option_id=int(row["coupang_option_id"]),
             inbound_qty=qty,
@@ -1330,6 +1365,15 @@ def render(brand: str):
     if not export_items:
         st.warning("입고 수량 > 0 인 SKU 가 없어 양식을 생성하지 않습니다.")
         return
+
+    if _expiry_unknown:
+        st.error(
+            f"⚠️ **소비기한 정보 없음 — 입고 SKU {len(_expiry_unknown)}건**. "
+            "WMS 재고에서 해당 로트의 소비기한을 찾지 못해 아래 값은 **추정치**입니다 "
+            "(제조일 = 오늘−7일 기준). 그대로 쿠팡에 등록하지 말고, "
+            "물류센터에 실제 소비기한을 확인하세요."
+        )
+        st.dataframe(pd.DataFrame(_expiry_unknown), width="stretch", hide_index=True)
 
     try:
         xlsx_bytes, missing = fill_coupang_template(

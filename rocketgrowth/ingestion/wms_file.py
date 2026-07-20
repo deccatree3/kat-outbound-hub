@@ -10,6 +10,11 @@
 - 로트번호 비어있는 행 = "부족재고 요약행" (현재고=-부족재고). **무시**.
 - RELEASEAREA 필터 개념 없음 — `가용재고` 컬럼에 이미 반영됨 (WMS 계산치).
 - 소비기한 = 'YYYYMMDD' 문자열 (엑셀 serial 아님).
+
+⚠️ **소비기한은 `소비기한` 컬럼에서만 읽는다.** 과거 이 파서는 소비기한이 비면
+`제조일자` 컬럼 값으로 대체했으나, 그건 서로 다른 의미의 날짜를 소비기한으로
+둔갑시키는 것이라 위험하다 (2026-07-20 제거). 소비기한이 없으면 `expiry_short=None`
+으로 두고, 화면에서 "소비기한 정보 없음" 얼럿을 띄운다.
 """
 from __future__ import annotations
 
@@ -211,7 +216,7 @@ def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
     - 로트번호 비어있는 행 = 부족재고 요약행 → 스킵
     - available_qty = `가용재고` (RELEASEAREA 필터 별도 불필요)
     - alloc_qty = 작업중재고 + 출고예정지정재고 (물리적으로 배정된 재고 합)
-    - expiry_short = `소비기한` (YYYYMMDD 문자열)
+    - expiry_short = `소비기한` (YYYYMMDD 문자열). **없으면 None** — 제조일자로 대체 금지.
     - loc_group = `창고존`
     """
     cols = _resolve_headers(header, _HEADER_ALIASES_NEW)
@@ -243,8 +248,8 @@ def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
             total_qty=_to_int(_get(r, "total_qty")),
             alloc_qty=wip + reserved,
             available_qty=_to_int(_get(r, "available_qty")),
-            expiry_short=_yyyymmdd_to_date(_get(r, "expiry"))
-                        or _yyyymmdd_to_date(_get(r, "manufacture_date")),
+            # 소비기한 컬럼만 사용. 비어 있으면 None (제조일자로 대체하지 않는다).
+            expiry_short=_yyyymmdd_to_date(_get(r, "expiry")),
             expiry_long=None,
             raw={str(j): (str(v) if v not in (None, "") else None) for j, v in enumerate(r)},
         ))
@@ -253,6 +258,50 @@ def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
 
 #: LOC 이 이 값인 행은 가능재고에서 제외 (이미 출고 대기/피킹 완료 상태)
 EXCLUDED_LOCS = {"RELEASEAREA"}
+
+
+def find_missing_expiry_products(
+    snapshot: WmsSnapshot,
+    excluded_locs: set[str] = EXCLUDED_LOCS,
+) -> list[dict[str, Any]]:
+    """소비기한이 비어 있는 재고를 **상품(바코드) 단위**로 요약. 얼럿용.
+
+    재고가 있는 행(가용수량 > 0, 제외 LOC 아님)만 대상으로 한다.
+    소비기한 없는 행이 하나라도 있으면 그 상품을 결과에 포함한다.
+
+    Returns:
+        [{"barcode", "product_name", "missing_rows", "total_rows",
+          "missing_available", "all_missing"}]  — 가용수량 큰 순
+    """
+    excluded_norm = {s.strip().upper() for s in excluded_locs}
+    acc: dict[str, dict[str, Any]] = {}
+
+    for row in snapshot.rows:
+        if not row.barcode:
+            continue
+        if row.loc and row.loc.strip().upper() in excluded_norm:
+            continue
+        if (row.available_qty or 0) <= 0:
+            continue
+        a = acc.setdefault(row.barcode, {
+            "barcode": row.barcode,
+            "product_name": row.product_name,
+            "missing_rows": 0,
+            "total_rows": 0,
+            "missing_available": 0,
+        })
+        a["total_rows"] += 1
+        if not a["product_name"] and row.product_name:
+            a["product_name"] = row.product_name
+        if row.expiry_short is None:
+            a["missing_rows"] += 1
+            a["missing_available"] += row.available_qty or 0
+
+    result = [a for a in acc.values() if a["missing_rows"] > 0]
+    for a in result:
+        a["all_missing"] = a["missing_rows"] == a["total_rows"]
+    result.sort(key=lambda a: -a["missing_available"])
+    return result
 
 
 def aggregate_wms_by_barcode(
