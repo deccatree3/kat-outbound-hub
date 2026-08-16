@@ -50,6 +50,7 @@ class WmsInventoryRow:
     available_qty: int | None
     expiry_short: date | None
     expiry_long: date | None
+    manufacture_date: date | None = None  # raw 데이터 품질 얼럿용 (재고 판정엔 미사용)
     raw: dict[str, Any] = field(default_factory=dict)
 
 

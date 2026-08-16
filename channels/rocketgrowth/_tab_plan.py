@@ -495,29 +495,43 @@ def render(brand: str):
         f"WMS 바코드 합산 {len(wms_agg)} 종"
     )
 
-    # ─── 3b. 소비기한 누락 얼럿 ────────────────────────────────
-    # WMS 파일의 '소비기한' 이 비어 있으면 그 재고는 소비기한을 알 수 없다.
-    # 과거엔 '제조일자' 값으로 대체했으나 의미가 달라 위험 → 대체 금지 + 얼럿.
-    _no_expiry = find_missing_expiry_products(wms_snap)
-    if _no_expiry:
-        _all_cnt = sum(1 for a in _no_expiry if a["all_missing"])
-        st.error(
-            f"⚠️ **소비기한 정보 없음 — {len(_no_expiry)}개 상품** "
-            f"(재고 전량 누락 {_all_cnt}개). WMS 재고파일의 `소비기한` 칸이 비어 있습니다.\n\n"
-            "소비기한을 임의로 만들어 쓰지 않습니다. 이 상품들을 발주에 넣으면 "
-            "쿠팡 양식의 소비기한/제조일자가 **추정값**으로 채워지니, "
-            "물류센터에 소비기한 값을 채워달라고 요청하세요."
-        )
-        with st.expander(f"소비기한 없는 상품 {len(_no_expiry)}건 보기", expanded=False):
-            st.dataframe(
-                pd.DataFrame([{
-                    "WMS바코드": a["barcode"],
-                    "상품명": a["product_name"],
-                    "누락로트": f"{a['missing_rows']}/{a['total_rows']}",
-                    "누락재고(가용)": a["missing_available"],
-                } for a in _no_expiry]),
-                width="stretch", hide_index=True,
+    # ─── 3b. raw 데이터 품질 얼럿: 재고 있는데 소비기한/제조일자 없음 ──────────
+    # 재고는 정상 반영되지만(현재고>0 채택), 소비기한·제조일자가 비면 쿠팡 양식에
+    # 추정값이 들어간다. 이 결측은 태영 WMS 입력 문제 → 태영 현재고 파일 정정으로 해결.
+    # 발주 영향은 판매상품(쿠팡 옵션 매핑 O)만 → 부자재/기타와 분리해 보여준다.
+    _no_dates = find_missing_expiry_products(wms_snap)
+    if _no_dates:
+        with get_session() as _s:
+            _sold_bc = {b for (b,) in _s.execute(select(CoupangProduct.wms_barcode)).all() if b}
+            _sold_bc |= {
+                w.wms_barcode for w in _s.execute(
+                    select(WmsProduct).where(WmsProduct.coupang_option_id.isnot(None))
+                ).scalars().all()
+            }
+        _sold_missing = [a for a in _no_dates if a["barcode"] in _sold_bc]
+        _etc_missing = [a for a in _no_dates if a["barcode"] not in _sold_bc]
+
+        def _date_df(items):
+            return pd.DataFrame([{
+                "WMS바코드": a["barcode"],
+                "상품명": a["product_name"],
+                "가용재고": a["available"],
+            } for a in items])
+
+        if _sold_missing:
+            st.warning(
+                f"⚠️ **판매상품 {len(_sold_missing)}개가 소비기한·제조일자 없음** — "
+                "태영 현재고 파일에 날짜가 비어 있습니다.\n\n"
+                "재고 수량은 정상 반영되지만, 발주에 넣으면 쿠팡 양식의 소비기한/제조일자가 "
+                "**추정값**으로 채워집니다. 태영에 해당 상품의 날짜 기입을 요청하세요."
             )
+            st.dataframe(_date_df(_sold_missing), width="stretch", hide_index=True)
+        if _etc_missing:
+            with st.expander(
+                f"그 외 날짜 없는 부자재/기타 {len(_etc_missing)}건 (발주 무관·참고)",
+                expanded=False,
+            ):
+                st.dataframe(_date_df(_etc_missing), width="stretch", hide_index=True)
 
     # 마스터 로드
     with get_session() as session:

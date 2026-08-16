@@ -261,6 +261,8 @@ def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
             # 소비기한 컬럼만 사용. 비어 있으면 None (제조일자로 대체하지 않는다).
             expiry_short=_yyyymmdd_to_date(_get(r, "expiry")),
             expiry_long=None,
+            # 제조일자는 재고 판정엔 안 쓰고, raw 데이터 품질 얼럿용으로만 보관.
+            manufacture_date=_yyyymmdd_to_date(_get(r, "manufacture_date")),
             raw={str(j): (str(v) if v not in (None, "") else None) for j, v in enumerate(r)},
         ))
     return rows
@@ -274,14 +276,16 @@ def find_missing_expiry_products(
     snapshot: WmsSnapshot,
     excluded_locs: set[str] = EXCLUDED_LOCS,
 ) -> list[dict[str, Any]]:
-    """소비기한이 비어 있는 재고를 **상품(바코드) 단위**로 요약. 얼럿용.
+    """재고(가용>0)가 있는데 **소비기한 또는 제조일자**가 비어 있는 상품을 바코드
+    단위로 요약. 태영 raw 데이터 정정 대상 얼럿용.
 
-    재고가 있는 행(가용수량 > 0, 제외 LOC 아님)만 대상으로 한다.
-    소비기한 없는 행이 하나라도 있으면 그 상품을 결과에 포함한다.
+    재고가 있는 행(가용수량 > 0, 제외 LOC 아님)만 대상. 소비기한 또는 제조일자가
+    빈 행이 하나라도 있으면 그 상품을 결과에 포함한다.
 
     Returns:
-        [{"barcode", "product_name", "missing_rows", "total_rows",
-          "missing_available", "all_missing"}]  — 가용수량 큰 순
+        [{"barcode", "product_name", "available", "missing_available",
+          "missing_expiry"(bool), "missing_manufacture"(bool),
+          "missing_rows", "total_rows", "all_missing"}]  — 누락 가용수량 큰 순
     """
     excluded_norm = {s.strip().upper() for s in excluded_locs}
     acc: dict[str, dict[str, Any]] = {}
@@ -291,21 +295,32 @@ def find_missing_expiry_products(
             continue
         if row.loc and row.loc.strip().upper() in excluded_norm:
             continue
-        if (row.available_qty or 0) <= 0:
+        av = row.available_qty or 0
+        if av <= 0:
             continue
         a = acc.setdefault(row.barcode, {
             "barcode": row.barcode,
             "product_name": row.product_name,
+            "available": 0,
             "missing_rows": 0,
             "total_rows": 0,
             "missing_available": 0,
+            "missing_expiry": False,
+            "missing_manufacture": False,
         })
         a["total_rows"] += 1
+        a["available"] += av
         if not a["product_name"] and row.product_name:
             a["product_name"] = row.product_name
-        if row.expiry_short is None:
+        miss_e = row.expiry_short is None
+        miss_m = row.manufacture_date is None
+        if miss_e or miss_m:
             a["missing_rows"] += 1
-            a["missing_available"] += row.available_qty or 0
+            a["missing_available"] += av
+            if miss_e:
+                a["missing_expiry"] = True
+            if miss_m:
+                a["missing_manufacture"] = True
 
     result = [a for a in acc.values() if a["missing_rows"] > 0]
     for a in result:
