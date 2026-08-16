@@ -7,7 +7,10 @@
 동일 바코드의 여러 행은 LOC/LOT 단위 분할. 유통일이 다르면 **독립 배치**로 취급.
 
 태영 신규 포맷 특이사항:
-- 로트번호 비어있는 행 = "부족재고 요약행" (현재고=-부족재고). **무시**.
+- 재고 채택은 **현재고 값**으로 판정한다. 현재고 ≤ 0 인 행(= -부족재고)만 부족재고
+  요약행으로 보고 제외. **로트번호 유무는 채택 판정에 쓰지 않는다** (2026-08-16 교정).
+- 로트 미관리 상품(스테인리스 풋 파일 등 도구·부자재)은 로트/유통기한 없이
+  현재고>0 요약행 하나로만 재고를 잡는다 — 이 행도 실재고로 채택해야 한다.
 - RELEASEAREA 필터 개념 없음 — `가용재고` 컬럼에 이미 반영됨 (WMS 계산치).
 - 소비기한 = 'YYYYMMDD' 문자열 (엑셀 serial 아님).
 
@@ -117,7 +120,6 @@ _HEADER_ALIASES_NEW = {
     "product_name": ["상품명"],
     "warehouse_zone": ["창고존"],
     "loc": ["로케이션 코드"],
-    "lot_no": ["로트번호"],
     "manufacture_date": ["제조일자"],
     "expiry": ["소비기한"],
     "total_qty": ["현재고"],
@@ -156,7 +158,7 @@ def parse_wms_inventory_file(path: str | Path) -> WmsSnapshot:
     """WMS 재고현황 xls 파싱 → WmsSnapshot. 다원/태영 포맷 자동 감지.
 
     각 raw row = 1 LOC/LOT. expiry_short 에 배치 유통일을 넣는다.
-    태영 신규 포맷은 로트번호 빈 행(부족재고 요약행)은 제외한다.
+    태영 신규 포맷은 현재고 ≤ 0 인 부족재고 요약행만 제외한다 (로트번호 미사용).
     """
     path = Path(path)
     wb = xlrd.open_workbook(str(path))
@@ -212,8 +214,22 @@ def _parse_legacy_format(ws, header: list, datemode: int) -> list[WmsInventoryRo
 def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
     """태영 신규 포맷 파서.
 
-    규칙:
-    - 로트번호 비어있는 행 = 부족재고 요약행 → 스킵
+    행 채택 규칙 (⚠️ 2026-08-16 교정 — 로트번호를 채택 판정에 쓰지 않는다):
+    태영 파일은 상품코드마다 [배치 상세행(소비기한 보유)] + 상황에 따라 [유통기한 없는
+    "요약행"] 으로 구성된다. 요약행엔 두 종류가 섞여 있다:
+      (a) 현재고 ≤ 0 (= -부족재고) → 부족재고 요약행. 재고 아님 → 스킵.
+      (b) 현재고 > 0 → **로트 미관리 상품**(도구·부자재)의 진짜 재고. 이 상품들은
+          소비기한이 없어 태영이 로트/유통기한을 안 잡고 요약행 하나에만 재고를 싣는다
+          (예: SCRFOOTFILE 4088). → 실재고로 채택.
+    과거엔 '로트번호 빈 행 = 무조건 스킵' 이라 (b) 실재고까지 버려 현재고 0 으로
+    오판했다. 로트번호는 (a)/(b) 를 구분하지 못하므로 판정 기준에서 제외한다.
+
+    채택 규칙:
+    - 현재고(현재고 컬럼) ≤ 0 → 스킵 (부족재고 요약행/빈 행).
+    - 소비기한 없는 요약행인데 **같은 상품코드에 소비기한 가진 배치행이 이미 있으면**
+      배치행과 중복(집계/미배정)이므로 스킵 → 이중계상 방지.
+    - 그 외 현재고>0 은 모두 실재고로 채택.
+
     - available_qty = `가용재고` (RELEASEAREA 필터 별도 불필요)
     - alloc_qty = 작업중재고 + 출고예정지정재고 (물리적으로 배정된 재고 합)
     - expiry_short = `소비기한` (YYYYMMDD 문자열). **없으면 None** — 제조일자로 대체 금지.
@@ -225,6 +241,14 @@ def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
         idx = cols.get(field)
         return row[idx] if idx is not None and 0 <= idx < len(row) else None
 
+    # 1차 패스: 소비기한(배치)을 가진 상품코드 집합 — 무유통기한 요약행 중복 판정용
+    batched_codes: set[str] = set()
+    for i in range(1, ws.nrows):
+        r = ws.row_values(i)
+        bc = _to_str_opt(_get(r, "barcode"))
+        if bc and _yyyymmdd_to_date(_get(r, "expiry")) is not None:
+            batched_codes.add(bc)
+
     rows: list[WmsInventoryRow] = []
     for i in range(1, ws.nrows):
         r = ws.row_values(i)
@@ -232,9 +256,15 @@ def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
         if not barcode:
             continue
 
-        lot_no = _to_str_opt(_get(r, "lot_no"))
-        if not lot_no:
-            # 로트번호 빈 행 = 부족재고 요약행 (현재고 = -부족재고). 재고로 취급하지 않음.
+        total = _to_int(_get(r, "total_qty"))
+        if total is None or total <= 0:
+            # 현재고 ≤ 0 = 부족재고 요약행 (현재고 = -부족재고) 또는 빈 행 → 재고 아님.
+            continue
+
+        # 소비기한 컬럼만 사용. 비어 있으면 None (제조일자로 대체하지 않는다).
+        expiry = _yyyymmdd_to_date(_get(r, "expiry"))
+        if expiry is None and barcode in batched_codes:
+            # 배치추적 상품의 유통기한 없는 요약/집계행 = 배치행과 중복 → 스킵.
             continue
 
         wip = _to_int(_get(r, "wip_qty")) or 0
@@ -245,11 +275,10 @@ def _parse_new_format(ws, header: list) -> list[WmsInventoryRow]:
             product_name=_to_str_opt(_get(r, "product_name")),
             loc_group=_to_str_opt(_get(r, "warehouse_zone")),
             loc=_to_str_opt(_get(r, "loc")),
-            total_qty=_to_int(_get(r, "total_qty")),
+            total_qty=total,
             alloc_qty=wip + reserved,
             available_qty=_to_int(_get(r, "available_qty")),
-            # 소비기한 컬럼만 사용. 비어 있으면 None (제조일자로 대체하지 않는다).
-            expiry_short=_yyyymmdd_to_date(_get(r, "expiry")),
+            expiry_short=expiry,
             expiry_long=None,
             raw={str(j): (str(v) if v not in (None, "") else None) for j, v in enumerate(r)},
         ))
