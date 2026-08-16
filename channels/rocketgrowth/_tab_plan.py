@@ -21,7 +21,7 @@ from rocketgrowth.file_classifier import (
     FILE_TYPE_LABELS, classify_uploaded_files,
 )
 from rocketgrowth.export import (
-    ExportItem, dates_from_batch, default_expiry_dates,
+    ExportItem, dates_from_batch,
     extract_template_option_ids, fill_coupang_template,
 )
 from rocketgrowth.ingestion.coupang_file import parse_coupang_inventory_file
@@ -1272,6 +1272,35 @@ def render(brand: str):
         )
         return
 
+    # ─── 소비기한 미확인 SKU 차단 ─────────────────────────────
+    # 확정수량>0 인데 FEFO 선택 배치에 소비기한이 없는 SKU가 있으면 수량확정 불가.
+    # 임의 날짜를 만들지 않는다 — 태영 raw 소비기한 정정 후 갱신 파일로 재진행.
+    no_expiry_to_save = allocated_df[
+        (allocated_df["selected_batch_expiry"].isna())
+        & (allocated_df["inbound_final"].fillna(0).astype(int) > 0)
+    ]
+    if len(no_expiry_to_save) > 0:
+        st.error(
+            f"⛔ **소비기한 미확인 SKU {len(no_expiry_to_save)}건 — 수량확정 불가.**\n\n"
+            "아래 상품은 WMS 재고에 소비기한이 없어, 쿠팡 양식에 넣을 소비기한/제조일자를 "
+            "특정할 수 없습니다. 임의 날짜를 만들지 않습니다.\n\n"
+            "**물류센터(태영)에 해당 상품의 소비기한을 채워달라고 요청**한 뒤, "
+            "갱신된 현재고 파일로 다시 업로드해 진행하세요."
+        )
+        with st.expander(f"소비기한 없는 확정 SKU {len(no_expiry_to_save)}건", expanded=True):
+            _ne = no_expiry_to_save[[
+                "coupang_option_id", "product_name", "inbound_final",
+            ]].copy()
+            _ne.columns = ["옵션ID", "상품명", "확정수량"]
+            st.dataframe(_ne, width="stretch", hide_index=True)
+        st.button(
+            "수량확정",
+            disabled=True, width="stretch",
+            help="소비기한 미확인 SKU 해결(태영 소비기한 기입) 후 활성화.",
+            key=f"rg_{brand}_qty_btn_no_expiry",
+        )
+        return
+
     # 활성 수량확정 버튼 (재클릭 시 update)
     btn_label = (
         f"수량확정 재확정 ({confirmed_qty:,}개)" if last_saved
@@ -1357,14 +1386,13 @@ def render(brand: str):
         if wms_short:
             exp_d, man_d = dates_from_batch(wms_short, shelf)
         else:
-            # WMS 재고에서 소비기한을 못 찾음 → 추정값. 절대 조용히 넘기지 않는다.
-            exp_d, man_d = default_expiry_dates(shelf)
+            # WMS 재고에 소비기한 없음 → 임의 날짜를 만들지 않고 빈칸으로 둔다.
+            # (정상 흐름에선 수량확정 단계에서 이미 차단됨 — 여기는 안전망)
+            exp_d, man_d = None, None
             _expiry_unknown.append({
                 "상품명": row.get("product_name"),
                 "WMS바코드": own_bc,
                 "입고수량": qty,
-                "소비기한(추정)": exp_d.isoformat() if exp_d else "(없음)",
-                "제조일자(추정)": man_d.isoformat() if man_d else "(없음)",
             })
         export_items.append(ExportItem(
             coupang_option_id=int(row["coupang_option_id"]),
@@ -1382,10 +1410,9 @@ def render(brand: str):
 
     if _expiry_unknown:
         st.error(
-            f"⚠️ **소비기한 정보 없음 — 입고 SKU {len(_expiry_unknown)}건**. "
-            "WMS 재고에서 해당 로트의 소비기한을 찾지 못해 아래 값은 **추정치**입니다 "
-            "(제조일 = 오늘−7일 기준). 그대로 쿠팡에 등록하지 말고, "
-            "물류센터에 실제 소비기한을 확인하세요."
+            f"⛔ **소비기한 없는 입고 SKU {len(_expiry_unknown)}건 — 소비기한/제조일자 빈칸으로 나갑니다.** "
+            "임의 날짜를 만들지 않습니다. 발주 전 **물류센터(태영)에 소비기한 기입을 요청**하세요. "
+            "(정상 흐름에선 수량확정 단계에서 차단됩니다.)"
         )
         st.dataframe(pd.DataFrame(_expiry_unknown), width="stretch", hide_index=True)
 
