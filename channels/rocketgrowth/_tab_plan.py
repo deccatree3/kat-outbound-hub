@@ -496,8 +496,8 @@ def render(brand: str):
     )
 
     # ─── 3b. raw 데이터 품질 얼럿: 재고 있는데 소비기한/제조일자 없음 ──────────
-    # 재고는 정상 반영되지만(현재고>0 채택), 소비기한·제조일자가 비면 쿠팡 양식에
-    # 추정값이 들어간다. 이 결측은 태영 WMS 입력 문제 → 태영 현재고 파일 정정으로 해결.
+    # 재고는 정상 반영되지만(현재고>0 채택), 소비기한·제조일자가 비면 발주 시
+    # 수량확정 단계에서 차단된다. 이 결측은 태영 WMS 입력 문제 → 현재고 파일 정정으로 해결.
     # 발주 영향은 판매상품(쿠팡 옵션 매핑 O)만 → 부자재/기타와 분리해 보여준다.
     _no_dates = find_missing_expiry_products(wms_snap)
     if _no_dates:
@@ -522,8 +522,9 @@ def render(brand: str):
             st.warning(
                 f"⚠️ **판매상품 {len(_sold_missing)}개가 소비기한·제조일자 없음** — "
                 "태영 현재고 파일에 날짜가 비어 있습니다.\n\n"
-                "재고 수량은 정상 반영되지만, 발주에 넣으면 쿠팡 양식의 소비기한/제조일자가 "
-                "**추정값**으로 채워집니다. 태영에 해당 상품의 날짜 기입을 요청하세요."
+                "재고 수량은 정상 반영됩니다. 다만 이 상품을 발주에 넣으면 소비기한을 특정할 수 "
+                "없어 **수량확정 단계에서 차단**됩니다(임의 날짜를 만들지 않음). "
+                "태영에 해당 상품의 소비기한 기입을 요청한 뒤 진행하세요."
             )
             st.dataframe(_date_df(_sold_missing), width="stretch", hide_index=True)
         if _etc_missing:
@@ -1375,7 +1376,7 @@ def render(brand: str):
         save_df.loc[mask, "inbound_final"] = ni(erow["inbound_final"]) or 0
 
     export_items: list[ExportItem] = []
-    _expiry_unknown: list[dict] = []   # 실제 소비기한을 못 찾은 SKU (추정값 사용)
+    _expiry_unknown: list[dict] = []   # 소비기한 못 찾은 SKU (빈칸 처리 — 정상 흐름은 수량확정서 차단)
     for _, row in save_df.iterrows():
         qty = int(row["inbound_final"] or 0)
         if qty <= 0:
