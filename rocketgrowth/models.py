@@ -35,7 +35,7 @@ class WmsProduct(Base):
     __tablename__ = "wms_product"
 
     wms_barcode: Mapped[str] = mapped_column(String(64), primary_key=True)
-    company_name: Mapped[str] = mapped_column(String(64), default="서현")
+    company_name: Mapped[str | None] = mapped_column(String(64))  # 업체 미지정 시 NULL (기본값 없음)
     product_name: Mapped[str | None] = mapped_column(Text)
     unit_qty: Mapped[int | None] = mapped_column(Integer)           # 낱개수량 (1, 2, 6…)
     parent_wms_barcode: Mapped[str | None] = mapped_column(String(64), index=True)
@@ -55,7 +55,7 @@ class CoupangProduct(Base):
     __tablename__ = "coupang_product"
 
     coupang_option_id: Mapped[int] = mapped_column(BigInteger, primary_key=True)
-    company_name: Mapped[str] = mapped_column(String(64), default="서현")
+    company_name: Mapped[str | None] = mapped_column(String(64))  # 업체 미지정 시 NULL (기본값 없음)
     coupang_product_id: Mapped[int | None] = mapped_column(BigInteger)
     sku_id: Mapped[int | None] = mapped_column(BigInteger, index=True)
     product_name: Mapped[str] = mapped_column(Text, nullable=False)
@@ -171,7 +171,7 @@ class InboundPlan(Base):
     __tablename__ = "inbound_plan"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    company_name: Mapped[str] = mapped_column(String(64), default="서현")
+    company_name: Mapped[str] = mapped_column(String(64))  # 저장 시 항상 명시 전달 (기본값 없음)
     shipment_type: Mapped[str] = mapped_column(String(16), default="milkrun")  # milkrun|parcel
     plan_date: Mapped[date | None] = mapped_column(Date, index=True)
     fc_name: Mapped[str | None] = mapped_column(String(32))
@@ -275,7 +275,7 @@ class CoupangResultLog(Base):
     __tablename__ = "coupang_result_log"
 
     id: Mapped[int] = mapped_column(BigInteger, primary_key=True, autoincrement=True)
-    company_name: Mapped[str] = mapped_column(String(64), default="서현")
+    company_name: Mapped[str] = mapped_column(String(64))  # 저장 시 항상 명시 전달 (기본값 없음)
     milkrun_id: Mapped[str] = mapped_column(String(32), nullable=False)
     fc_name: Mapped[str] = mapped_column(String(32), nullable=False)
     arrival_date: Mapped[date] = mapped_column(Date, nullable=False)
