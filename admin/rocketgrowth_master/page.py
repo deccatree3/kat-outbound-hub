@@ -32,11 +32,11 @@ def _build_master_xlsx() -> bytes:
         ).scalars().all()
 
     wms_headers = [
-        "WMS바코드", "제품명", "낱개수량", "부모_WMS바코드",
+        "업체", "WMS바코드", "제품명", "낱개수량", "부모_WMS바코드",
         "1카톤박스입수량", "중량", "소비기한일수", "옵션ID", "부모_옵션ID",
     ]
     cp_headers = [
-        "등록상품 ID", "옵션 ID", "SKU ID", "등록상품명", "옵션명",
+        "업체명", "등록상품 ID", "옵션 ID", "SKU ID", "등록상품명", "옵션명",
         "상품등급", "상품등록일", "수동입고여부",
         "WMS바코드", "쿠팡바코드", "WMS바코드-반품",
     ]
@@ -52,7 +52,7 @@ def _build_master_xlsx() -> bytes:
         ws1.write_string(0, c, h, hdr_fmt)
     for r, w in enumerate(wms_rows, start=1):
         vals = [
-            w.wms_barcode, w.product_name, w.unit_qty, w.parent_wms_barcode,
+            w.company_name, w.wms_barcode, w.product_name, w.unit_qty, w.parent_wms_barcode,
             w.box_qty, w.weight_g, w.shelf_life_days,
             w.coupang_option_id, w.parent_coupang_option_id,
         ]
@@ -65,8 +65,9 @@ def _build_master_xlsx() -> bytes:
                 ws1.write_number(r, c, v)
             else:
                 ws1.write_string(r, c, str(v))
-    ws1.set_column(0, 0, 18)
-    ws1.set_column(1, 1, 40)
+    ws1.set_column(0, 0, 10)
+    ws1.set_column(1, 1, 18)
+    ws1.set_column(2, 2, 40)
     ws1.freeze_panes(1, 0)
 
     # 쿠팡상품정보
@@ -75,7 +76,7 @@ def _build_master_xlsx() -> bytes:
         ws2.write_string(0, c, h, hdr_fmt)
     for r, p in enumerate(cp_rows, start=1):
         for c, v in enumerate([
-            p.coupang_product_id, p.coupang_option_id, p.sku_id,
+            p.company_name, p.coupang_product_id, p.coupang_option_id, p.sku_id,
             p.product_name, p.option_name,
             p.grade, p.registered_at, p.milkrun_managed,
             p.wms_barcode, p.coupang_barcode, p.wms_barcode_return,
@@ -95,7 +96,7 @@ def _build_master_xlsx() -> bytes:
                 ws2.write_number(r, c, v)
             else:
                 ws2.write_string(r, c, str(v))
-    ws2.set_column(3, 3, 40)
+    ws2.set_column(4, 4, 40)
     ws2.freeze_panes(1, 0)
 
     wb.close()
@@ -143,11 +144,12 @@ def render_page():
     st.subheader("📤 마스터 파일 업로드 (전체 교체)")
     st.markdown(
         "**마스터-상품정보.xlsx** 와 동일한 형식의 엑셀 파일을 업로드.\n"
-        "- **WMS상품정보** 시트: WMS바코드 / 제품명 / 낱개수량 / 부모_WMS바코드 / "
+        "- **WMS상품정보** 시트: 업체 / WMS바코드 / 제품명 / 낱개수량 / 부모_WMS바코드 / "
         "1카톤박스입수량 / 중량 / 소비기한일수 / 옵션ID / 부모_옵션ID\n"
-        "- **쿠팡상품정보** 시트: 등록상품ID / 옵션ID / SKU ID / 등록상품명 / 옵션명 / "
+        "- **쿠팡상품정보** 시트: 업체명 / 등록상품ID / 옵션ID / SKU ID / 등록상품명 / 옵션명 / "
         "상품등급 / 상품등록일 / 수동입고여부 / WMS바코드 / 쿠팡바코드 / WMS바코드-반품\n\n"
-        "두 시트 모두 있으면 양쪽 모두 적용, 한 시트만 있으면 해당 테이블만 적용."
+        "두 시트 모두 있으면 양쪽 모두 적용, 한 시트만 있으면 해당 테이블만 적용. "
+        "**업체 컬럼(맨 앞)** 이 있어야 재업로드 시 업체 정보가 보존됩니다."
     )
 
     master_file = st.file_uploader(
