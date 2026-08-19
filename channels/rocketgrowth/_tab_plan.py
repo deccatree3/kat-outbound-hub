@@ -515,7 +515,7 @@ def render(brand: str):
             return pd.DataFrame([{
                 "WMS바코드": a["barcode"],
                 "상품명": a["product_name"],
-                "가용재고": a["available"],
+                "소비기한없는재고": a["missing_expiry_available"],
             } for a in items])
 
         if _sold_missing:

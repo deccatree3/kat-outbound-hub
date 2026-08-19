@@ -284,6 +284,7 @@ def find_missing_expiry_products(
 
     Returns:
         [{"barcode", "product_name", "available", "missing_available",
+          "missing_expiry_available",  # 소비기한 없는 행만의 가용재고
           "missing_expiry"(bool), "missing_manufacture"(bool),
           "missing_rows", "total_rows", "all_missing"}]  — 누락 가용수량 큰 순
     """
@@ -305,6 +306,7 @@ def find_missing_expiry_products(
             "missing_rows": 0,
             "total_rows": 0,
             "missing_available": 0,
+            "missing_expiry_available": 0,   # 소비기한 없는 행만의 가용재고
             "missing_expiry": False,
             "missing_manufacture": False,
         })
@@ -319,6 +321,7 @@ def find_missing_expiry_products(
             a["missing_available"] += av
             if miss_e:
                 a["missing_expiry"] = True
+                a["missing_expiry_available"] += av
             if miss_m:
                 a["missing_manufacture"] = True
 
