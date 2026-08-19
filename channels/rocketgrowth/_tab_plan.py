@@ -985,6 +985,7 @@ def render(brand: str):
     OVER_CONFIRM_BG = "background-color: #ff6b6b; color: white; font-weight: bold;"
     OVER_STOCK_BG = "background-color: #ffe5e5;"
     PALLET_ADJUSTED_BG = "background-color: #cceeff; font-weight: bold;"
+    EXCLUDED_BG = "background-color: #eeeeee; color: #999999;"
 
     def _highlight_over(row):
         styles = [""] * len(row)
@@ -1004,6 +1005,20 @@ def render(brand: str):
                 if col in cols:
                     styles[cols.index(col)] = OVER_STOCK_BG
         else:
+            # 소비기한 특정 불가 → 이번 확정 자동 제외행: 전체 회색 처리
+            exp = row.get("selected_batch_expiry")
+            _inb = row.get("inbound_final")
+            _q = (
+                int(_inb)
+                if (_inb is not None and not (isinstance(_inb, float) and pd.isna(_inb)))
+                else 0
+            )
+            if (
+                (exp is None or (isinstance(exp, float) and pd.isna(exp)))
+                and _q > 0
+                and status != "insufficient"
+            ):
+                return [EXCLUDED_BG] * len(row)
             try:
                 inbound_final = row.get("inbound_final")
                 basic_boxes = row.get("basic_boxes")
@@ -1273,39 +1288,61 @@ def render(brand: str):
         )
         return
 
-    # ─── 소비기한 미확인 SKU 차단 ─────────────────────────────
-    # 확정수량>0 인데 FEFO 선택 배치에 소비기한이 없는 SKU가 있으면 수량확정 불가.
-    # 임의 날짜를 만들지 않는다 — 태영 raw 소비기한 정정 후 갱신 파일로 재진행.
-    no_expiry_to_save = allocated_df[
+    # ─── 소비기한 특정 불가 SKU 자동 제외 (차단 아님) ──────────────
+    # 확정수량>0 인데 FEFO 선택 배치의 소비기한을 특정할 수 없는 SKU 는 쿠팡 입고생성
+    # 양식에 넣을 수 없으므로 이번 입고확정에서 **자동 제외**한다(임의 날짜 생성 X).
+    # 실제로 소비기한이 없는 상품이 있어 종전의 하드 차단은 영구 데드락이 되므로,
+    # 제외 후 나머지 SKU 로 진행하게 한다. 제외 사유:
+    #   - status ok  & expiry None : WMS 소비기한 미기재 (재고·매핑 정상)
+    #   - no_batch               : WMS 재고 없음
+    #   - no_parent              : 부모 WMS 매핑 없음
+    # (insufficient=수량초과 는 위에서 이미 차단 return — 여기 도달 안 함)
+    excluded_df = allocated_df[
         (allocated_df["selected_batch_expiry"].isna())
         & (allocated_df["inbound_final"].fillna(0).astype(int) > 0)
-    ]
-    if len(no_expiry_to_save) > 0:
-        st.error(
-            f"⛔ **소비기한 미확인 SKU {len(no_expiry_to_save)}건 — 수량확정 불가.**\n\n"
-            "아래 상품은 WMS 재고에 소비기한이 없어, 쿠팡 양식에 넣을 소비기한/제조일자를 "
-            "특정할 수 없습니다. 임의 날짜를 만들지 않습니다.\n\n"
-            "**물류센터(태영)에 해당 상품의 소비기한을 채워달라고 요청**한 뒤, "
-            "갱신된 현재고 파일로 다시 업로드해 진행하세요."
+    ].copy()
+    excluded_opt_ids = {int(x) for x in excluded_df["coupang_option_id"].tolist()}
+    excluded_qty = int(excluded_df["inbound_final"].fillna(0).astype(int).sum())
+    effective_qty = confirmed_qty - excluded_qty
+
+    if len(excluded_df) > 0:
+        def _excl_reason(r):
+            if r["selected_status"] == "no_parent":
+                return "부모 WMS 매핑 없음"
+            if r["selected_status"] == "no_batch":
+                return "WMS 재고 없음"
+            return "소비기한 미기재 (재고 정상)"
+        excluded_df["제외사유"] = excluded_df.apply(_excl_reason, axis=1)
+        st.warning(
+            f"ℹ️ **소비기한을 특정할 수 없는 SKU {len(excluded_df)}건(확정수량 "
+            f"{excluded_qty:,}개)은 이번 입고확정에서 자동 제외**됩니다. 쿠팡 입고생성 "
+            "양식에는 소비기한이 확인되는 SKU만 포함됩니다. 나머지로 계속 진행하세요."
         )
-        with st.expander(f"소비기한 없는 확정 SKU {len(no_expiry_to_save)}건", expanded=True):
-            _ne = no_expiry_to_save[[
-                "coupang_option_id", "product_name", "inbound_final",
+        with st.expander(f"제외된 SKU {len(excluded_df)}건", expanded=True):
+            _ex = excluded_df[[
+                "coupang_option_id", "product_name", "inbound_final", "제외사유",
             ]].copy()
-            _ne.columns = ["옵션ID", "상품명", "확정수량"]
-            st.dataframe(_ne, width="stretch", hide_index=True)
+            _ex.columns = ["옵션ID", "상품명", "확정수량", "제외사유"]
+            st.dataframe(_ex, width="stretch", hide_index=True)
+
+    # 제외 후 실제 저장할 수량이 없으면 버튼 비활성
+    if effective_qty <= 0:
         st.button(
             "수량확정",
             disabled=True, width="stretch",
-            help="소비기한 미확인 SKU 해결(태영 소비기한 기입) 후 활성화.",
-            key=f"rg_{brand}_qty_btn_no_expiry",
+            help="제외 후 저장할 확정 수량이 없습니다.",
+            key=f"rg_{brand}_qty_btn_all_excluded",
+        )
+        st.caption(
+            "소비기한이 확인되는 SKU가 없습니다. 태영 소비기한 기입 또는 매핑/재고 "
+            "정정 후 갱신 파일로 다시 진행하세요."
         )
         return
 
-    # 활성 수량확정 버튼 (재클릭 시 update)
+    # 활성 수량확정 버튼 (재클릭 시 update) — 라벨은 제외분 뺀 실제 저장 수량
     btn_label = (
-        f"수량확정 재확정 ({confirmed_qty:,}개)" if last_saved
-        else f"수량확정 ({confirmed_qty:,}개)"
+        f"수량확정 재확정 ({effective_qty:,}개)" if last_saved
+        else f"수량확정 ({effective_qty:,}개)"
     )
     btn_help = (
         "기존 plan 의 items 갱신 + 쿠팡 입고생성 양식 재생성." if last_saved
@@ -1324,6 +1361,12 @@ def render(brand: str):
                 opt = int(erow["coupang_option_id"])
                 mask = save_df["coupang_option_id"] == opt
                 save_df.loc[mask, "inbound_final"] = ni(erow["inbound_final"]) or 0
+
+            # 소비기한 특정 불가 SKU 는 이번 확정에서 제외 (plan/쿠팡양식에 미포함)
+            if excluded_opt_ids:
+                save_df = save_df[
+                    ~save_df["coupang_option_id"].astype(int).isin(excluded_opt_ids)
+                ]
 
             _raw_files: dict[str, tuple[str, bytes]] = {}
             if coupang_file:
@@ -1375,8 +1418,14 @@ def render(brand: str):
         mask = save_df["coupang_option_id"] == opt
         save_df.loc[mask, "inbound_final"] = ni(erow["inbound_final"]) or 0
 
+    # 소비기한 특정 불가 SKU 는 쿠팡 양식에서도 제외 (수량확정 게이트와 동일 기준)
+    if excluded_opt_ids:
+        save_df = save_df[
+            ~save_df["coupang_option_id"].astype(int).isin(excluded_opt_ids)
+        ]
+
     export_items: list[ExportItem] = []
-    _expiry_unknown: list[dict] = []   # 소비기한 못 찾은 SKU (빈칸 처리 — 정상 흐름은 수량확정서 차단)
+    _expiry_unknown: list[dict] = []   # 소비기한 못 찾은 SKU (안전망 — 정상 흐름은 게이트에서 자동 제외됨)
     for _, row in save_df.iterrows():
         qty = int(row["inbound_final"] or 0)
         if qty <= 0:
@@ -1388,7 +1437,7 @@ def render(brand: str):
             exp_d, man_d = dates_from_batch(wms_short, shelf)
         else:
             # WMS 재고에 소비기한 없음 → 임의 날짜를 만들지 않고 빈칸으로 둔다.
-            # (정상 흐름에선 수량확정 단계에서 이미 차단됨 — 여기는 안전망)
+            # (정상 흐름에선 수량확정 게이트에서 이미 자동 제외됨 — 여기는 안전망)
             exp_d, man_d = None, None
             _expiry_unknown.append({
                 "상품명": row.get("product_name"),
@@ -1413,7 +1462,7 @@ def render(brand: str):
         st.error(
             f"⛔ **소비기한 없는 입고 SKU {len(_expiry_unknown)}건 — 소비기한/제조일자 빈칸으로 나갑니다.** "
             "임의 날짜를 만들지 않습니다. 발주 전 **물류센터(태영)에 소비기한 기입을 요청**하세요. "
-            "(정상 흐름에선 수량확정 단계에서 차단됩니다.)"
+            "(정상 흐름에선 수량확정 게이트에서 자동 제외됩니다.)"
         )
         st.dataframe(pd.DataFrame(_expiry_unknown), width="stretch", hide_index=True)
 
