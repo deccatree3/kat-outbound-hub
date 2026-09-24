@@ -172,7 +172,7 @@ def _render_dup_warning():
             f"⚠️ **중복 주문 감지**: 이번 {_dw['total']}건 중 "
             f"**{_dw['dup_total']}건**이 이전 발주계획에 이미 포함되어 있습니다.\n\n"
             f"매칭된 발주계획: {_brief_str}\n\n"
-            f"중복된 주문/장바구니번호: `{_preview}`{_more}\n\n"
+            f"중복된 주문번호: `{_preview}`{_more}\n\n"
             "이대로 확정하면 같은 주문이 두 번 처리될 수 있으니 확인 후 진행하세요."
         )
     elif st.session_state.get('cu_dup_checked') is not None:
@@ -217,34 +217,47 @@ def _collect_via_api(work_date=None, sequence=None):
         # 배경: KSE OMS 에 송장 등록됐지만 운영자가 QSM 송장 등록을 깜빡한 경우,
         # 그 주문건은 QSM 상 여전히 "신규주문" 상태 → 다음날 가져오기 시 중복 유입.
         # 이 경우 이미 이전 발주계획(pending_brief) 에 그 주문번호가 저장되어 있으므로 감지 가능.
+        # 집계는 '주문 단위'로 한다: 한 주문의 대표키 = 주문번호(없으면 장바구니번호).
+        # 매칭은 주문번호 OR 장바구니번호 중 하나라도 이전 brief 에 있으면 중복으로 본다.
+        # (과거엔 주문번호·장바구니번호를 각각 1건으로 세어 "2건 중 4건"처럼 분모(주문)/
+        #  분자(키) 단위가 어긋났음 → 주문 단위 카운트로 정정.)
         def _keys(row):
             return (
                 str(row.get('주문번호', '') or '').strip(),
                 str(row.get('장바구니번호', '') or '').strip(),
             )
-        new_ords = {k for r in qsm_rows for k in _keys(r) if k}
-        dup_ords, checked_briefs, matched_briefs = set(), 0, []
+        new_rows = []  # (대표키, 주문번호, 장바구니번호)
+        for r in qsm_rows:
+            ono, cno = _keys(r)
+            rep = ono or cno
+            if rep:
+                new_rows.append((rep, ono, cno))
+        all_reps = {rep for rep, _o, _c in new_rows}
+        dup_reps, checked_briefs, matched_briefs = set(), 0, []
         try:
             prev_briefs = qgen.list_pending_briefs(include_consumed=True, limit=100)
             for pb in prev_briefs:
                 try:
                     content, _ = qgen.load_pending_brief(pb['id'])
                     prev_keys = {k for r in qgen.parse_qsm_csv(content) for k in _keys(r) if k}
-                    inter = prev_keys & new_ords
                     checked_briefs += 1
-                    if inter:
-                        dup_ords |= inter
-                        matched_briefs.append((pb['id'], len(inter)))
+                    brief_dups = {
+                        rep for rep, ono, cno in new_rows
+                        if (ono and ono in prev_keys) or (cno and cno in prev_keys)
+                    }
+                    if brief_dups:
+                        dup_reps |= brief_dups
+                        matched_briefs.append((pb['id'], len(brief_dups)))
                 except Exception:
                     pass
         except Exception:
             pass
         # 감지 결과는 세션에 저장 — st.rerun() 이후에도 UI 로 표시 유지
-        if dup_ords:
-            dup_sorted = sorted(dup_ords)
+        if dup_reps:
+            dup_sorted = sorted(dup_reps)
             st.session_state['cu_dup_warning'] = {
-                'total': len(qsm_rows),
-                'dup_total': len(dup_ords),
+                'total': len(all_reps),          # 신규 주문 수 (주문 단위)
+                'dup_total': len(dup_reps),      # 그중 중복 주문 수 (주문 단위)
                 'dup_preview': dup_sorted[:20],
                 'matched_briefs': matched_briefs,
             }
