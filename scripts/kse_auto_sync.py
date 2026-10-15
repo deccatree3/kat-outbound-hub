@@ -79,7 +79,7 @@ def run() -> dict[str, Any]:
     }
 
     try:
-        kse_map = _kse_collect()
+        kse_map = _kse_collect(days_back=14)
     except Exception as ex:
         result["top_error"] = f"KSE 수집 실패: {ex}"
         return result
