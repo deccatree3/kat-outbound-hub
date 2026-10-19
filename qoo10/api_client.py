@@ -43,6 +43,7 @@ CERT_URL = f"{BASE_URL}/CertificationAPI.CreateCertificationKey"
 # ShippingStat 값 매핑 (2026-04-30 검증)
 SHIPPING_STAT_REQUEST = "2"   # On request — 배송요청 (KSE 출고요청 전 신규 주문)
 SHIPPING_STAT_DELIVERY = "4"  # On delivery — 배송중 (송장 등록 후 자동 전이)
+SHIPPING_STAT_DELIVERED = "5" # Delivered — 배송완료 (배송중 이후 전이, 송장 이미 등록됨)
 
 # 배송회사 코드 (Qoo10 측 인식)
 SHIPPING_CORP_SAGAWA = "Sagawa"

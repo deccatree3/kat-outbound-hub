@@ -6,7 +6,7 @@ GH Actions cron 이 매일 KST 17시 실행 (초기값, 필요 시 workflow yaml
   1. KSE OMS 로그인 → 검색 API → {장바구니번호(packNo): 송장번호} 매핑 획득
   2. DB 에 저장된 pending brief 중 아직 consumed 안 된 것 조회
   3. 각 brief 안 (orderNo, packNo) 을 KSE 매핑과 대조 → (orderNo, waybill) 페어 생성
-  4. 대상 orderNo 의 QSM 현재 상태 조회 → 이미 배송중(ShippingStat=4) 이면 skip (중복 등록 방지)
+  4. 대상 orderNo 의 QSM 현재 상태 조회 → 이미 배송중(4)/배송완료(5) 이면 skip (중복 등록 방지)
   5. 남은 것 QSM SetSendingInfo API 로 등록
   6. brief 안 모든 orderNo 가 처리됐으면 consumed_at 마크
   7. Slack Webhook 알림 (새 등록 or 실패 있을 때만)
@@ -102,7 +102,9 @@ def run() -> dict[str, Any]:
         result["top_error"] = f"QSM SAK 발급 실패: {ex}"
         return result
 
-    SHIPPED = qapi.SHIPPING_STAT_DELIVERY  # "4" = 배송중
+    # 이미 송장이 등록됐거나 그 이후로 진행된 상태 = 재등록 금지(skip).
+    # 배송중(4)만 보면 배송완료(5)로 넘어간 주문을 못 걸러 재등록 시도→QSM -1 거부.
+    DONE_STATS = {qapi.SHIPPING_STAT_DELIVERY, qapi.SHIPPING_STAT_DELIVERED}  # 4 배송중 / 5 배송완료
 
     for pb in pending:
         try:
@@ -131,7 +133,7 @@ def run() -> dict[str, Any]:
 
             if cart not in kse_map:
                 # KSE 매핑 없음
-                if cur_stat == SHIPPED:
+                if cur_stat in DONE_STATS:
                     # 이미 QSM 에 등록됨 (예전 수동 처리) → 완료로 간주
                     brief_total += 1
                     brief_skipped += 1
@@ -149,7 +151,7 @@ def run() -> dict[str, Any]:
             waybill = kse_map[cart]
             brief_total += 1
 
-            if cur_stat == SHIPPED:
+            if cur_stat in DONE_STATS:
                 brief_skipped += 1
                 result["already_shipped_skipped"] += 1
                 continue
