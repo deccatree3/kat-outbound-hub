@@ -32,6 +32,7 @@ from rocketgrowth.models import CoupangProduct, InboundPlan, InboundPlanItem, Pl
 from rocketgrowth.planning import PlanInput, PlanParams, compute_plan, urgency_badge
 from rocketgrowth.pallet import PalletItem, optimize_to_pallet
 from rocketgrowth.outbound import PoolAllocationItem, allocate_parent_pool
+from rocketgrowth.pending_po import pending_po_by_barcode
 from sqlalchemy import desc
 
 from channels.rocketgrowth._helpers import (
@@ -852,7 +853,18 @@ def render(brand: str):
     )
     pool_stats["pool_velocity"] = pool_stats["parent_wms_barcode"].map(pool_velocity).fillna(0)
     pool_stats["reproduction_demand"] = pool_stats["pool_velocity"] * reproduction_lead
-    pool_stats["shortfall"] = pool_stats["reproduction_demand"] - pool_stats["pool_remaining"]
+    # 입고대기 = 재고 모니터링(nn-stock-forecast) 발주 DB 미입고 잔량 — 재고 모니터링과 동일 기준.
+    # nn_* 발주 DB 는 네뉴(서현) 전용 → 캐처스는 0.
+    _pending_po = pending_po_by_barcode() if brand_company == "서현" else {}
+    pool_stats["pending_po"] = (
+        pool_stats["parent_wms_barcode"].astype(str).str.strip().str.upper()
+        .map(_pending_po).fillna(0).astype(int)
+    )
+    pool_stats["shortfall"] = (
+        pool_stats["reproduction_demand"]
+        - pool_stats["pool_remaining"].fillna(0)
+        - pool_stats["pending_po"]
+    )
     pool_stats["needs_reproduction"] = (
         (pool_stats["shortfall"] > 0)
         | (pool_stats["allocated_base"] > pool_stats["pool_total"])
@@ -882,7 +894,7 @@ def render(brand: str):
         else:
             display = repro_list[[
                 "parent_wms_barcode", "single_product", "pool_total", "allocated_base",
-                "pool_remaining", "pool_velocity", "reproduction_demand", "shortfall",
+                "pool_remaining", "pending_po", "pool_velocity", "reproduction_demand", "shortfall",
             ]].copy()
             for _c in ["pool_velocity", "reproduction_demand", "shortfall"]:
                 display[_c] = pd.to_numeric(display[_c], errors="coerce").fillna(0)
@@ -895,11 +907,16 @@ def render(brand: str):
                 "pool_total": "현재고",
                 "allocated_base": "이번출고",
                 "pool_remaining": "출고후잔여",
+                "pending_po": "입고대기",
                 "pool_velocity": "일소요",
                 "reproduction_demand": f"{reproduction_lead}일소요",
                 "shortfall": f"{reproduction_lead}일후부족",
             })
             st.dataframe(display, width="stretch", hide_index=True)
+            st.caption(
+                f"{reproduction_lead}일후부족 = 출고후잔여 + 입고대기 − {reproduction_lead}일소요. "
+                "입고대기 = 재고 모니터링 발주 DB 의 미입고 잔량 (재고 모니터링과 동일 기준)."
+            )
             st.warning(
                 f"⚠️ {len(repro_list)}개 품목이 재생산 리드타임({reproduction_lead}일) 동안 버티지 못함. "
                 "생산/발주 담당자에게 재발주 검토 요청."
